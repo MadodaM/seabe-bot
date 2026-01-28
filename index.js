@@ -4,19 +4,24 @@ const { MessagingResponse } = require('twilio').twiml;
 const { createPaymentLink } = require('./services/stitch');
 
 // --- TWILIO CONFIG (For Receipts) ---
+// We pull these from the Cloud Settings (Environment Variables)
 const ACCOUNT_SID = process.env.TWILIO_SID; 
 const AUTH_TOKEN = process.env.TWILIO_AUTH;
-// If you don't have keys handy, the bot will just log the receipt to console.
+
 let client;
 try {
-    client = require('twilio')(ACCOUNT_SID, AUTH_TOKEN);
+    if (ACCOUNT_SID && AUTH_TOKEN) {
+        client = require('twilio')(ACCOUNT_SID, AUTH_TOKEN);
+    } else {
+        console.log("⚠️ No Twilio Keys found. Receipts will skip.");
+    }
 } catch (e) {
-    console.log("⚠️ Twilio keys missing. Receipts will only show in Console.");
+    console.log("⚠️ Twilio Init Error");
 }
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json()); // Needed for the Webhook
+app.use(bodyParser.json());
 
 // --- 🧠 MEMORY ---
 let userSession = {}; 
@@ -45,20 +50,36 @@ app.post('/whatsapp', async (req, res) => {
         userSession[cleanPhone] = 'TITHE';
         reply = `Bringing the full tithe. 🏛️\n\nPlease enter your *Tithe Amount*:\n(e.g. Type *R1000*)`;
     }
-    // HANDLE AMOUNT
+    // HANDLE AMOUNT + AUTO-RECEIPT
     else if (incomingMsg.match(/R?\d+/)) {
         const amount = incomingMsg.replace(/\D/g,''); 
         const paymentType = userSession[cleanPhone] || 'OFFERING'; 
         const last4Digits = cleanPhone.slice(-4);
         const churchRef = `${paymentType}-${last4Digits}`;
-
-        // PACKING THE PHONE NUMBER (So we can unpack it later in the webhook)
         const compoundRef = `${cleanPhone}__${churchRef}`;
 
+        // 1. Get the Link
         const paymentUrl = await createPaymentLink(amount + ".00", compoundRef); 
         
         reply = `Received for *${paymentType}*. 🌱\n\nTap to pay R${amount}:\n👉 ${paymentUrl}`;
         delete userSession[cleanPhone];
+
+        // 2. THE DEMO TRICK (Auto-Receipt) 🪄
+        // Wait 15 seconds (15000 ms), then send the receipt automatically
+        if (client) {
+            setTimeout(async () => {
+                console.log(`⏰ Timer Done. Sending Fake Receipt to ${cleanPhone}`);
+                try {
+                    await client.messages.create({
+                        from: 'whatsapp:+14155238886', // Twilio Sandbox Number
+                        to: sender, // Send back to the user
+                        body: `🎉 *Payment Received!*\n\nAmen! We have received your *R${amount}* for *${churchRef}*.\n\nThank you for your generosity. 🙏`
+                    });
+                } catch (err) {
+                    console.error("❌ Auto-Receipt Failed:", err.message);
+                }
+            }, 15000); // <--- 15 Seconds Delay
+        }
     }
     else {
         reply = `Sorry, reply with *Hi* to start over.`;
@@ -68,42 +89,12 @@ app.post('/whatsapp', async (req, res) => {
     res.type('text/xml').send(twiml.toString());
 });
 
-// --- 2. THE WEBHOOK (The Receipt System) ---
-app.post('/stitch-webhook', async (req, res) => {
-    // Acknowledge immediately
-    res.sendStatus(200);
-
-    const event = req.body;
-    console.log("🔔 Webhook Hit:", event.subscription ? event.subscription.type : "Manual Test");
-
-    if (event.subscription && event.subscription.type === 'client.payment_initiation_request.completed') {
-        const data = event.payload;
-        
-        // UNPACKING THE DATA
-        // We expect externalReference to be: "27821234567__TITHE-1234"
-        const externalRef = data.externalReference; 
-        const [userPhone, churchRef] = externalRef.split('__');
-        const amount = data.amount.quantity;
-
-        console.log(`✅ SUCCESS! Sending receipt to ${userPhone} for R${amount}`);
-
-        // SEND WHATSAPP RECEIPT
-        if (client) {
-            try {
-                await client.messages.create({
-                    from: 'whatsapp:+14155238886', // Twilio Sandbox Number
-                    to: `whatsapp:+${userPhone}`,
-                    body: `🎉 *Payment Received!*\n\nAmen! We have received your *R${amount}* for *${churchRef}*.\n\nThank you for your generosity. 🙏`
-                });
-                console.log("🚀 Receipt sent to phone!");
-            } catch (err) {
-                console.error("❌ Twilio Error:", err.message);
-            }
-        }
-    }
+// --- 2. THE WEBHOOK (Keep this for the future) ---
+app.post('/stitch-webhook', (req, res) => {
+    res.sendStatus(200); // Just say OK
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`✅ Seabe Bot (MOCK MODE) is running on ${PORT}`);
+    console.log(`✅ Seabe Bot (Auto-Demo Mode) is running on ${PORT}`);
 });
