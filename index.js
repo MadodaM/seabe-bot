@@ -3,18 +3,40 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const { MessagingResponse } = require('twilio').twiml;
 const { createPaymentLink } = require('./services/stitch');
-
-// --- NEW IMPORTS FOR GOOGLE V4 ---
 const { GoogleSpreadsheet } = require('google-spreadsheet');
-const { JWT } = require('google-auth-library'); // 👈 This fixes the error
+const { JWT } = require('google-auth-library');
+
+// --- 1. THE DICTIONARY (TRANSLATIONS) ---
+const TRANSLATIONS = {
+    'ENGLISH': {
+        welcome: "Welcome to Seabe! 🇿🇦\n\nChoose your language:\n*1.* English\n*2.* isiZulu\n*3.* Sesotho",
+        menu: "Welcome! 👋\nReply with a number:\n*1.* General Offering 🎁\n*2.* Pay Tithe (10%) 🏛️",
+        ask_offering: "Amen! 🎁\nHow much is your *Offering*? (e.g. R100)",
+        ask_tithe: "Bringing the full tithe. 🏛️\nEnter amount: (e.g. R500)",
+        receipt_text: "Payment Received! Thank you for your generosity.",
+        click_to_pay: "Tap to pay"
+    },
+    'ZULU': {
+        // We reuse the English welcome just for the language selection step
+        menu: "Siyakwamukela! 👋\nPhendula ngenombolo:\n*1.* Umnikelo Jikelele 🎁\n*2.* Okweshumi (10%) 🏛️",
+        ask_offering: "Amen! 🎁\nUngakanani *Umnikelo* wakho? (isib. R100)",
+        ask_tithe: "Ukuletha okweshumi okuphelele. 🏛️\nFaka inani: (isib. R500)",
+        receipt_text: "Inkokhelo Yamukelwe! Siyabonga ngokupha kwakho.",
+        click_to_pay: "Cindezela ukukhokha"
+    },
+    'SOTHO': {
+        menu: "Re a o amohela! 👋\nAraba ka nomoro:\n*1.* Nyehelo 🎁\n*2.* Boshome (10%) 🏛️",
+        ask_offering: "Amen! 🎁\nKe bokae *Nyehelo* ea hau? (mohl. R100)",
+        ask_tithe: "O tlisa boshome bo feletseng. 🏛️\nKenya chelete: (mohl. R500)",
+        receipt_text: "Tefo e amoheletsoe! Re leboha seatla sa hau se bulehileng.",
+        click_to_pay: "Tobetsa ho lefa"
+    }
+};
 
 // --- CONFIG ---
 const ACCOUNT_SID = process.env.TWILIO_SID; 
 const AUTH_TOKEN = process.env.TWILIO_AUTH;
-
-// GOOGLE KEYS
 const GOOGLE_EMAIL = process.env.GOOGLE_EMAIL;
-// Handle the new lines correctly
 const GOOGLE_KEY = process.env.GOOGLE_KEY ? process.env.GOOGLE_KEY.replace(/\\n/g, '\n') : null;
 const SHEET_ID = process.env.SHEET_ID;
 
@@ -27,40 +49,21 @@ const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
+// We store { step: 'MENU', language: 'ENGLISH' } for each phone number
 let userSession = {}; 
 
-// --- HELPER: WRITE TO SHEET (UPDATED FOR V4) ---
 async function logToSheet(phone, type, amount, ref) {
-    if (!GOOGLE_EMAIL || !GOOGLE_KEY || !SHEET_ID) {
-        console.log("ℹ️ Dashboard skipped (Keys missing).");
-        return;
-    }
-
+    if (!GOOGLE_EMAIL || !GOOGLE_KEY || !SHEET_ID) return;
     try {
-        // 1. Setup Auth (The New Way)
         const serviceAccountAuth = new JWT({
-            email: GOOGLE_EMAIL,
-            key: GOOGLE_KEY,
-            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+            email: GOOGLE_EMAIL, key: GOOGLE_KEY, scopes: ['https://www.googleapis.com/auth/spreadsheets'],
         });
-
-        // 2. Load the Doc
         const doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);
         await doc.loadInfo(); 
-        
-        // 3. Add Row
         const sheet = doc.sheetsByIndex[0];
-        await sheet.addRow({
-            Date: new Date().toLocaleString(),
-            "Name/Phone": phone,
-            "Type": type,
-            "Amount": amount,
-            "Reference": ref
-        });
+        await sheet.addRow({ Date: new Date().toLocaleString(), "Name/Phone": phone, "Type": type, "Amount": amount, "Reference": ref });
         console.log("📝 Row added to Sheet!");
-    } catch (error) {
-        console.error("❌ Sheet Error:", error.message);
-    }
+    } catch (error) { console.error("❌ Sheet Error:", error.message); }
 }
 
 // --- WHATSAPP BOT ---
@@ -69,46 +72,76 @@ app.post('/whatsapp', async (req, res) => {
     const sender = req.body.From; 
     const cleanPhone = sender.replace('whatsapp:', '');
     const twiml = new MessagingResponse();
+    
+    // Default to English if we don't know the user yet
+    let userLang = userSession[cleanPhone]?.language || 'ENGLISH';
     let reply = "";
 
-    if (['hi', 'hello', 'dumela', 'menu'].includes(incomingMsg)) {
-        reply = `Dumela! 👋 Welcome to *Seabe*.\n\nReply with a number:\n*1.* General Offering 🎁\n*2.* Pay Tithe (10%) 🏛️`;
-        userSession[cleanPhone] = 'MENU';
+    // 1. START / RESET
+    if (['hi', 'hello', 'dumela', 'sawubona', 'menu'].includes(incomingMsg)) {
+        // Show Language Menu (Always in English mixed with others so they can read it)
+        reply = TRANSLATIONS['ENGLISH'].welcome;
+        userSession[cleanPhone] = { step: 'LANG_SELECT', language: 'ENGLISH' };
     } 
-    else if (['1', '2'].includes(incomingMsg)) {
-        userSession[cleanPhone] = incomingMsg === '1' ? 'OFFERING' : 'TITHE';
-        reply = incomingMsg === '1' ? `Amen! 🎁\nHow much is your *Offering*?` : `Bringing the full tithe. 🏛️\nEnter amount:`;
+    
+    // 2. LANGUAGE SELECTION
+    else if (userSession[cleanPhone]?.step === 'LANG_SELECT') {
+        if (incomingMsg === '1') userLang = 'ENGLISH';
+        else if (incomingMsg === '2') userLang = 'ZULU';
+        else if (incomingMsg === '3') userLang = 'SOTHO';
+        
+        // Save the language preference
+        userSession[cleanPhone] = { step: 'PAYMENT_SELECT', language: userLang };
+        reply = TRANSLATIONS[userLang].menu;
     }
+
+    // 3. PAYMENT TYPE SELECTION
+    else if (userSession[cleanPhone]?.step === 'PAYMENT_SELECT' && ['1', '2'].includes(incomingMsg)) {
+        const paymentType = incomingMsg === '1' ? 'OFFERING' : 'TITHE';
+        
+        // Save payment type, keep language
+        userSession[cleanPhone].paymentType = paymentType;
+        userSession[cleanPhone].step = 'AMOUNT_INPUT';
+        
+        // Ask for amount in the correct language
+        if (paymentType === 'OFFERING') reply = TRANSLATIONS[userLang].ask_offering;
+        else reply = TRANSLATIONS[userLang].ask_tithe;
+    }
+
+    // 4. AMOUNT & LINK
     else if (incomingMsg.match(/R?\d+/)) {
         const amount = incomingMsg.replace(/\D/g,''); 
-        const paymentType = userSession[cleanPhone] || 'OFFERING'; 
+        const paymentType = userSession[cleanPhone]?.paymentType || 'OFFERING';
         const churchRef = `${paymentType}-${cleanPhone.slice(-4)}`;
         const compoundRef = `${cleanPhone}__${churchRef}`;
 
         const paymentUrl = await createPaymentLink(amount + ".00", compoundRef); 
         
-        reply = `Received for *${paymentType}*. 🌱\n\nTap to pay R${amount}:\n👉 ${paymentUrl}`;
+        // Use translated text for the link message
+        const clickText = TRANSLATIONS[userLang].click_to_pay;
+        reply = `${clickText} R${amount}:\n👉 ${paymentUrl}`;
+        
+        // Clear session but maybe keep language preference for next time? 
+        // For now we clear to keep it simple.
         delete userSession[cleanPhone];
 
-        // AUTO-RECEIPT + SHEET LOGGING
         if (client) {
             setTimeout(async () => {
-                // 1. Send Receipt (Might fail if limit reached, but we keep going)
                 try {
+                    // Send Receipt in the user's language
+                    const receiptMsg = TRANSLATIONS[userLang].receipt_text;
                     await client.messages.create({
-                        from: 'whatsapp:+14155238886',
-                        to: sender,
-                        body: `🎉 *Payment Received!*\n\nAmen! We have received your *R${amount}* for *${churchRef}*.\n\nThank you for your generosity. 🙏`
+                        from: 'whatsapp:+14155238886', to: sender,
+                        body: `🎉 *Seabe* \n\n${receiptMsg} \n(R${amount} - ${churchRef}) 🙏`
                     });
-                } catch (err) { console.error("❌ Receipt Failed (Limit reached?)"); }
-                
-                // 2. Log to Dashboard
+                } catch (err) { console.error("❌ Receipt Failed"); }
                 await logToSheet(cleanPhone, paymentType, amount, churchRef);
-
             }, 15000); 
         }
     }
-    else { reply = `Sorry, reply with *Hi* to start over.`; }
+    else { 
+        reply = `Sorry, reply with *Hi* to start over. \nUxolo, phendula ngo *Hi* ukuze uqale phansi.`; 
+    }
 
     twiml.message(reply);
     res.type('text/xml').send(twiml.toString());
