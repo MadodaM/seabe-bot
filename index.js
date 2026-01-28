@@ -1,8 +1,10 @@
+require('dotenv').config(); // Load the .env file locally
 const express = require('express');
 const bodyParser = require('body-parser');
 const { MessagingResponse } = require('twilio').twiml;
 const { createPaymentLink } = require('./services/stitch');
-// We try to load Google Sheets, but if it fails, we don't crash.
+
+// Try to load Google Sheets, but don't crash if missing
 let GoogleSpreadsheet;
 try {
     GoogleSpreadsheet = require('google-spreadsheet').GoogleSpreadsheet;
@@ -14,8 +16,9 @@ try {
 const ACCOUNT_SID = process.env.TWILIO_SID; 
 const AUTH_TOKEN = process.env.TWILIO_AUTH;
 
-// GOOGLE KEYS (If these are missing, the bot just skips the dashboard part)
+// GOOGLE KEYS
 const GOOGLE_EMAIL = process.env.GOOGLE_EMAIL;
+// Handle new lines in private key properly
 const GOOGLE_KEY = process.env.GOOGLE_KEY ? process.env.GOOGLE_KEY.replace(/\\n/g, '\n') : null;
 const SHEET_ID = process.env.SHEET_ID;
 
@@ -32,7 +35,7 @@ let userSession = {};
 
 // --- HELPER: WRITE TO SHEET ---
 async function logToSheet(phone, type, amount, ref) {
-    // If we don't have keys or the module, just stop.
+    // If we don't have keys, just stop.
     if (!GoogleSpreadsheet || !GOOGLE_EMAIL || !GOOGLE_KEY || !SHEET_ID) {
         console.log("ℹ️ Dashboard skipped (Keys missing).");
         return;
@@ -97,7 +100,7 @@ app.post('/whatsapp', async (req, res) => {
                     });
                 } catch (err) { console.error("❌ Receipt Failed"); }
                 
-                // 2. Log to Dashboard (Will safely skip if no keys)
+                // 2. Log to Dashboard
                 await logToSheet(cleanPhone, paymentType, amount, churchRef);
 
             }, 15000); 
