@@ -1,16 +1,12 @@
-require('dotenv').config(); // Load the .env file locally
+require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const { MessagingResponse } = require('twilio').twiml;
 const { createPaymentLink } = require('./services/stitch');
 
-// Try to load Google Sheets, but don't crash if missing
-let GoogleSpreadsheet;
-try {
-    GoogleSpreadsheet = require('google-spreadsheet').GoogleSpreadsheet;
-} catch (e) {
-    console.log("⚠️ Google Spreadsheet module not installed. Skipping.");
-}
+// --- NEW IMPORTS FOR GOOGLE V4 ---
+const { GoogleSpreadsheet } = require('google-spreadsheet');
+const { JWT } = require('google-auth-library'); // 👈 This fixes the error
 
 // --- CONFIG ---
 const ACCOUNT_SID = process.env.TWILIO_SID; 
@@ -18,7 +14,7 @@ const AUTH_TOKEN = process.env.TWILIO_AUTH;
 
 // GOOGLE KEYS
 const GOOGLE_EMAIL = process.env.GOOGLE_EMAIL;
-// Handle new lines in private key properly
+// Handle the new lines correctly
 const GOOGLE_KEY = process.env.GOOGLE_KEY ? process.env.GOOGLE_KEY.replace(/\\n/g, '\n') : null;
 const SHEET_ID = process.env.SHEET_ID;
 
@@ -33,20 +29,26 @@ app.use(bodyParser.json());
 
 let userSession = {}; 
 
-// --- HELPER: WRITE TO SHEET ---
+// --- HELPER: WRITE TO SHEET (UPDATED FOR V4) ---
 async function logToSheet(phone, type, amount, ref) {
-    // If we don't have keys, just stop.
-    if (!GoogleSpreadsheet || !GOOGLE_EMAIL || !GOOGLE_KEY || !SHEET_ID) {
+    if (!GOOGLE_EMAIL || !GOOGLE_KEY || !SHEET_ID) {
         console.log("ℹ️ Dashboard skipped (Keys missing).");
         return;
     }
+
     try {
-        const doc = new GoogleSpreadsheet(SHEET_ID);
-        await doc.useServiceAccountAuth({
-            client_email: GOOGLE_EMAIL,
-            private_key: GOOGLE_KEY,
+        // 1. Setup Auth (The New Way)
+        const serviceAccountAuth = new JWT({
+            email: GOOGLE_EMAIL,
+            key: GOOGLE_KEY,
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
         });
+
+        // 2. Load the Doc
+        const doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);
         await doc.loadInfo(); 
+        
+        // 3. Add Row
         const sheet = doc.sheetsByIndex[0];
         await sheet.addRow({
             Date: new Date().toLocaleString(),
@@ -91,14 +93,14 @@ app.post('/whatsapp', async (req, res) => {
         // AUTO-RECEIPT + SHEET LOGGING
         if (client) {
             setTimeout(async () => {
-                // 1. Send Receipt
+                // 1. Send Receipt (Might fail if limit reached, but we keep going)
                 try {
                     await client.messages.create({
                         from: 'whatsapp:+14155238886',
                         to: sender,
                         body: `🎉 *Payment Received!*\n\nAmen! We have received your *R${amount}* for *${churchRef}*.\n\nThank you for your generosity. 🙏`
                     });
-                } catch (err) { console.error("❌ Receipt Failed"); }
+                } catch (err) { console.error("❌ Receipt Failed (Limit reached?)"); }
                 
                 // 2. Log to Dashboard
                 await logToSheet(cleanPhone, paymentType, amount, churchRef);
