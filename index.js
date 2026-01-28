@@ -17,21 +17,24 @@ const TRANSLATIONS = {
         ask_offering: "Amen! 🎁\nHow much is your *Offering*? (e.g. R100)",
         ask_tithe: "Bringing the full tithe. 🏛️\nEnter amount: (e.g. R500)",
         click_to_pay: "Tap to pay",
-        receipt_text: "Attached is your official receipt. Thank you! 🙏"
+        receipt_text: "Attached is your official receipt. Thank you! 🙏",
+        news_header: "📢 *Church News:*"
     },
     'ZULU': {
         menu: "Siyakwamukela! 👋\nPhendula ngenombolo:\n*1.* Umnikelo Jikelele 🎁\n*2.* Okweshumi (10%) 🏛️",
         ask_offering: "Amen! 🎁\nUngakanani *Umnikelo* wakho? (isib. R100)",
         ask_tithe: "Ukuletha okweshumi okuphelele. 🏛️\nFaka inani: (isib. R500)",
         click_to_pay: "Cindezela ukukhokha",
-        receipt_text: "Namathisela irisidi lakho elisemthethweni. Siyabonga! 🙏"
+        receipt_text: "Namathisela irisidi lakho elisemthethweni. Siyabonga! 🙏",
+        news_header: "📢 *Izaziso:*"
     },
     'SOTHO': {
         menu: "Re a o amohela! 👋\nAraba ka nomoro:\n*1.* Nyehelo 🎁\n*2.* Boshome (10%) 🏛️",
         ask_offering: "Amen! 🎁\nKe bokae *Nyehelo* ea hau? (mohl. R100)",
         ask_tithe: "O tlisa boshome bo feletseng. 🏛️\nKenya chelete: (mohl. R500)",
         click_to_pay: "Tobetsa ho lefa",
-        receipt_text: "Re rometse rasiti ea hau ea molao. Re a leboha! 🙏"
+        receipt_text: "Re rometse rasiti ea hau ea molao. Re a leboha! 🙏",
+        news_header: "📢 *Tsebisano:*"
     }
 };
 
@@ -50,43 +53,70 @@ try {
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
-
-// 🟢 NEW: Allow the world to see files in the 'public' folder (for PDF links)
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
 let userSession = {}; 
+let activeAds = []; // Store ads in memory
 
-// --- HELPER: GENERATE PDF RECEIPT ---
+// --- 📢 AD ENGINE ---
+async function fetchAds() {
+    if (!GOOGLE_EMAIL || !GOOGLE_KEY || !SHEET_ID) return;
+    try {
+        const serviceAccountAuth = new JWT({ email: GOOGLE_EMAIL, key: GOOGLE_KEY, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+        const doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);
+        await doc.loadInfo();
+        
+        // Assume 'Ads' is the second tab (index 1)
+        const sheet = doc.sheetsByIndex[1]; 
+        if (!sheet) return;
+
+        const rows = await sheet.getRows();
+        
+        // Filter only rows where Status is 'Active'
+        activeAds = rows
+            .filter(row => row.get('Status') && row.get('Status').trim().toLowerCase() === 'active')
+            .map(row => ({
+                ENGLISH: row.get('English'),
+                ZULU: row.get('Zulu'),
+                SOTHO: row.get('Sotho')
+            }));
+        
+        console.log(`📢 Ad Engine: Loaded ${activeAds.length} active ads.`);
+    } catch (e) { console.error("❌ Ad Fetch Error:", e.message); }
+}
+
+// Refresh ads every 10 minutes
+setInterval(fetchAds, 600000);
+fetchAds(); // Initial fetch on startup
+
+function getAdSuffix(lang) {
+    if (activeAds.length === 0) return "";
+    const randomAd = activeAds[Math.floor(Math.random() * activeAds.length)];
+    const adText = randomAd[lang] || randomAd['ENGLISH']; // Fallback to English
+    const header = TRANSLATIONS[lang].news_header;
+    return `\n\n----------------\n${header}\n${adText}`;
+}
+
+// --- HELPERS ---
 function generateReceipt(amount, ref, date, phone) {
-    const doc = new PDFDocument({ size: 'A5', margin: 50 }); // A5 is phone-screen friendly
+    const doc = new PDFDocument({ size: 'A5', margin: 50 });
     const filename = `receipt_${Date.now()}_${phone.slice(-4)}.pdf`;
     const filePath = path.join(__dirname, 'public', 'receipts', filename);
-    
-    // Ensure folder exists
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)){ fs.mkdirSync(dir, { recursive: true }); }
-
     const stream = fs.createWriteStream(filePath);
     doc.pipe(stream);
-
-    // 1. ADD LOGO (If it exists)
+    
     const logoPath = path.join(__dirname, 'public', 'logo.png');
-    if (fs.existsSync(logoPath)) {
-        doc.image(logoPath, 50, 40, { width: 50 });
-        doc.moveDown(2);
-    }
+    if (fs.existsSync(logoPath)) { doc.image(logoPath, 50, 40, { width: 50 }); doc.moveDown(2); }
 
-    // 2. HEADER
     doc.fontSize(20).text('OFFICIAL RECEIPT', 50, 100, { align: 'right', color: '#333' });
     doc.moveDown();
     doc.fontSize(10).text('Seabe Digital Treasury', { align: 'right' });
-    doc.text('Secure Church Payments', { align: 'right' });
     
-    // 3. LINE
     doc.moveDown();
     doc.moveTo(50, 160).lineTo(370, 160).stroke();
     
-    // 4. DETAILS
     doc.moveDown(2);
     doc.fontSize(12).text(`Date: ${date}`, 50);
     doc.moveDown(0.5);
@@ -94,21 +124,16 @@ function generateReceipt(amount, ref, date, phone) {
     doc.moveDown(0.5);
     doc.text(`Contributor: ${phone}`);
     
-    // 5. AMOUNT BOX
     doc.moveDown(2);
     doc.rect(50, doc.y, 320, 40).fillAndStroke('#f0f0f0', '#333');
     doc.fillColor('#000').fontSize(16).text(`AMOUNT:  R ${amount}.00`, 70, doc.y - 30);
     
-    // 6. FOOTER
     doc.moveDown(4);
     doc.fontSize(10).text('Thank you for your generosity.', { align: 'center' });
-    doc.text('This is a computer-generated receipt.', { align: 'center', oblique: true });
-
     doc.end();
     return filename;
 }
 
-// --- HELPER: GOOGLE SHEET ---
 async function logToSheet(phone, type, amount, ref) {
     if (!GOOGLE_EMAIL || !GOOGLE_KEY || !SHEET_ID) return;
     try {
@@ -139,7 +164,9 @@ app.post('/whatsapp', async (req, res) => {
         else if (incomingMsg === '2') userLang = 'ZULU';
         else if (incomingMsg === '3') userLang = 'SOTHO';
         userSession[cleanPhone] = { step: 'PAYMENT_SELECT', language: userLang };
-        reply = TRANSLATIONS[userLang].menu;
+        
+        // Show Menu + Ad
+        reply = TRANSLATIONS[userLang].menu + getAdSuffix(userLang);
     }
     else if (userSession[cleanPhone]?.step === 'PAYMENT_SELECT' && ['1', '2'].includes(incomingMsg)) {
         const paymentType = incomingMsg === '1' ? 'OFFERING' : 'TITHE';
@@ -157,26 +184,23 @@ app.post('/whatsapp', async (req, res) => {
         const paymentUrl = await createPaymentLink(amount + ".00", compoundRef); 
         const clickText = TRANSLATIONS[userLang].click_to_pay;
         reply = `${clickText} R${amount}:\n👉 ${paymentUrl}`;
-        delete userSession[cleanPhone]; // Clear session
+        delete userSession[cleanPhone]; 
 
         if (client) {
             setTimeout(async () => {
                 const now = new Date().toLocaleString();
-                
-                // 1. GENERATE PDF 📄
                 const pdfFilename = generateReceipt(amount, churchRef, now, cleanPhone);
-                // Create the public link using the server's own address
                 const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
                 const pdfUrl = `https://${hostUrl}/public/receipts/${pdfFilename}`;
 
-                // 2. SEND WHATSAPP WITH PDF 📨
                 try {
                     const receiptText = TRANSLATIONS[userLang].receipt_text;
+                    // Send Receipt + Ad
                     await client.messages.create({
                         from: 'whatsapp:+14155238886', 
                         to: sender,
-                        body: `🎉 *Seabe* \n\n${receiptText}`,
-                        mediaUrl: [pdfUrl] // 👈 This attaches the PDF!
+                        body: `🎉 *Seabe* \n\n${receiptText} ${getAdSuffix(userLang)}`,
+                        mediaUrl: [pdfUrl]
                     });
                 } catch (err) { console.error("❌ Receipt Failed", err); }
                 
