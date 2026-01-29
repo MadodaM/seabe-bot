@@ -215,7 +215,7 @@ app.post('/whatsapp', async (req, res) => {
     }
 
     if (!churchCode) {
-        // ONBOARDING FLOW
+        // ONBOARDING
         if (!userSession[cleanPhone]?.onboarding) {
             let list = "Welcome to Seabe! 🇿🇦\nPlease select your church:\n";
             cachedChurches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
@@ -232,7 +232,6 @@ app.post('/whatsapp', async (req, res) => {
             } else { reply = "⚠️ Invalid selection."; }
         }
     } 
-    // MAIN MENU FLOW
     else {
         const church = cachedChurches.find(c => c.code === churchCode);
         const churchName = church ? church.name : "Church";
@@ -247,30 +246,45 @@ app.post('/whatsapp', async (req, res) => {
             if (incomingMsg === '3') reply = `Confirm Ticket for ${church.eventName} (R${church.eventPrice})?\nReply *Yes*`;
             else reply = "Enter Amount (e.g. R100):";
         }
-        // 🔄 SWITCH CHURCH LOGIC (Option 4)
         else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
-            // 1. Delete user from Google Sheet
             await removeUser(cleanPhone);
-            // 2. Clear Session
             delete userSession[cleanPhone];
-            // 3. Send Church List (Restart)
             let list = "🔄 *Switch Church*\n\nPlease select your church:\n";
             cachedChurches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
             reply = list;
             userSession[cleanPhone] = { onboarding: true };
         }
+        // 👇 FIXED PAY LOGIC START 👇
         else if (userSession[cleanPhone]?.step === 'PAY') {
-            // ... (Payment Logic remains the same) ...
-            let amount = incomingMsg.replace(/\D/g,'');
+            let amount = incomingMsg.replace(/\D/g,''); 
             let type = userSession[cleanPhone].choice === '1' ? 'OFFERING' : 'TITHE';
             
+            // TICKET LOGIC (Option 3)
             if (userSession[cleanPhone].choice === '3') {
-                if (incomingMsg.includes('yes')) { amount = church.eventPrice; type = 'TICKET'; } 
-                else { reply = "Cancelled."; twiml.message(reply); res.type('text/xml').send(twiml.toString()); return; }
+                // 1. Clean the Price from Sheet (Remove 'R' or spaces)
+                const sheetPrice = (church.eventPrice || '0').toString().replace(/\D/g,'');
+
+                // 2. Smart Affirmation Check (Yes, Y, Yeah, Ok, Sure)
+                const isAffirmative = ['yes', 'y', 'yeah', 'yebo', 'ok', 'sure', 'confirm'].some(w => incomingMsg.includes(w));
+                
+                // 3. Price Match Check (If user typed "150" instead of "Yes")
+                const isPriceMatch = amount === sheetPrice;
+
+                if (isAffirmative || isPriceMatch) { 
+                    amount = sheetPrice; 
+                    type = 'TICKET'; 
+                } 
+                else { 
+                    reply = "❌ Transaction Cancelled.\nReply *Hi* to start over."; 
+                    twiml.message(reply); 
+                    res.type('text/xml').send(twiml.toString()); 
+                    return; 
+                }
             }
 
             const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}`;
             const systemEmail = `${cleanPhone}@seabe.io`;
+            
             const link = await createPaymentLink(amount, ref, systemEmail);
             
             if (link) {
@@ -284,10 +298,11 @@ app.post('/whatsapp', async (req, res) => {
                         await logToSheet(cleanPhone, churchCode, type, amount, ref);
                     }, 15000);
                 }
-            } else { reply = "⚠️ Error creating link."; }
+            } else { reply = "⚠️ Error creating payment link. Please try again."; }
 
             userSession[cleanPhone].step = 'MENU';
         } 
+        // 👆 FIXED PAY LOGIC END 👆
         else { reply = "Reply *Hi* to see the menu."; }
     }
 
@@ -295,7 +310,7 @@ app.post('/whatsapp', async (req, res) => {
     res.type('text/xml').send(twiml.toString());
 });
 
-app.post('/payment-success', (req, res) => res.send("<h1>Success!</h1>"));
+app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1><p>You can return to WhatsApp.</p>"));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ Seabe Platform running on ${PORT}`));
