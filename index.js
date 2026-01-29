@@ -261,7 +261,7 @@ app.post('/whatsapp', async (req, res) => {
             }
 
             // 👇 THIS IS WHERE YOU WERE MISSING THE DEFINITION 👇
-            const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}`;
+            const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
             const systemEmail = `${cleanPhone}@seabe.io`;
             
             const finalChurchCode = churchCode; 
