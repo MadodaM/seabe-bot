@@ -4,7 +4,6 @@ const bodyParser = require('body-parser');
 const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit');
-// 👇 NEW: SendGrid instead of Nodemailer
 const sgMail = require('@sendgrid/mail'); 
 const cron = require('node-cron');
 const { MessagingResponse } = require('twilio').twiml;
@@ -18,10 +17,8 @@ const AUTH_TOKEN = process.env.TWILIO_AUTH;
 const GOOGLE_EMAIL = process.env.GOOGLE_EMAIL;
 const GOOGLE_KEY = process.env.GOOGLE_KEY ? process.env.GOOGLE_KEY.replace(/\\n/g, '\n') : null;
 const SHEET_ID = process.env.SHEET_ID;
-
-// 👇 SENDGRID CONFIG
 const SENDGRID_KEY = process.env.SENDGRID_KEY;
-const EMAIL_FROM = process.env.EMAIL_FROM || 'madoda.mavuso@gmail.com'; // Must match Verified Sender in SendGrid
+const EMAIL_FROM = process.env.EMAIL_FROM;
 
 if (SENDGRID_KEY) sgMail.setApiKey(SENDGRID_KEY);
 
@@ -71,7 +68,6 @@ async function refreshCache() {
                     break;
                 }
             }
-
             return { code, name: row.get('Name'), eventName, eventPrice, email };
         });
 
@@ -81,8 +77,8 @@ async function refreshCache() {
         cachedAds = adRows.filter(r => r.get('Status') === 'Active').map(r => ({
              target: r.get('Target'), ENGLISH: r.get('English'), ZULU: r.get('Zulu'), SOTHO: r.get('Sotho')
         }));
-            
-        console.log(`♻️ Cache Updated. Found email for ${cachedChurches.filter(c => c.email).length} churches.`);
+        
+        console.log(`♻️ System Ready: ${cachedChurches.length} Churches Active.`);
     } catch (e) { console.error("❌ Cache Error:", e.message); }
 }
 setInterval(refreshCache, 600000); 
@@ -112,12 +108,10 @@ async function removeUser(phone) {
     } catch (e) { console.error("Remove Error:", e); }
 }
 
-// --- 📧 REPORTING ENGINE (SENDGRID VERSION) ---
+// --- 📧 REPORTING ENGINE ---
 async function emailReport(churchCode) {
-    console.log(`📨 Starting Report Process for: ${churchCode}`);
-
     const church = cachedChurches.find(c => c.code === churchCode);
-    if (!church || !church.email) return `❌ Church/Email missing for ${churchCode}`;
+    if (!church || !church.email) return `❌ Skipped ${churchCode}`;
 
     const doc = await getDoc();
     const transSheet = doc.sheetsByIndex[0];
@@ -131,43 +125,33 @@ async function emailReport(churchCode) {
         csvContent += `${row.get('Date')},${row.get('Type')},${row.get('Amount')},${row.get('Reference')},${row.get('Name/Phone')}\n`;
     });
 
-    // Convert string to Base64 for SendGrid attachment
     const attachment = Buffer.from(csvContent).toString('base64');
-
     const msg = {
         to: church.email,
-        from: EMAIL_FROM, // Must be verified in SendGrid
-        subject: `📊 Report: ${church.name}`,
-        text: `Attached is your automated financial report.`,
-        attachments: [
-            {
-                content: attachment,
-                filename: `${churchCode}_Report.csv`,
-                type: 'text/csv',
-                disposition: 'attachment'
-            }
-        ]
+        from: EMAIL_FROM, 
+        subject: `📊 Weekly Report: ${church.name}`,
+        text: `Attached is your automated financial report from Seabe Digital.`,
+        attachments: [{ content: attachment, filename: `${churchCode}_Report.csv`, type: 'text/csv', disposition: 'attachment' }]
     };
 
     try {
-        console.log(`📤 Sending via SendGrid API...`);
         await sgMail.send(msg);
-        console.log("✅ SendGrid SUCCESS");
         return `✅ Sent to ${church.email}`;
     } catch (error) { 
-        console.error("❌ SendGrid ERROR:", error.response ? error.response.body : error);
-        return `❌ Failed: ${error.message}`; 
+        console.error("❌ SendGrid Error:", error.message);
+        return `❌ Failed for ${churchCode}`; 
     }
 }
 
 // --- 🕰️ SCHEDULED TASKS ---
 cron.schedule('0 8 * * 1', async () => {
+    console.log("⏰ Running Monday Reports...");
     for (const church of cachedChurches) {
         if (church.code && church.email) await emailReport(church.code);
     }
 }, { timezone: "Africa/Johannesburg" });
 
-// --- 📄 PDF & HELPERS ---
+// --- 📄 PDF FACTORY ---
 function generatePDF(type, amount, ref, date, phone, churchName) {
     const doc = new PDFDocument({ size: 'A5', margin: 50 });
     const filename = `receipt_${Date.now()}_${phone.slice(-4)}.pdf`;
@@ -189,14 +173,7 @@ function generatePDF(type, amount, ref, date, phone, churchName) {
 async function logToSheet(phone, churchCode, type, amount, ref) {
     const doc = await getDoc();
     const sheet = doc.sheetsByIndex[0]; 
-    await sheet.addRow({ 
-        "Church Code": churchCode, 
-        Date: new Date().toLocaleString(), 
-        "Name/Phone": phone, 
-        Type: type, 
-        Amount: amount, 
-        Reference: ref 
-    });
+    await sheet.addRow({ "Church Code": churchCode, Date: new Date().toLocaleString(), "Name/Phone": phone, Type: type, Amount: amount, Reference: ref });
 }
 
 function getAdSuffix(lang, churchCode) {
@@ -215,6 +192,7 @@ app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
     let reply = "";
 
+    // Admin Command
     if (incomingMsg.startsWith('report ')) {
         const targetCode = incomingMsg.split(' ')[1].toUpperCase();
         reply = await emailReport(targetCode);
@@ -230,7 +208,6 @@ app.post('/whatsapp', async (req, res) => {
     }
 
     if (!churchCode) {
-        // ONBOARDING
         if (!userSession[cleanPhone]?.onboarding) {
             let list = "Welcome to Seabe! 🇿🇦\nPlease select your church:\n";
             cachedChurches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
@@ -313,7 +290,7 @@ app.post('/whatsapp', async (req, res) => {
     res.type('text/xml').send(twiml.toString());
 });
 
-app.post('/payment-success', (req, res) => res.send("<h1>Success!</h1>"));
+app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1><p>You can return to WhatsApp.</p>"));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ Seabe Platform running on ${PORT}`));
