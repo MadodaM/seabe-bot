@@ -8,6 +8,7 @@ const sgMail = require('@sendgrid/mail');
 const cron = require('node-cron');
 const { MessagingResponse } = require('twilio').twiml;
 const { createPaymentLink } = require('./services/paystack');
+const { createPaymentLink, createSubscriptionLink } = require('./services/paystack');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
 
@@ -230,14 +231,17 @@ app.post('/whatsapp', async (req, res) => {
         const church = cachedChurches.find(c => c.code === churchCode);
         const churchName = church ? church.name : "Church";
         
+        // 👇 UPDATED MENU with Option 5
         if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
             userSession[cleanPhone].step = 'MENU';
-            reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* ${church.eventName || 'Event'} (R${church.eventPrice || '0'}) 🎟️\n*4.* Switch Church 🔄` + getAdSuffix('ENGLISH', churchCode);
+            reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* ${church.eventName || 'Event'} (R${church.eventPrice || '0'}) 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner (Auto) 🔁` + getAdSuffix('ENGLISH', churchCode);
         }
-        else if (['1', '2', '3'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'MENU') {
+        // 👇 UPDATED CHOICES to include '5'
+        else if (['1', '2', '3', '5'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'MENU') {
             userSession[cleanPhone].step = 'PAY';
             userSession[cleanPhone].choice = incomingMsg;
             if (incomingMsg === '3') reply = `Confirm Ticket for ${church.eventName} (R${church.eventPrice})?\nReply *Yes*`;
+            else if (incomingMsg === '5') reply = "Enter Monthly Amount (e.g. R500):"; // 👈 New Prompt for Recurring
             else reply = "Enter Amount (e.g. R100):";
         }
         else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
@@ -250,7 +254,9 @@ app.post('/whatsapp', async (req, res) => {
         }
         else if (userSession[cleanPhone]?.step === 'PAY') {
             let amount = incomingMsg.replace(/\D/g,''); 
-            let type = userSession[cleanPhone].choice === '1' ? 'OFFERING' : 'TITHE';
+            
+            // 👇 LOGIC: Map Choice 5 to 'RECURRING'
+            let type = userSession[cleanPhone].choice === '1' ? 'OFFERING' : (userSession[cleanPhone].choice === '5' ? 'RECURRING' : 'TITHE');
             
             if (userSession[cleanPhone].choice === '3') {
                 const sheetPrice = (church.eventPrice || '0').toString().replace(/\D/g,'');
@@ -260,7 +266,6 @@ app.post('/whatsapp', async (req, res) => {
                 else { reply = "❌ Cancelled."; twiml.message(reply); res.type('text/xml').send(twiml.toString()); return; }
             }
 
-            // 👇 THIS IS WHERE YOU WERE MISSING THE DEFINITION 👇
             const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
             const systemEmail = `${cleanPhone}@seabe.io`;
             
@@ -268,11 +273,15 @@ app.post('/whatsapp', async (req, res) => {
             const finalType = type;
             const finalAmount = amount;
             const finalRef = ref;
-            // Get subaccount from memory
             const finalSubaccount = church.subaccount; 
 
-            // Pass subaccount to Paystack
-            const link = await createPaymentLink(amount, ref, systemEmail, finalSubaccount);
+            // 👇 FORK: Choose Recurring vs Normal Payment
+            let link;
+            if (userSession[cleanPhone].choice === '5') {
+                 link = await createSubscriptionLink(amount, ref, systemEmail, finalSubaccount);
+            } else {
+                 link = await createPaymentLink(amount, ref, systemEmail, finalSubaccount);
+            }
             
             if (link) {
                 reply = `Tap to pay R${amount}:\n👉 ${link}`;
