@@ -56,7 +56,6 @@ async function refreshCache() {
         const churchRows = await churchSheet.getRows();
         
         cachedChurches = churchRows.map(row => {
-            // Safety: Handle different header spellings
             const eventName = row.get('Event_Name') || row.get('Event Name') || 'Special Event';
             const eventPrice = row.get('Event_Price') || row.get('Event Price') || '0';
             const email = row.get('Treasurer_Email') || row.get('Treasurer Email');
@@ -102,17 +101,13 @@ async function registerUser(phone, churchCode) {
     await userSheet.addRow({ Phone: phone, Church_Code: churchCode });
 }
 
-// 🆕 NEW: Function to DELETE user from Google Sheet
 async function removeUser(phone) {
     try {
         const doc = await getDoc();
-        const userSheet = doc.sheetsByIndex[3]; // Users Tab
+        const userSheet = doc.sheetsByIndex[3]; 
         const rows = await userSheet.getRows();
         const rowToDelete = rows.find(r => r.get('Phone') === phone);
-        if (rowToDelete) {
-            await rowToDelete.delete(); // 🗑️ Delete the row
-            console.log(`🗑️ Removed user: ${phone}`);
-        }
+        if (rowToDelete) { await rowToDelete.delete(); }
     } catch (e) { console.error("Remove Error:", e); }
 }
 
@@ -178,10 +173,18 @@ function generatePDF(type, amount, ref, date, phone, churchName) {
     return filename;
 }
 
+// 📝 UPDATED LOG FUNCTION (Matches "Church Code" with space)
 async function logToSheet(phone, churchCode, type, amount, ref) {
     const doc = await getDoc();
     const sheet = doc.sheetsByIndex[0]; 
-    await sheet.addRow({ "Church Code": churchCode, Date: new Date().toLocaleString(), "Name/Phone": phone, Type: type, Amount: amount, Reference: ref });
+    await sheet.addRow({ 
+        "Church Code": churchCode, // 👈 Ensures space matches header
+        Date: new Date().toLocaleString(), 
+        "Name/Phone": phone, 
+        Type: type, 
+        Amount: amount, 
+        Reference: ref 
+    });
 }
 
 function getAdSuffix(lang, churchCode) {
@@ -254,55 +257,48 @@ app.post('/whatsapp', async (req, res) => {
             reply = list;
             userSession[cleanPhone] = { onboarding: true };
         }
-        // 👇 FIXED PAY LOGIC START 👇
+        // 👇 FIXED PAYMENT LOGIC WITH SAFETY LOCK 🔒
         else if (userSession[cleanPhone]?.step === 'PAY') {
             let amount = incomingMsg.replace(/\D/g,''); 
             let type = userSession[cleanPhone].choice === '1' ? 'OFFERING' : 'TITHE';
             
-            // TICKET LOGIC (Option 3)
             if (userSession[cleanPhone].choice === '3') {
-                // 1. Clean the Price from Sheet (Remove 'R' or spaces)
                 const sheetPrice = (church.eventPrice || '0').toString().replace(/\D/g,'');
-
-                // 2. Smart Affirmation Check (Yes, Y, Yeah, Ok, Sure)
                 const isAffirmative = ['yes', 'y', 'yeah', 'yebo', 'ok', 'sure', 'confirm'].some(w => incomingMsg.includes(w));
-                
-                // 3. Price Match Check (If user typed "150" instead of "Yes")
                 const isPriceMatch = amount === sheetPrice;
-
-                if (isAffirmative || isPriceMatch) { 
-                    amount = sheetPrice; 
-                    type = 'TICKET'; 
-                } 
-                else { 
-                    reply = "❌ Transaction Cancelled.\nReply *Hi* to start over."; 
-                    twiml.message(reply); 
-                    res.type('text/xml').send(twiml.toString()); 
-                    return; 
-                }
+                if (isAffirmative || isPriceMatch) { amount = sheetPrice; type = 'TICKET'; } 
+                else { reply = "❌ Cancelled."; twiml.message(reply); res.type('text/xml').send(twiml.toString()); return; }
             }
 
             const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}`;
             const systemEmail = `${cleanPhone}@seabe.io`;
             
+            // 🔒 FREEZE VARIABLES HERE
+            const finalChurchCode = churchCode; 
+            const finalType = type;
+            const finalAmount = amount;
+            const finalRef = ref;
+
             const link = await createPaymentLink(amount, ref, systemEmail);
             
             if (link) {
                 reply = `Tap to pay R${amount}:\n👉 ${link}`;
                 if (client) {
                     setTimeout(async () => {
-                        const pdfName = generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, churchName);
+                        // USE FROZEN VARIABLES
+                        const pdfName = generatePDF(finalType, finalAmount, finalRef, new Date().toLocaleString(), cleanPhone, churchName);
                         const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
                         const pdfUrl = `https://${hostUrl}/public/receipts/${pdfName}`;
-                        try { await client.messages.create({ from: 'whatsapp:+14155238886', to: sender, body: `🎉 Payment Received! ${getAdSuffix('ENGLISH', churchCode)}`, mediaUrl: [pdfUrl] }); } catch(e) {}
-                        await logToSheet(cleanPhone, churchCode, type, amount, ref);
+                        try { await client.messages.create({ from: 'whatsapp:+14155238886', to: sender, body: `🎉 Payment Received! ${getAdSuffix('ENGLISH', finalChurchCode)}`, mediaUrl: [pdfUrl] }); } catch(e) {}
+                        
+                        // LOG WITH FROZEN VARIABLES
+                        await logToSheet(cleanPhone, finalChurchCode, finalType, finalAmount, finalRef);
                     }, 15000);
                 }
-            } else { reply = "⚠️ Error creating payment link. Please try again."; }
+            } else { reply = "⚠️ Error creating link."; }
 
             userSession[cleanPhone].step = 'MENU';
         } 
-        // 👆 FIXED PAY LOGIC END 👆
         else { reply = "Reply *Hi* to see the menu."; }
     }
 
@@ -310,7 +306,7 @@ app.post('/whatsapp', async (req, res) => {
     res.type('text/xml').send(twiml.toString());
 });
 
-app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1><p>You can return to WhatsApp.</p>"));
+app.post('/payment-success', (req, res) => res.send("<h1>Success!</h1>"));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ Seabe Platform running on ${PORT}`));
