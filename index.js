@@ -9,31 +9,44 @@ const { createPaymentLink } = require('./services/stitch');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
 
+// --- 🎟️ EVENT CONFIGURATION (Change this for your event) ---
+const EVENT_CONFIG = {
+    name: "Men's Conference 2026",
+    price: 150, // R150
+    active: true // Set to false to hide option 3
+};
+
 // --- TRANSLATIONS ---
 const TRANSLATIONS = {
     'ENGLISH': {
         welcome: "Welcome to Seabe! 🇿🇦\n\nChoose your language:\n*1.* English\n*2.* isiZulu\n*3.* Sesotho",
-        menu: "Welcome! 👋\nReply with a number:\n*1.* General Offering 🎁\n*2.* Pay Tithe (10%) 🏛️",
+        menu: `Welcome! 👋\nReply with a number:\n*1.* General Offering 🎁\n*2.* Pay Tithe (10%) 🏛️\n*3.* ${EVENT_CONFIG.name} (R${EVENT_CONFIG.price}) 🎟️`,
         ask_offering: "Amen! 🎁\nHow much is your *Offering*? (e.g. R100)",
         ask_tithe: "Bringing the full tithe. 🏛️\nEnter amount: (e.g. R500)",
+        ticket_confirm: `Great! One ticket for *${EVENT_CONFIG.name}* is R${EVENT_CONFIG.price}.\nReply *'Yes'* to confirm.`,
         click_to_pay: "Tap to pay",
         receipt_text: "Attached is your official receipt. Thank you! 🙏",
+        ticket_text: "Attached is your TICKET. Please show this at the door! 🎟️",
         news_header: "📢 *Church News:*"
     },
     'ZULU': {
-        menu: "Siyakwamukela! 👋\nPhendula ngenombolo:\n*1.* Umnikelo Jikelele 🎁\n*2.* Okweshumi (10%) 🏛️",
+        menu: `Siyakwamukela! 👋\nPhendula ngenombolo:\n*1.* Umnikelo Jikelele 🎁\n*2.* Okweshumi (10%) 🏛️\n*3.* ${EVENT_CONFIG.name} (R${EVENT_CONFIG.price}) 🎟️`,
         ask_offering: "Amen! 🎁\nUngakanani *Umnikelo* wakho? (isib. R100)",
         ask_tithe: "Ukuletha okweshumi okuphelele. 🏛️\nFaka inani: (isib. R500)",
+        ticket_confirm: `Kuhle! Ithikithi le-*${EVENT_CONFIG.name}* li-R${EVENT_CONFIG.price}.\nPhendula ngo-*'Yes'* ukuze uqinisekise.`,
         click_to_pay: "Cindezela ukukhokha",
         receipt_text: "Namathisela irisidi lakho elisemthethweni. Siyabonga! 🙏",
+        ticket_text: "Namathisela ITHIKITHI lakho. Sicela ulibonise emnyango! 🎟️",
         news_header: "📢 *Izaziso:*"
     },
     'SOTHO': {
-        menu: "Re a o amohela! 👋\nAraba ka nomoro:\n*1.* Nyehelo 🎁\n*2.* Boshome (10%) 🏛️",
+        menu: `Re a o amohela! 👋\nAraba ka nomoro:\n*1.* Nyehelo 🎁\n*2.* Boshome (10%) 🏛️\n*3.* ${EVENT_CONFIG.name} (R${EVENT_CONFIG.price}) 🎟️`,
         ask_offering: "Amen! 🎁\nKe bokae *Nyehelo* ea hau? (mohl. R100)",
         ask_tithe: "O tlisa boshome bo feletseng. 🏛️\nKenya chelete: (mohl. R500)",
+        ticket_confirm: `Ho lokile! Tekete ea *${EVENT_CONFIG.name}* ke R${EVENT_CONFIG.price}.\nAraba ka *'Yes'* ho tiisa.`,
         click_to_pay: "Tobetsa ho lefa",
         receipt_text: "Re rometse rasiti ea hau ea molao. Re a leboha! 🙏",
+        ticket_text: "Re rometse TEKETE ea hau. Ka kopo e bontše monyako! 🎟️",
         news_header: "📢 *Tsebisano:*"
     }
 };
@@ -56,7 +69,7 @@ app.use(bodyParser.json());
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
 let userSession = {}; 
-let activeAds = []; // Store ads in memory
+let activeAds = []; 
 
 // --- 📢 AD ENGINE ---
 async function fetchAds() {
@@ -65,71 +78,72 @@ async function fetchAds() {
         const serviceAccountAuth = new JWT({ email: GOOGLE_EMAIL, key: GOOGLE_KEY, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
         const doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);
         await doc.loadInfo();
-        
-        // Assume 'Ads' is the second tab (index 1)
         const sheet = doc.sheetsByIndex[1]; 
         if (!sheet) return;
-
         const rows = await sheet.getRows();
-        
-        // Filter only rows where Status is 'Active'
         activeAds = rows
             .filter(row => row.get('Status') && row.get('Status').trim().toLowerCase() === 'active')
-            .map(row => ({
-                ENGLISH: row.get('English'),
-                ZULU: row.get('Zulu'),
-                SOTHO: row.get('Sotho')
-            }));
-        
+            .map(row => ({ ENGLISH: row.get('English'), ZULU: row.get('Zulu'), SOTHO: row.get('Sotho') }));
         console.log(`📢 Ad Engine: Loaded ${activeAds.length} active ads.`);
     } catch (e) { console.error("❌ Ad Fetch Error:", e.message); }
 }
-
-// Refresh ads every 10 minutes
 setInterval(fetchAds, 600000);
-fetchAds(); // Initial fetch on startup
+fetchAds();
 
 function getAdSuffix(lang) {
     if (activeAds.length === 0) return "";
     const randomAd = activeAds[Math.floor(Math.random() * activeAds.length)];
-    const adText = randomAd[lang] || randomAd['ENGLISH']; // Fallback to English
+    const adText = randomAd[lang] || randomAd['ENGLISH'];
     const header = TRANSLATIONS[lang].news_header;
     return `\n\n----------------\n${header}\n${adText}`;
 }
 
-// --- HELPERS ---
-function generateReceipt(amount, ref, date, phone) {
+// --- 📄 PDF FACTORY (UPDATED FOR TICKETS) ---
+function generatePDF(type, amount, ref, date, phone) {
     const doc = new PDFDocument({ size: 'A5', margin: 50 });
-    const filename = `receipt_${Date.now()}_${phone.slice(-4)}.pdf`;
+    const filename = `${type}_${Date.now()}_${phone.slice(-4)}.pdf`;
     const filePath = path.join(__dirname, 'public', 'receipts', filename);
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)){ fs.mkdirSync(dir, { recursive: true }); }
     const stream = fs.createWriteStream(filePath);
     doc.pipe(stream);
     
+    // LOGO
     const logoPath = path.join(__dirname, 'public', 'logo.png');
     if (fs.existsSync(logoPath)) { doc.image(logoPath, 50, 40, { width: 50 }); doc.moveDown(2); }
 
-    doc.fontSize(20).text('OFFICIAL RECEIPT', 50, 100, { align: 'right', color: '#333' });
+    // 🔴 TICKET DESIGN VS RECEIPT DESIGN
+    const isTicket = type === 'TICKET';
+    const title = isTicket ? 'ADMIT ONE' : 'OFFICIAL RECEIPT';
+    const color = isTicket ? '#D32F2F' : '#333'; // Red for Tickets, Black for Receipts
+
+    doc.fontSize(24).text(title, 50, 100, { align: 'right', color: color });
     doc.moveDown();
-    doc.fontSize(10).text('Seabe Digital Treasury', { align: 'right' });
+    
+    if (isTicket) {
+        doc.fontSize(14).text(`EVENT: ${EVENT_CONFIG.name}`, { align: 'right' });
+    } else {
+        doc.fontSize(10).text('Seabe Digital Treasury', { align: 'right' });
+    }
     
     doc.moveDown();
-    doc.moveTo(50, 160).lineTo(370, 160).stroke();
+    doc.moveTo(50, 170).lineTo(370, 170).stroke();
     
     doc.moveDown(2);
-    doc.fontSize(12).text(`Date: ${date}`, 50);
+    doc.fillColor('#000').fontSize(12).text(`Date: ${date}`, 50);
     doc.moveDown(0.5);
     doc.text(`Reference: ${ref}`);
     doc.moveDown(0.5);
-    doc.text(`Contributor: ${phone}`);
+    doc.text(`Holder: ${phone}`);
     
     doc.moveDown(2);
-    doc.rect(50, doc.y, 320, 40).fillAndStroke('#f0f0f0', '#333');
-    doc.fillColor('#000').fontSize(16).text(`AMOUNT:  R ${amount}.00`, 70, doc.y - 30);
+    doc.rect(50, doc.y, 320, 40).fillAndStroke('#f0f0f0', color);
+    doc.fillColor('#000').fontSize(16).text(`PAID:  R ${amount}.00`, 70, doc.y - 30);
     
     doc.moveDown(4);
-    doc.fontSize(10).text('Thank you for your generosity.', { align: 'center' });
+    const footer = isTicket ? "Please show this PDF at the entrance." : "Thank you for your generosity.";
+    doc.fontSize(10).text(footer, { align: 'center' });
+    
     doc.end();
     return filename;
 }
@@ -164,18 +178,56 @@ app.post('/whatsapp', async (req, res) => {
         else if (incomingMsg === '2') userLang = 'ZULU';
         else if (incomingMsg === '3') userLang = 'SOTHO';
         userSession[cleanPhone] = { step: 'PAYMENT_SELECT', language: userLang };
-        
-        // Show Menu + Ad
         reply = TRANSLATIONS[userLang].menu + getAdSuffix(userLang);
     }
-    else if (userSession[cleanPhone]?.step === 'PAYMENT_SELECT' && ['1', '2'].includes(incomingMsg)) {
-        const paymentType = incomingMsg === '1' ? 'OFFERING' : 'TITHE';
-        userSession[cleanPhone].paymentType = paymentType;
-        userSession[cleanPhone].step = 'AMOUNT_INPUT';
-        if (paymentType === 'OFFERING') reply = TRANSLATIONS[userLang].ask_offering;
-        else reply = TRANSLATIONS[userLang].ask_tithe;
+    else if (userSession[cleanPhone]?.step === 'PAYMENT_SELECT' && ['1', '2', '3'].includes(incomingMsg)) {
+        if (incomingMsg === '3') {
+            // TICKET FLOW 🎟️
+            userSession[cleanPhone].paymentType = 'TICKET';
+            userSession[cleanPhone].step = 'TICKET_CONFIRM';
+            reply = TRANSLATIONS[userLang].ticket_confirm;
+        } else {
+            // NORMAL FLOW
+            const paymentType = incomingMsg === '1' ? 'OFFERING' : 'TITHE';
+            userSession[cleanPhone].paymentType = paymentType;
+            userSession[cleanPhone].step = 'AMOUNT_INPUT';
+            if (paymentType === 'OFFERING') reply = TRANSLATIONS[userLang].ask_offering;
+            else reply = TRANSLATIONS[userLang].ask_tithe;
+        }
+    }
+    // HANDLE TICKET CONFIRMATION ("Yes")
+    else if (userSession[cleanPhone]?.step === 'TICKET_CONFIRM' && incomingMsg.includes('yes')) {
+        const amount = EVENT_CONFIG.price;
+        const churchRef = `TICKET-${cleanPhone.slice(-4)}`;
+        const compoundRef = `${cleanPhone}__${churchRef}`;
+        
+        const paymentUrl = await createPaymentLink(amount + ".00", compoundRef); 
+        const clickText = TRANSLATIONS[userLang].click_to_pay;
+        reply = `${clickText} R${amount}:\n👉 ${paymentUrl}`;
+        delete userSession[cleanPhone]; 
+
+        if (client) {
+            setTimeout(async () => {
+                const now = new Date().toLocaleString();
+                // GENERATE TICKET PDF
+                const pdfFilename = generatePDF('TICKET', amount, churchRef, now, cleanPhone);
+                const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
+                const pdfUrl = `https://${hostUrl}/public/receipts/${pdfFilename}`;
+
+                try {
+                    const ticketMsg = TRANSLATIONS[userLang].ticket_text;
+                    await client.messages.create({
+                        from: 'whatsapp:+14155238886', to: sender,
+                        body: `🎉 *Seabe* \n\n${ticketMsg} ${getAdSuffix(userLang)}`,
+                        mediaUrl: [pdfUrl]
+                    });
+                } catch (err) { console.error("❌ Receipt Failed"); }
+                await logToSheet(cleanPhone, 'TICKET', amount, churchRef);
+            }, 15000); 
+        }
     }
     else if (incomingMsg.match(/R?\d+/)) {
+        // NORMAL OFFERING LOGIC
         const amount = incomingMsg.replace(/\D/g,''); 
         const paymentType = userSession[cleanPhone]?.paymentType || 'OFFERING';
         const churchRef = `${paymentType}-${cleanPhone.slice(-4)}`;
@@ -189,21 +241,18 @@ app.post('/whatsapp', async (req, res) => {
         if (client) {
             setTimeout(async () => {
                 const now = new Date().toLocaleString();
-                const pdfFilename = generateReceipt(amount, churchRef, now, cleanPhone);
+                const pdfFilename = generatePDF(paymentType, amount, churchRef, now, cleanPhone);
                 const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
                 const pdfUrl = `https://${hostUrl}/public/receipts/${pdfFilename}`;
 
                 try {
                     const receiptText = TRANSLATIONS[userLang].receipt_text;
-                    // Send Receipt + Ad
                     await client.messages.create({
-                        from: 'whatsapp:+14155238886', 
-                        to: sender,
+                        from: 'whatsapp:+14155238886', to: sender,
                         body: `🎉 *Seabe* \n\n${receiptText} ${getAdSuffix(userLang)}`,
                         mediaUrl: [pdfUrl]
                     });
-                } catch (err) { console.error("❌ Receipt Failed", err); }
-                
+                } catch (err) { console.error("❌ Receipt Failed"); }
                 await logToSheet(cleanPhone, paymentType, amount, churchRef);
             }, 15000); 
         }
