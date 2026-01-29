@@ -35,7 +35,8 @@ app.use('/public', express.static(path.join(__dirname, 'public')));
 // --- 🧠 MEMORY ---
 let userSession = {}; 
 let cachedChurches = []; 
-let cachedAds = [];      
+let cachedAds = [];  
+let cachedEvents = []; // 👈 NEW: Store events separately
 
 // --- 🔄 DATABASE ENGINE ---
 async function getDoc() {
@@ -50,16 +51,12 @@ async function refreshCache() {
     try {
         const doc = await getDoc();
         
-        // Load Churches (Tab 3)
+        // 1. Load Churches (Tab 3)
         const churchSheet = doc.sheetsByIndex[2]; 
         const churchRows = await churchSheet.getRows();
-        
         cachedChurches = churchRows.map(row => {
             const code = row.get('Church Code') || row.get('Code'); 
-            const eventName = row.get('Event_Name') || row.get('Event Name') || 'Special Event';
-            const eventPrice = row.get('Event_Price') || row.get('Event Price') || '0';
             const subaccount = row.get('Subaccount_Code') || row.get('Subaccount Code') || null;
-
             let email = "";
             const rawData = row.toObject(); 
             for (const key in rawData) {
@@ -68,17 +65,29 @@ async function refreshCache() {
                     break;
                 }
             }
-            return { code, name: row.get('Name'), eventName, eventPrice, email, subaccount };
+            return { code, name: row.get('Name'), email, subaccount };
         });
 
-        // Load Ads (Tab 2)
+        // 2. Load Ads (Tab 2)
         const adSheet = doc.sheetsByIndex[1];
         const adRows = await adSheet.getRows();
         cachedAds = adRows.filter(r => r.get('Status') === 'Active').map(r => ({
              target: r.get('Target'), ENGLISH: r.get('English'), ZULU: r.get('Zulu'), SOTHO: r.get('Sotho')
         }));
+
+        // 3. 👇 NEW: Load Events (Tab 5) - Assuming Index 4 if it's the 5th tab
+        const eventSheet = doc.sheetsByIndex[4]; 
+        const eventRows = await eventSheet.getRows();
+        cachedEvents = eventRows
+            .filter(r => r.get('Status') === 'Active')
+            .map(r => ({
+                churchCode: r.get('Church Code'),
+                name: r.get('Event Name'),
+                price: r.get('Price'),
+                date: r.get('Date')
+            }));
         
-        console.log(`♻️ System Ready: ${cachedChurches.length} Churches Active.`);
+        console.log(`♻️ Ready: ${cachedChurches.length} Churches, ${cachedEvents.length} Active Events.`);
     } catch (e) { console.error("❌ Cache Error:", e.message); }
 }
 setInterval(refreshCache, 600000); 
@@ -166,7 +175,7 @@ cron.schedule('0 8 * * 1', async () => {
 }, { timezone: "Africa/Johannesburg" });
 
 // --- 📄 PDF & HELPERS ---
-function generatePDF(type, amount, ref, date, phone, churchName) {
+function generatePDF(type, amount, ref, date, phone, churchName, eventDetail = '') {
     const doc = new PDFDocument({ size: 'A5', margin: 50 });
     const filename = `receipt_${Date.now()}_${phone.slice(-4)}.pdf`;
     const filePath = path.join(__dirname, 'public', 'receipts', filename);
@@ -178,7 +187,9 @@ function generatePDF(type, amount, ref, date, phone, churchName) {
     doc.fontSize(20).text(type === 'TICKET' ? 'ADMIT ONE' : 'RECEIPT', 50, 100, { align: 'right' });
     doc.fontSize(10).text(churchName, { align: 'right' });
     doc.moveDown(); doc.moveTo(50, 160).lineTo(370, 160).stroke(); doc.moveDown(2);
-    doc.text(`Ref: ${ref}`); doc.text(`Member: ${phone}`); doc.moveDown(2);
+    doc.text(`Ref: ${ref}`); doc.text(`Member: ${phone}`); 
+    if(eventDetail) doc.text(`Event: ${eventDetail}`); // Add Event Name to PDF
+    doc.moveDown(2);
     doc.fontSize(16).text(`AMOUNT:  R ${amount}.00`, 50);
     doc.end();
     return filename;
@@ -190,13 +201,11 @@ async function logToSheet(phone, churchCode, type, amount, ref) {
     await sheet.addRow({ "Church Code": churchCode, Date: new Date().toLocaleString(), "Name/Phone": phone, Type: type, Amount: amount, Reference: ref });
 }
 
-// 👇 UPDATED: Uses user's selected language
 function getAdSuffix(lang, churchCode) {
-    const safeLang = lang || 'ENGLISH'; // Default to English
+    const safeLang = lang || 'ENGLISH'; 
     const relevantAds = cachedAds.filter(ad => ad.target === 'Global' || ad.target === churchCode);
     if (relevantAds.length === 0) return "";
     const randomAd = relevantAds[Math.floor(Math.random() * relevantAds.length)];
-    // Fallback to English if translation is missing
     const adText = randomAd[safeLang] || randomAd['ENGLISH'];
     return `\n\n----------------\n📢 *News/Ads:*\n${adText}`;
 }
@@ -248,35 +257,67 @@ app.post('/whatsapp', async (req, res) => {
         const church = cachedChurches.find(c => c.code === churchCode);
         const churchName = church ? church.name : "Church";
         
-        // 👇 MAIN MENU (With Option 6)
+        // 👇 MAIN MENU
         if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
             userSession[cleanPhone].step = 'MENU';
             const currentLang = userSession[cleanPhone].lang || 'ENGLISH';
-            reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* ${church.eventName || 'Event'} (R${church.eventPrice || '0'}) 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner (Auto) 🔁\n*6.* Language / Lulwimi 🗣️` + getAdSuffix(currentLang, churchCode);
+            reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner (Auto) 🔁\n*6.* Language / Lulwimi 🗣️` + getAdSuffix(currentLang, churchCode);
         }
         
-        // 👇 LANGUAGE MENU TRIGGER
+        // 👇 EVENT SELECTION LOGIC (New)
+        else if (incomingMsg === '3' && userSession[cleanPhone]?.step === 'MENU') {
+            // Find events for this church
+            const events = cachedEvents.filter(e => e.churchCode === churchCode);
+            
+            if (events.length === 0) {
+                reply = "⚠️ No upcoming events found.";
+                userSession[cleanPhone].step = 'MENU';
+            } else {
+                let list = "*Select an Event:*\n";
+                events.forEach((e, index) => {
+                    list += `*${index + 1}.* ${e.name} (R${e.price})\n`;
+                });
+                reply = list;
+                userSession[cleanPhone].step = 'EVENT_SELECT';
+                userSession[cleanPhone].availableEvents = events; // Temp store events
+            }
+        }
+
+        // 👇 HANDLE EVENT CHOICE
+        else if (userSession[cleanPhone]?.step === 'EVENT_SELECT') {
+            const index = parseInt(incomingMsg) - 1;
+            const events = userSession[cleanPhone].availableEvents;
+            
+            if (events && events[index]) {
+                const selectedEvent = events[index];
+                userSession[cleanPhone].step = 'PAY';
+                userSession[cleanPhone].choice = 'EVENT';
+                userSession[cleanPhone].selectedEvent = selectedEvent; // Store choice
+                
+                reply = `Confirm Ticket for *${selectedEvent.name}* (R${selectedEvent.price})?\nReply *Yes*`;
+            } else {
+                reply = "⚠️ Invalid selection. Reply *Hi* to restart.";
+            }
+        }
+
+        // ... Language Logic ...
         else if (incomingMsg === '6' && userSession[cleanPhone]?.step === 'MENU') {
             userSession[cleanPhone].step = 'LANG';
             reply = "Select Language / Khetha Lulwimi:\n\n*1.* English 🇬🇧\n*2.* isiZulu 🇿🇦\n*3.* Sesotho 🇱🇸";
         }
-        
-        // 👇 LANGUAGE SELECTION LOGIC
         else if (['1', '2', '3'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'LANG') {
             if (incomingMsg === '1') userSession[cleanPhone].lang = 'ENGLISH';
             if (incomingMsg === '2') userSession[cleanPhone].lang = 'ZULU';
             if (incomingMsg === '3') userSession[cleanPhone].lang = 'SOTHO';
-            
             userSession[cleanPhone].step = 'MENU';
             reply = "✅ Language Updated! Reply *Hi* to see the menu.";
         }
 
-        // 👇 OTHER MENU OPTIONS (1-5)
-        else if (['1', '2', '3', '5'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'MENU') {
+        // ... Normal Payment Logic ...
+        else if (['1', '2', '5'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'MENU') {
             userSession[cleanPhone].step = 'PAY';
             userSession[cleanPhone].choice = incomingMsg;
-            if (incomingMsg === '3') reply = `Confirm Ticket for ${church.eventName} (R${church.eventPrice})?\nReply *Yes*`;
-            else if (incomingMsg === '5') reply = "Enter Monthly Amount (e.g. R500):";
+            if (incomingMsg === '5') reply = "Enter Monthly Amount (e.g. R500):";
             else reply = "Enter Amount (e.g. R100):";
         }
         else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
@@ -289,22 +330,32 @@ app.post('/whatsapp', async (req, res) => {
         }
         else if (userSession[cleanPhone]?.step === 'PAY') {
             let amount = incomingMsg.replace(/\D/g,''); 
-            let type = userSession[cleanPhone].choice === '1' ? 'OFFERING' : (userSession[cleanPhone].choice === '5' ? 'RECURRING' : 'TITHE');
-            
-            if (userSession[cleanPhone].choice === '3') {
-                const sheetPrice = (church.eventPrice || '0').toString().replace(/\D/g,'');
+            let type = '';
+            let eventNameForPdf = '';
+
+            // Handle Choices
+            if (userSession[cleanPhone].choice === '1') type = 'OFFERING';
+            else if (userSession[cleanPhone].choice === '5') type = 'RECURRING';
+            else if (userSession[cleanPhone].choice === 'EVENT') {
+                type = 'TICKET';
+                const evt = userSession[cleanPhone].selectedEvent;
+                amount = evt.price.toString().replace(/\D/g,'');
+                eventNameForPdf = evt.name;
+                
+                // Quick confirmation check
                 const isAffirmative = ['yes', 'y', 'yeah', 'yebo', 'ok', 'sure', 'confirm'].some(w => incomingMsg.includes(w));
-                const isPriceMatch = amount === sheetPrice;
-                if (isAffirmative || isPriceMatch) { amount = sheetPrice; type = 'TICKET'; } 
-                else { reply = "❌ Cancelled."; twiml.message(reply); res.type('text/xml').send(twiml.toString()); return; }
+                if (!isAffirmative && incomingMsg !== amount) {
+                     reply = "❌ Cancelled."; twiml.message(reply); res.type('text/xml').send(twiml.toString()); return;
+                }
             }
+            else type = 'TITHE'; // Default (Option 2)
 
             const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
             const systemEmail = `${cleanPhone}@seabe.io`;
             const finalSubaccount = church.subaccount; 
 
             let link;
-            if (userSession[cleanPhone].choice === '5') {
+            if (type === 'RECURRING') {
                  link = await createSubscriptionLink(amount, ref, systemEmail, finalSubaccount);
             } else {
                  link = await createPaymentLink(amount, ref, systemEmail, finalSubaccount);
@@ -315,7 +366,8 @@ app.post('/whatsapp', async (req, res) => {
                 const currentLang = userSession[cleanPhone].lang || 'ENGLISH';
                 if (client) {
                     setTimeout(async () => {
-                        const pdfName = generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, church.name);
+                        // Pass Event Name to PDF Generator
+                        const pdfName = generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, church.name, eventNameForPdf);
                         const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
                         const pdfUrl = `https://${hostUrl}/public/receipts/${pdfName}`;
                         try { await client.messages.create({ from: 'whatsapp:+14155238886', to: sender, body: `🎉 Payment Received! ${getAdSuffix(currentLang, churchCode)}`, mediaUrl: [pdfUrl] }); } catch(e) {}
