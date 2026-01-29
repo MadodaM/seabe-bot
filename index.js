@@ -55,24 +55,16 @@ async function refreshCache() {
         const churchSheet = doc.sheetsByIndex[2]; 
         const churchRows = await churchSheet.getRows();
         
-        // 🕵️‍♂️ DETECTIVE LOG: Print the raw headers the bot sees
-        console.log("🔍 DIAGNOSTIC - HEADERS FOUND:", churchSheet.headerValues);
-
         cachedChurches = churchRows.map(row => {
-            // Safety: Handle different header spellings
+            // ✅ FIX: Use 'Church Code' to match your sheet exactly
+            const code = row.get('Church Code') || row.get('Code'); 
+            
             const eventName = row.get('Event_Name') || row.get('Event Name') || 'Special Event';
             const eventPrice = row.get('Event_Price') || row.get('Event Price') || '0';
-            
-            // Try every possible spelling for Email
-            const email = row.get('Treasurer_Email') || row.get('Treasurer Email') || row.get('Email') || row.get('TreasurerEmail');
-
-            // 🕵️‍♂️ DETECTIVE LOG: Print what we found for this specific church
-            if (row.get('Code') === 'AFM') {
-                console.log(`🔍 DIAGNOSTIC - AFM DATA: Code=${row.get('Code')}, Email Found=${email}`);
-            }
+            const email = row.get('Treasurer_Email') || row.get('Treasurer Email');
 
             return {
-                code: row.get('Code'),
+                code: code, // This will now work
                 name: row.get('Name'),
                 eventName: eventName,
                 eventPrice: eventPrice,
@@ -125,11 +117,12 @@ async function removeUser(phone) {
 // --- 📧 REPORTING ENGINE ---
 async function emailReport(churchCode) {
     const church = cachedChurches.find(c => c.code === churchCode);
-    if (!church || !church.email) return `❌ Skipped ${churchCode} (No Email)`;
+    if (!church || !church.email) return `❌ Skipped ${churchCode} (No Email Found)`;
 
     const doc = await getDoc();
     const transSheet = doc.sheetsByIndex[0];
     const rows = await transSheet.getRows();
+    // ✅ FIX: Match 'Church Code' here too
     const churchRows = rows.filter(r => r.get('Church Code') === churchCode);
     
     if (churchRows.length === 0) return `⚠️ ${churchCode}: No transactions to report.`;
@@ -184,12 +177,12 @@ function generatePDF(type, amount, ref, date, phone, churchName) {
     return filename;
 }
 
-// 📝 UPDATED LOG FUNCTION (Matches "Church Code" with space)
+// 📝 UPDATED LOG FUNCTION
 async function logToSheet(phone, churchCode, type, amount, ref) {
     const doc = await getDoc();
     const sheet = doc.sheetsByIndex[0]; 
     await sheet.addRow({ 
-        "Church Code": churchCode, // 👈 Ensures space matches header
+        "Church Code": churchCode, 
         Date: new Date().toLocaleString(), 
         "Name/Phone": phone, 
         Type: type, 
@@ -268,7 +261,6 @@ app.post('/whatsapp', async (req, res) => {
             reply = list;
             userSession[cleanPhone] = { onboarding: true };
         }
-        // 👇 FIXED PAYMENT LOGIC WITH SAFETY LOCK 🔒
         else if (userSession[cleanPhone]?.step === 'PAY') {
             let amount = incomingMsg.replace(/\D/g,''); 
             let type = userSession[cleanPhone].choice === '1' ? 'OFFERING' : 'TITHE';
@@ -284,7 +276,7 @@ app.post('/whatsapp', async (req, res) => {
             const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}`;
             const systemEmail = `${cleanPhone}@seabe.io`;
             
-            // 🔒 FREEZE VARIABLES HERE
+            // 🔒 FREEZE VARIABLES
             const finalChurchCode = churchCode; 
             const finalType = type;
             const finalAmount = amount;
@@ -296,13 +288,10 @@ app.post('/whatsapp', async (req, res) => {
                 reply = `Tap to pay R${amount}:\n👉 ${link}`;
                 if (client) {
                     setTimeout(async () => {
-                        // USE FROZEN VARIABLES
                         const pdfName = generatePDF(finalType, finalAmount, finalRef, new Date().toLocaleString(), cleanPhone, churchName);
                         const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
                         const pdfUrl = `https://${hostUrl}/public/receipts/${pdfName}`;
                         try { await client.messages.create({ from: 'whatsapp:+14155238886', to: sender, body: `🎉 Payment Received! ${getAdSuffix('ENGLISH', finalChurchCode)}`, mediaUrl: [pdfUrl] }); } catch(e) {}
-                        
-                        // LOG WITH FROZEN VARIABLES
                         await logToSheet(cleanPhone, finalChurchCode, finalType, finalAmount, finalRef);
                     }, 15000);
                 }
