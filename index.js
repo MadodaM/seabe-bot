@@ -4,7 +4,8 @@ const bodyParser = require('body-parser');
 const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit');
-const nodemailer = require('nodemailer'); // 👈 NEW: Email Tool
+const nodemailer = require('nodemailer');
+const cron = require('node-cron'); // 👈 NEW: Timekeeper
 const { MessagingResponse } = require('twilio').twiml;
 const { createPaymentLink } = require('./services/stitch');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
@@ -16,9 +17,8 @@ const AUTH_TOKEN = process.env.TWILIO_AUTH;
 const GOOGLE_EMAIL = process.env.GOOGLE_EMAIL;
 const GOOGLE_KEY = process.env.GOOGLE_KEY ? process.env.GOOGLE_KEY.replace(/\\n/g, '\n') : null;
 const SHEET_ID = process.env.SHEET_ID;
-// 📧 EMAIL CONFIG (Add these to your .env file later)
-const EMAIL_USER = process.env.EMAIL_USER; // Your Gmail address
-const EMAIL_PASS = process.env.EMAIL_PASS; // Your App Password
+const EMAIL_USER = process.env.EMAIL_USER;
+const EMAIL_PASS = process.env.EMAIL_PASS;
 
 let client;
 try {
@@ -56,7 +56,7 @@ async function refreshCache() {
             name: row.get('Name'),
             eventName: row.get('Event_Name'),
             eventPrice: row.get('Event_Price'),
-            email: row.get('Treasurer_Email') // 👈 Capture Email
+            email: row.get('Treasurer_Email')
         }));
 
         // Load Ads (Tab 2)
@@ -74,6 +74,7 @@ async function refreshCache() {
         console.log(`♻️ Cache Updated: ${cachedChurches.length} Churches, ${cachedAds.length} Ads.`);
     } catch (e) { console.error("❌ Cache Error:", e.message); }
 }
+// Refresh cache every 10 mins
 setInterval(refreshCache, 600000); 
 refreshCache(); 
 
@@ -91,29 +92,25 @@ async function registerUser(phone, churchCode) {
     await userSheet.addRow({ Phone: phone, Church_Code: churchCode });
 }
 
-// --- 📧 REPORTING ENGINE (NEW) ---
+// --- 📧 REPORTING ENGINE ---
 async function emailReport(churchCode) {
-    // 1. Find Church & Email
     const church = cachedChurches.find(c => c.code === churchCode);
-    if (!church || !church.email) return "❌ Church or Email not found.";
+    if (!church || !church.email) return `❌ Skipped ${churchCode} (No Email)`;
 
-    // 2. Fetch & Filter Transactions
     const doc = await getDoc();
     const transSheet = doc.sheetsByIndex[0];
     const rows = await transSheet.getRows();
     
-    // Filter rows belonging to this church
+    // Filter rows for this church
     const churchRows = rows.filter(r => r.get('Church Code') === churchCode);
     
-    if (churchRows.length === 0) return "⚠️ No transactions found for this church.";
+    if (churchRows.length === 0) return `⚠️ ${churchCode}: No transactions to report.`;
 
-    // 3. Generate CSV Content
-    let csvContent = "Date,Type,Amount,Reference,Phone\n"; // Header
+    let csvContent = "Date,Type,Amount,Reference,Phone\n"; 
     churchRows.forEach(row => {
         csvContent += `${row.get('Date')},${row.get('Type')},${row.get('Amount')},${row.get('Reference')},${row.get('Name/Phone')}\n`;
     });
 
-    // 4. Send Email
     const transporter = nodemailer.createTransport({
         service: 'gmail',
         auth: { user: EMAIL_USER, pass: EMAIL_PASS }
@@ -123,21 +120,36 @@ async function emailReport(churchCode) {
         await transporter.sendMail({
             from: `"Seabe Bot" <${EMAIL_USER}>`,
             to: church.email,
-            subject: `📊 Financial Report: ${church.name}`,
-            text: `Attached is the latest transaction report for ${church.name}.`,
+            subject: `📊 Weekly Financial Report: ${church.name}`,
+            text: `Dear Treasurer,\n\nAttached is your automated weekly transaction report for ${church.name}.\n\nRegards,\nSeabe Digital Team`,
             attachments: [
-                {
-                    filename: `${churchCode}_Report_${Date.now()}.csv`,
-                    content: csvContent
-                }
+                { filename: `${churchCode}_Weekly_Report.csv`, content: csvContent }
             ]
         });
-        return `✅ Report sent to ${church.email}`;
+        return `✅ Sent to ${church.email}`;
     } catch (error) {
         console.error(error);
-        return "❌ Email failed. Check server logs.";
+        return `❌ Failed for ${churchCode}`;
     }
 }
+
+// --- 🕰️ SCHEDULED TASKS (NEW) ---
+// Syntax: '0 8 * * 1' = At 08:00 on Monday
+cron.schedule('0 8 * * 1', async () => {
+    console.log("⏰ Running Weekly Reports...");
+    
+    // Loop through ALL churches and send reports
+    for (const church of cachedChurches) {
+        if (church.code && church.email) {
+            console.log(`📤 Sending report for ${church.name}...`);
+            const result = await emailReport(church.code);
+            console.log(result);
+        }
+    }
+}, {
+    timezone: "Africa/Johannesburg"
+});
+
 
 // --- 📄 PDF & LOGGING ---
 function generatePDF(type, amount, ref, date, phone, churchName) {
@@ -186,7 +198,7 @@ app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
     let reply = "";
 
-    // 🛠️ ADMIN COMMAND: "Report [CODE]"
+    // Manual Report Trigger (For Admin Testing)
     if (incomingMsg.startsWith('report ')) {
         const targetCode = incomingMsg.split(' ')[1].toUpperCase();
         reply = await emailReport(targetCode);
