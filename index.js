@@ -51,53 +51,65 @@ async function refreshCache() {
     try {
         const doc = await getDoc();
         
-        // 1. Load Churches (Tab 3)
-        const churchSheet = doc.sheetsByIndex[2]; 
+        // 🛡️ SAFE LOADER: Find sheets by Title or Index
+        // Adjust these titles if your actual tab names are different!
+        const transSheet = doc.sheetsByTitle['Transactions'] || doc.sheetsByIndex[0];
+        const adSheet    = doc.sheetsByTitle['Ads']          || doc.sheetsByIndex[1];
+        const churchSheet= doc.sheetsByTitle['Churches']     || doc.sheetsByIndex[2];
+        const userSheet  = doc.sheetsByTitle['Users']        || doc.sheetsByIndex[3];
+        const eventSheet = doc.sheetsByTitle['Events']       || doc.sheetsByIndex[4];
+
+        if (!churchSheet) throw new Error("CRITICAL: 'Churches' tab not found!");
+
+        // 1. Load Churches
         const churchRows = await churchSheet.getRows();
-        
         cachedChurches = churchRows.map(row => {
-            // 👇 FIX: Trim spaces from Code
             const rawCode = row.get('Church Code') || row.get('Code');
             const code = rawCode ? rawCode.trim() : null; 
-            
             const subaccount = row.get('Subaccount_Code') || row.get('Subaccount Code');
             
             let email = "";
             const rawData = row.toObject(); 
             for (const key in rawData) {
                 if (typeof rawData[key] === 'string' && rawData[key].includes('@')) {
-                    email = rawData[key].trim(); // 👇 FIX: Trim email
+                    email = rawData[key].trim(); 
                     break;
                 }
             }
             return { code, name: row.get('Name'), email, subaccount: subaccount ? subaccount.trim() : null };
         });
 
-        // 2. Load Ads (Tab 2)
-        const adSheet = doc.sheetsByIndex[1];
-        const adRows = await adSheet.getRows();
-        cachedAds = adRows.filter(r => r.get('Status') && r.get('Status').trim() === 'Active') // 👇 FIX: Trim status
-            .map(r => ({
-                 target: r.get('Target') ? r.get('Target').trim() : 'Global', 
-                 ENGLISH: r.get('English'), 
-                 ZULU: r.get('Zulu'), 
-                 SOTHO: r.get('Sotho')
-            }));
+        // 2. Load Ads (Safe Check)
+        if (adSheet) {
+            const adRows = await adSheet.getRows();
+            cachedAds = adRows.filter(r => r.get('Status') && r.get('Status').trim() === 'Active')
+                .map(r => ({
+                     target: r.get('Target') ? r.get('Target').trim() : 'Global', 
+                     ENGLISH: r.get('English'), ZULU: r.get('Zulu'), SOTHO: r.get('Sotho')
+                }));
+        }
 
-        // 3. Load Events (Tab 5)
-        const eventSheet = doc.sheetsByIndex[4]; 
-        const eventRows = await eventSheet.getRows();
-        cachedEvents = eventRows
-            .filter(r => r.get('Status') && r.get('Status').trim() === 'Active') // 👇 FIX: "Active " now works!
-            .map(r => ({
-                churchCode: r.get('Church Code') ? r.get('Church Code').trim() : null, // 👇 FIX: Matches "AFM " to "AFM"
-                name: r.get('Event Name'),
-                price: r.get('Price'),
-                date: r.get('Date')
-            }));
+        // 3. Load Events (Safe Check)
+        if (eventSheet) {
+            const eventRows = await eventSheet.getRows();
+            cachedEvents = eventRows
+                .filter(r => r.get('Status') && r.get('Status').trim() === 'Active')
+                .map(r => ({
+                    churchCode: r.get('Church Code') ? r.get('Church Code').trim() : null,
+                    name: r.get('Event Name'),
+                    price: r.get('Price'),
+                    date: r.get('Date')
+                }));
+        } else {
+            console.log("⚠️ Warning: 'Events' tab not found. Skipping events.");
+            cachedEvents = []; // Empty events, but don't crash
+        }
         
-        console.log(`♻️ Ready: ${cachedChurches.length} Churches, ${cachedEvents.length} Active Events.`);
-    } catch (e) { console.error("❌ Cache Error:", e.message); }
+        console.log(`♻️ System Ready: ${cachedChurches.length} Churches, ${cachedEvents.length} Active Events.`);
+    } catch (e) { 
+        console.error("❌ CRITICAL CACHE ERROR:", e.message); 
+        // Keep old cache if refresh fails, to prevent downtime
+    }
 }
 
 // --- 👥 SMART USER MANAGEMENT ---
