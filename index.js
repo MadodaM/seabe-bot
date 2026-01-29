@@ -7,7 +7,6 @@ const PDFDocument = require('pdfkit');
 const nodemailer = require('nodemailer');
 const cron = require('node-cron');
 const { MessagingResponse } = require('twilio').twiml;
-// 👇 PAYSTACK IMPORT
 const { createPaymentLink } = require('./services/paystack');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
@@ -55,13 +54,21 @@ async function refreshCache() {
         // Load Churches (Tab 3)
         const churchSheet = doc.sheetsByIndex[2]; 
         const churchRows = await churchSheet.getRows();
-        cachedChurches = churchRows.map(row => ({
-            code: row.get('Code'),
-            name: row.get('Name'),
-            eventName: row.get('Event_Name'),
-            eventPrice: row.get('Event_Price'),
-            email: row.get('Treasurer_Email')
-        }));
+        
+        cachedChurches = churchRows.map(row => {
+            // Safety: Handle different header spellings
+            const eventName = row.get('Event_Name') || row.get('Event Name') || 'Special Event';
+            const eventPrice = row.get('Event_Price') || row.get('Event Price') || '0';
+            const email = row.get('Treasurer_Email') || row.get('Treasurer Email');
+
+            return {
+                code: row.get('Code'),
+                name: row.get('Name'),
+                eventName: eventName,
+                eventPrice: eventPrice,
+                email: email
+            };
+        });
 
         // Load Ads (Tab 2)
         const adSheet = doc.sheetsByIndex[1];
@@ -78,7 +85,6 @@ async function refreshCache() {
         console.log(`♻️ Cache Updated: ${cachedChurches.length} Churches, ${cachedAds.length} Ads.`);
     } catch (e) { console.error("❌ Cache Error:", e.message); }
 }
-// Refresh every 10 mins
 setInterval(refreshCache, 600000); 
 refreshCache(); 
 
@@ -94,6 +100,20 @@ async function registerUser(phone, churchCode) {
     const doc = await getDoc();
     const userSheet = doc.sheetsByIndex[3];
     await userSheet.addRow({ Phone: phone, Church_Code: churchCode });
+}
+
+// 🆕 NEW: Function to DELETE user from Google Sheet
+async function removeUser(phone) {
+    try {
+        const doc = await getDoc();
+        const userSheet = doc.sheetsByIndex[3]; // Users Tab
+        const rows = await userSheet.getRows();
+        const rowToDelete = rows.find(r => r.get('Phone') === phone);
+        if (rowToDelete) {
+            await rowToDelete.delete(); // 🗑️ Delete the row
+            console.log(`🗑️ Removed user: ${phone}`);
+        }
+    } catch (e) { console.error("Remove Error:", e); }
 }
 
 // --- 📧 REPORTING ENGINE ---
@@ -125,24 +145,17 @@ async function emailReport(churchCode) {
             from: `"Seabe Automated Reporting" <${EMAIL_USER}>`, 
             to: church.email,
             subject: `📊 Weekly Financial Report: ${church.name}`,
-            text: `Dear Treasurer,\n\nAttached is your automated weekly transaction report for ${church.name}.\n\nRegards,\nSeabe Digital Team`,
+            text: `Attached is your automated report.`,
             attachments: [ { filename: `${churchCode}_Weekly_Report.csv`, content: csvContent } ]
         });
         return `✅ Sent to ${church.email}`;
-    } catch (error) {
-        console.error(error);
-        return `❌ Failed for ${churchCode}`;
-    }
+    } catch (error) { return `❌ Failed for ${churchCode}`; }
 }
 
 // --- 🕰️ SCHEDULED TASKS ---
 cron.schedule('0 8 * * 1', async () => {
-    console.log("⏰ Running Weekly Reports...");
     for (const church of cachedChurches) {
-        if (church.code && church.email) {
-            console.log(`📤 Sending report for ${church.name}...`);
-            await emailReport(church.code);
-        }
+        if (church.code && church.email) await emailReport(church.code);
     }
 }, { timezone: "Africa/Johannesburg" });
 
@@ -158,14 +171,8 @@ function generatePDF(type, amount, ref, date, phone, churchName) {
     
     doc.fontSize(20).text(type === 'TICKET' ? 'ADMIT ONE' : 'RECEIPT', 50, 100, { align: 'right' });
     doc.fontSize(10).text(churchName, { align: 'right' });
-    doc.moveDown();
-    doc.text('Powered by Seabe', { align: 'right', color: 'grey' });
-    doc.moveTo(50, 160).lineTo(370, 160).stroke();
-    doc.moveDown(2);
-    doc.text(`Date: ${date}`, 50);
-    doc.text(`Reference: ${ref}`);
-    doc.text(`Member: ${phone}`);
-    doc.moveDown(2);
+    doc.moveDown(); doc.moveTo(50, 160).lineTo(370, 160).stroke(); doc.moveDown(2);
+    doc.text(`Ref: ${ref}`); doc.text(`Member: ${phone}`); doc.moveDown(2);
     doc.fontSize(16).text(`AMOUNT:  R ${amount}.00`, 50);
     doc.end();
     return filename;
@@ -193,7 +200,6 @@ app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
     let reply = "";
 
-    // Admin Report Trigger
     if (incomingMsg.startsWith('report ')) {
         const targetCode = incomingMsg.split(' ')[1].toUpperCase();
         reply = await emailReport(targetCode);
@@ -208,8 +214,8 @@ app.post('/whatsapp', async (req, res) => {
         if (churchCode) userSession[cleanPhone] = { ...userSession[cleanPhone], churchCode };
     }
 
-    // ONBOARDING
     if (!churchCode) {
+        // ONBOARDING FLOW
         if (!userSession[cleanPhone]?.onboarding) {
             let list = "Welcome to Seabe! 🇿🇦\nPlease select your church:\n";
             cachedChurches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
@@ -226,7 +232,7 @@ app.post('/whatsapp', async (req, res) => {
             } else { reply = "⚠️ Invalid selection."; }
         }
     } 
-    // MENU FLOW
+    // MAIN MENU FLOW
     else {
         const church = cachedChurches.find(c => c.code === churchCode);
         const churchName = church ? church.name : "Church";
@@ -241,7 +247,20 @@ app.post('/whatsapp', async (req, res) => {
             if (incomingMsg === '3') reply = `Confirm Ticket for ${church.eventName} (R${church.eventPrice})?\nReply *Yes*`;
             else reply = "Enter Amount (e.g. R100):";
         }
+        // 🔄 SWITCH CHURCH LOGIC (Option 4)
+        else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
+            // 1. Delete user from Google Sheet
+            await removeUser(cleanPhone);
+            // 2. Clear Session
+            delete userSession[cleanPhone];
+            // 3. Send Church List (Restart)
+            let list = "🔄 *Switch Church*\n\nPlease select your church:\n";
+            cachedChurches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
+            reply = list;
+            userSession[cleanPhone] = { onboarding: true };
+        }
         else if (userSession[cleanPhone]?.step === 'PAY') {
+            // ... (Payment Logic remains the same) ...
             let amount = incomingMsg.replace(/\D/g,'');
             let type = userSession[cleanPhone].choice === '1' ? 'OFFERING' : 'TITHE';
             
@@ -251,15 +270,11 @@ app.post('/whatsapp', async (req, res) => {
             }
 
             const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}`;
-            
-            // 👇 PAYSTACK LOGIC
-            const systemEmail = `${cleanPhone}@seabe.io`; // e.g., 27831234567@seabe.io
-            
+            const systemEmail = `${cleanPhone}@seabe.io`;
             const link = await createPaymentLink(amount, ref, systemEmail);
             
             if (link) {
                 reply = `Tap to pay R${amount}:\n👉 ${link}`;
-                
                 if (client) {
                     setTimeout(async () => {
                         const pdfName = generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, churchName);
@@ -269,12 +284,10 @@ app.post('/whatsapp', async (req, res) => {
                         await logToSheet(cleanPhone, churchCode, type, amount, ref);
                     }, 15000);
                 }
-            } else {
-                reply = "⚠️ Error creating payment link. Please try again.";
-            }
+            } else { reply = "⚠️ Error creating link."; }
 
             userSession[cleanPhone].step = 'MENU';
-        } else if (incomingMsg === '4') { reply = "Please contact support to switch churches."; } 
+        } 
         else { reply = "Reply *Hi* to see the menu."; }
     }
 
@@ -282,9 +295,7 @@ app.post('/whatsapp', async (req, res) => {
     res.type('text/xml').send(twiml.toString());
 });
 
-app.post('/payment-success', (req, res) => {
-    res.send("<h1>Payment Successful! 🎉</h1><p>You can return to WhatsApp.</p>");
-});
+app.post('/payment-success', (req, res) => res.send("<h1>Success!</h1>"));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ Seabe Platform running on ${PORT}`));
