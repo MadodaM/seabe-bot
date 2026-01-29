@@ -225,7 +225,7 @@ app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
     let reply = "";
 
-    // Admin Command
+    // 1. Admin Command
     if (incomingMsg.startsWith('report ')) {
         const targetCode = incomingMsg.split(' ')[1].toUpperCase();
         reply = await emailReport(targetCode);
@@ -234,164 +234,175 @@ app.post('/whatsapp', async (req, res) => {
         return;
     }
 
-    // Ensure session exists
+    // 2. Initialize Session
     if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
 
+    // 3. Identification: Do we know their church?
     let churchCode = userSession[cleanPhone]?.churchCode;
     if (!churchCode) {
         churchCode = await getUserChurch(cleanPhone);
         if (churchCode) userSession[cleanPhone].churchCode = churchCode;
     }
 
+    // 4. ONBOARDING LOGIC (The Fix is Here)
     if (!churchCode) {
-        if (!userSession[cleanPhone]?.onboarding) {
+        // If they say "Hi" OR we don't know them yet -> Show the list
+        if (['hi', 'hello', 'menu', 'start'].includes(incomingMsg) || !userSession[cleanPhone]?.onboarding) {
             let list = "Welcome to Seabe! 🇿🇦\nPlease select your church:\n";
-            cachedChurches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
+            if (cachedChurches.length === 0) {
+                list = "⚠️ System Startup... Please reply 'Hi' in 2 minutes.";
+            } else {
+                cachedChurches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
+            }
             reply = list;
             userSession[cleanPhone].onboarding = true;
-        } else {
+        } 
+        else {
+            // They typed something else (hopefully a number)
             const selection = parseInt(incomingMsg) - 1;
-            if (cachedChurches[selection]) {
+            if (!isNaN(selection) && cachedChurches[selection]) {
                 const selectedChurch = cachedChurches[selection];
                 await registerUser(cleanPhone, selectedChurch.code);
                 userSession[cleanPhone].churchCode = selectedChurch.code;
                 delete userSession[cleanPhone].onboarding;
                 reply = `Welcome to *${selectedChurch.name}*! 🎉\nReply *Hi* to see your menu.`;
-            } else { reply = "⚠️ Invalid selection."; }
+            } else { 
+                reply = "⚠️ Invalid number. Please reply with the number of your church (e.g. 1) or type *Hi* to see the list again."; 
+            }
         }
     } 
+    
+    // 5. REGISTERED USER LOGIC
     else {
         const church = cachedChurches.find(c => c.code === churchCode);
-        const churchName = church ? church.name : "Church";
-        
-        // 👇 MAIN MENU
-        if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
-            userSession[cleanPhone].step = 'MENU';
-            const currentLang = userSession[cleanPhone].lang || 'ENGLISH';
-            reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner (Auto) 🔁\n*6.* Language / Lulwimi 🗣️` + getAdSuffix(currentLang, churchCode);
-        }
-        
-        // 👇 EVENT SELECTION LOGIC (New)
-        else if (incomingMsg === '3' && userSession[cleanPhone]?.step === 'MENU') {
-            // Find events for this church
-            const events = cachedEvents.filter(e => e.churchCode === churchCode);
-            
-            if (events.length === 0) {
-                reply = "⚠️ No upcoming events found.";
-                userSession[cleanPhone].step = 'MENU';
-            } else {
-                let list = "*Select an Event:*\n";
-                events.forEach((e, index) => {
-                    list += `*${index + 1}.* ${e.name} (R${e.price})\n`;
-                });
-                reply = list;
-                userSession[cleanPhone].step = 'EVENT_SELECT';
-                userSession[cleanPhone].availableEvents = events; // Temp store events
-            }
-        }
-
-        // 👇 HANDLE EVENT CHOICE
-        else if (userSession[cleanPhone]?.step === 'EVENT_SELECT') {
-            const index = parseInt(incomingMsg) - 1;
-            const events = userSession[cleanPhone].availableEvents;
-            
-            if (events && events[index]) {
-                const selectedEvent = events[index];
-                userSession[cleanPhone].step = 'PAY';
-                userSession[cleanPhone].choice = 'EVENT';
-                userSession[cleanPhone].selectedEvent = selectedEvent; // Store choice
-                
-                reply = `Confirm Ticket for *${selectedEvent.name}* (R${selectedEvent.price})?\nReply *Yes*`;
-            } else {
-                reply = "⚠️ Invalid selection. Reply *Hi* to restart.";
-            }
-        }
-
-        // ... Language Logic ...
-        else if (incomingMsg === '6' && userSession[cleanPhone]?.step === 'MENU') {
-            userSession[cleanPhone].step = 'LANG';
-            reply = "Select Language / Khetha Lulwimi:\n\n*1.* English 🇬🇧\n*2.* isiZulu 🇿🇦\n*3.* Sesotho 🇱🇸";
-        }
-        else if (['1', '2', '3'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'LANG') {
-            if (incomingMsg === '1') userSession[cleanPhone].lang = 'ENGLISH';
-            if (incomingMsg === '2') userSession[cleanPhone].lang = 'ZULU';
-            if (incomingMsg === '3') userSession[cleanPhone].lang = 'SOTHO';
-            userSession[cleanPhone].step = 'MENU';
-            reply = "✅ Language Updated! Reply *Hi* to see the menu.";
-        }
-
-        // ... Normal Payment Logic ...
-        else if (['1', '2', '5'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'MENU') {
-            userSession[cleanPhone].step = 'PAY';
-            userSession[cleanPhone].choice = incomingMsg;
-            if (incomingMsg === '5') reply = "Enter Monthly Amount (e.g. R500):";
-            else reply = "Enter Amount (e.g. R100):";
-        }
-        else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
+        // Fallback if church was deleted from sheet but user is still linked
+        if (!church) {
             await removeUser(cleanPhone);
             delete userSession[cleanPhone];
-            let list = "🔄 *Switch Church*\n\nPlease select your church:\n";
-            cachedChurches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
-            reply = list;
-            userSession[cleanPhone] = { onboarding: true };
-        }
-        else if (userSession[cleanPhone]?.step === 'PAY') {
-            let amount = incomingMsg.replace(/\D/g,''); 
-            let type = '';
-            let eventNameForPdf = '';
-
-            // Handle Choices
-            if (userSession[cleanPhone].choice === '1') type = 'OFFERING';
-            else if (userSession[cleanPhone].choice === '5') type = 'RECURRING';
-            else if (userSession[cleanPhone].choice === 'EVENT') {
-                type = 'TICKET';
-                const evt = userSession[cleanPhone].selectedEvent;
-                amount = evt.price.toString().replace(/\D/g,'');
-                eventNameForPdf = evt.name;
-                
-                // Quick confirmation check
-                const isAffirmative = ['yes', 'y', 'yeah', 'yebo', 'ok', 'sure', 'confirm'].some(w => incomingMsg.includes(w));
-                if (!isAffirmative && incomingMsg !== amount) {
-                     reply = "❌ Cancelled."; twiml.message(reply); res.type('text/xml').send(twiml.toString()); return;
-                }
-            }
-            else type = 'TITHE'; // Default (Option 2)
-
-            const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
-            const systemEmail = `${cleanPhone}@seabe.io`;
-            const finalSubaccount = church.subaccount; 
-
-            let link;
-            if (type === 'RECURRING') {
-                 link = await createSubscriptionLink(amount, ref, systemEmail, finalSubaccount);
-            } else {
-                 link = await createPaymentLink(amount, ref, systemEmail, finalSubaccount);
+            reply = "⚠️ Your church setup has changed. Please reply *Hi* to select your church again.";
+        } else {
+            const churchName = church.name;
+            
+            // MAIN MENU
+            if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
+                userSession[cleanPhone].step = 'MENU';
+                const currentLang = userSession[cleanPhone].lang || 'ENGLISH';
+                reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner (Auto) 🔁\n*6.* Language / Lulwimi 🗣️` + getAdSuffix(currentLang, churchCode);
             }
             
-            if (link) {
-                reply = `Tap to pay R${amount}:\n👉 ${link}`;
-                const currentLang = userSession[cleanPhone].lang || 'ENGLISH';
-                if (client) {
-                    setTimeout(async () => {
-                        // Pass Event Name to PDF Generator
-                        const pdfName = generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, church.name, eventNameForPdf);
-                        const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
-                        const pdfUrl = `https://${hostUrl}/public/receipts/${pdfName}`;
-                        try { await client.messages.create({ from: 'whatsapp:+14155238886', to: sender, body: `🎉 Payment Received! ${getAdSuffix(currentLang, churchCode)}`, mediaUrl: [pdfUrl] }); } catch(e) {}
-                        await logToSheet(cleanPhone, churchCode, type, amount, ref);
-                    }, 15000);
+            // EVENT SELECTION
+            else if (incomingMsg === '3' && userSession[cleanPhone]?.step === 'MENU') {
+                const events = cachedEvents.filter(e => e.churchCode === churchCode);
+                if (events.length === 0) {
+                    reply = "⚠️ No upcoming events found.";
+                    userSession[cleanPhone].step = 'MENU';
+                } else {
+                    let list = "*Select an Event:*\n";
+                    events.forEach((e, index) => {
+                        list += `*${index + 1}.* ${e.name} (R${e.price})\n`;
+                    });
+                    reply = list;
+                    userSession[cleanPhone].step = 'EVENT_SELECT';
+                    userSession[cleanPhone].availableEvents = events; 
                 }
-            } else { reply = "⚠️ Error creating link."; }
+            }
+            else if (userSession[cleanPhone]?.step === 'EVENT_SELECT') {
+                const index = parseInt(incomingMsg) - 1;
+                const events = userSession[cleanPhone].availableEvents;
+                if (events && events[index]) {
+                    const selectedEvent = events[index];
+                    userSession[cleanPhone].step = 'PAY';
+                    userSession[cleanPhone].choice = 'EVENT';
+                    userSession[cleanPhone].selectedEvent = selectedEvent; 
+                    reply = `Confirm Ticket for *${selectedEvent.name}* (R${selectedEvent.price})?\nReply *Yes*`;
+                } else {
+                    reply = "⚠️ Invalid selection. Reply *Hi* to restart.";
+                }
+            }
 
-            userSession[cleanPhone].step = 'MENU';
-        } 
-        else { reply = "Reply *Hi* to see the menu."; }
+            // LANGUAGE
+            else if (incomingMsg === '6' && userSession[cleanPhone]?.step === 'MENU') {
+                userSession[cleanPhone].step = 'LANG';
+                reply = "Select Language / Khetha Lulwimi:\n\n*1.* English 🇬🇧\n*2.* isiZulu 🇿🇦\n*3.* Sesotho 🇱🇸";
+            }
+            else if (['1', '2', '3'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'LANG') {
+                if (incomingMsg === '1') userSession[cleanPhone].lang = 'ENGLISH';
+                if (incomingMsg === '2') userSession[cleanPhone].lang = 'ZULU';
+                if (incomingMsg === '3') userSession[cleanPhone].lang = 'SOTHO';
+                userSession[cleanPhone].step = 'MENU';
+                reply = "✅ Language Updated! Reply *Hi* to see the menu.";
+            }
+
+            // PAYMENTS
+            else if (['1', '2', '5'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'MENU') {
+                userSession[cleanPhone].step = 'PAY';
+                userSession[cleanPhone].choice = incomingMsg;
+                if (incomingMsg === '5') reply = "Enter Monthly Amount (e.g. R500):";
+                else reply = "Enter Amount (e.g. R100):";
+            }
+            // SWITCH CHURCH
+            else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
+                await removeUser(cleanPhone);
+                delete userSession[cleanPhone];
+                let list = "🔄 *Switch Church*\n\nPlease select your church:\n";
+                cachedChurches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
+                reply = list;
+                userSession[cleanPhone] = { onboarding: true };
+            }
+            // PAYMENT PROCESSING
+            else if (userSession[cleanPhone]?.step === 'PAY') {
+                let amount = incomingMsg.replace(/\D/g,''); 
+                let type = '';
+                let eventNameForPdf = '';
+
+                if (userSession[cleanPhone].choice === '1') type = 'OFFERING';
+                else if (userSession[cleanPhone].choice === '5') type = 'RECURRING';
+                else if (userSession[cleanPhone].choice === 'EVENT') {
+                    type = 'TICKET';
+                    const evt = userSession[cleanPhone].selectedEvent;
+                    amount = evt.price.toString().replace(/\D/g,'');
+                    eventNameForPdf = evt.name;
+                    const isAffirmative = ['yes', 'y', 'yeah', 'yebo', 'ok', 'sure', 'confirm'].some(w => incomingMsg.includes(w));
+                    if (!isAffirmative && incomingMsg !== amount) {
+                         reply = "❌ Cancelled."; twiml.message(reply); res.type('text/xml').send(twiml.toString()); return;
+                    }
+                }
+                else type = 'TITHE'; 
+
+                const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
+                const systemEmail = `${cleanPhone}@seabe.io`;
+                const finalSubaccount = church.subaccount; 
+
+                let link;
+                if (type === 'RECURRING') {
+                     link = await createSubscriptionLink(amount, ref, systemEmail, finalSubaccount);
+                } else {
+                     link = await createPaymentLink(amount, ref, systemEmail, finalSubaccount);
+                }
+                
+                if (link) {
+                    reply = `Tap to pay R${amount}:\n👉 ${link}`;
+                    const currentLang = userSession[cleanPhone].lang || 'ENGLISH';
+                    if (client) {
+                        setTimeout(async () => {
+                            const pdfName = generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, church.name, eventNameForPdf);
+                            const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
+                            const pdfUrl = `https://${hostUrl}/public/receipts/${pdfName}`;
+                            try { await client.messages.create({ from: 'whatsapp:+14155238886', to: sender, body: `🎉 Payment Received! ${getAdSuffix(currentLang, churchCode)}`, mediaUrl: [pdfUrl] }); } catch(e) {}
+                            await logToSheet(cleanPhone, churchCode, type, amount, ref);
+                        }, 15000);
+                    }
+                } else { reply = "⚠️ Error creating link."; }
+
+                userSession[cleanPhone].step = 'MENU';
+            } 
+            else { reply = "Reply *Hi* to see the menu."; }
+        }
     }
 
     twiml.message(reply);
     res.type('text/xml').send(twiml.toString());
 });
-
 app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1><p>You can return to WhatsApp.</p>"));
 
 const PORT = process.env.PORT || 3000;
