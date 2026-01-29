@@ -231,6 +231,15 @@ function getAdSuffix(lang, churchCode) {
 
 // --- 🤖 WHATSAPP LOGIC ---
 app.post('/whatsapp', async (req, res) => {
+    const twiml = new MessagingResponse();
+    
+    try {
+        const incomingMsg = req.body.Body.trim().toLowerCase(); 
+        const sender = req.body.From; 
+        const cleanPhone = sender.replace('whatsapp:', '');
+        let reply = "";
+
+app.post('/whatsapp', async (req, res) => {
     const incomingMsg = req.body.Body.trim().toLowerCase(); 
     const sender = req.body.From; 
     const cleanPhone = sender.replace('whatsapp:', '');
@@ -415,6 +424,19 @@ app.post('/whatsapp', async (req, res) => {
     twiml.message(reply);
     res.type('text/xml').send(twiml.toString());
 });
+// FINAL REPLY SEND
+        twiml.message(reply);
+        res.type('text/xml').send(twiml.toString());
+
+    } catch (error) {
+        console.error("❌ FATAL BOT CRASH:", error);
+        // Fallback reply so Twilio doesn't give Error 11200
+        twiml.message("⚠️ System Error: The bot encountered a problem. Please try again in 1 minute.");
+        res.type('text/xml').send(twiml.toString());
+    }
+});
+
+
 app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1><p>You can return to WhatsApp.</p>"));
 
 const PORT = process.env.PORT || 3000;
