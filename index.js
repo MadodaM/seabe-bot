@@ -86,28 +86,68 @@ async function refreshCache() {
 setInterval(refreshCache, 600000); 
 refreshCache(); 
 
+// --- 👥 SMART USER MANAGEMENT ---
+
+// Helper to find the correct header names dynamically
+async function getHeaders(sheet) {
+    await sheet.loadHeaderRow();
+    const headers = sheet.headerValues;
+    // Look for any header containing "phone" (case insensitive)
+    const phoneHeader = headers.find(h => h.toLowerCase().includes('phone')) || 'Phone';
+    // Look for any header containing "code" or "church"
+    const codeHeader = headers.find(h => h.toLowerCase().includes('code') || h.toLowerCase().includes('church')) || 'Church_Code';
+    
+    return { phoneHeader, codeHeader };
+}
+
 async function getUserChurch(phone) {
-    const doc = await getDoc();
-    const userSheet = doc.sheetsByIndex[3]; 
-    const rows = await userSheet.getRows();
-    const userRow = rows.find(r => r.get('Phone') === phone);
-    return userRow ? userRow.get('Church_Code') : null;
+    try {
+        const doc = await getDoc();
+        const userSheet = doc.sheetsByIndex[3]; // Tab 4
+        const rows = await userSheet.getRows();
+        const { phoneHeader, codeHeader } = await getHeaders(userSheet);
+
+        const userRow = rows.find(r => r.get(phoneHeader) === phone);
+        return userRow ? userRow.get(codeHeader) : null;
+    } catch (e) {
+        console.error("❌ Get User Error:", e.message);
+        return null;
+    }
 }
 
 async function registerUser(phone, churchCode) {
-    const doc = await getDoc();
-    const userSheet = doc.sheetsByIndex[3];
-    await userSheet.addRow({ Phone: phone, Church_Code: churchCode });
+    try {
+        const doc = await getDoc();
+        const userSheet = doc.sheetsByIndex[3]; // Tab 4
+        const { phoneHeader, codeHeader } = await getHeaders(userSheet);
+        
+        console.log(`📝 Registering User: ${phone} in column [${phoneHeader}] for ${churchCode} in column [${codeHeader}]`);
+
+        // Create object dynamically based on actual headers
+        const rowData = {};
+        rowData[phoneHeader] = phone;
+        rowData[codeHeader] = churchCode;
+
+        await userSheet.addRow(rowData);
+        console.log("✅ User Saved to Sheet.");
+    } catch (e) {
+        console.error("❌ Register User Error:", e.message);
+    }
 }
 
 async function removeUser(phone) {
     try {
         const doc = await getDoc();
-        const userSheet = doc.sheetsByIndex[3]; 
+        const userSheet = doc.sheetsByIndex[3]; // Tab 4
         const rows = await userSheet.getRows();
-        const rowToDelete = rows.find(r => r.get('Phone') === phone);
-        if (rowToDelete) { await rowToDelete.delete(); }
-    } catch (e) { console.error("Remove Error:", e); }
+        const { phoneHeader } = await getHeaders(userSheet);
+
+        const rowToDelete = rows.find(r => r.get(phoneHeader) === phone);
+        if (rowToDelete) { 
+            await rowToDelete.delete(); 
+            console.log(`🗑️ Removed User: ${phone}`);
+        }
+    } catch (e) { console.error("Remove Error:", e.message); }
 }
 
 // --- 📧 REPORTING ENGINE ---
