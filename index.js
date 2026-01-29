@@ -7,7 +7,6 @@ const PDFDocument = require('pdfkit');
 const sgMail = require('@sendgrid/mail'); 
 const cron = require('node-cron');
 const { MessagingResponse } = require('twilio').twiml;
-// 👇 FIXED IMPORT (Only one line, importing both functions)
 const { createPaymentLink, createSubscriptionLink } = require('./services/paystack');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
@@ -61,7 +60,6 @@ async function refreshCache() {
             const eventPrice = row.get('Event_Price') || row.get('Event Price') || '0';
             const subaccount = row.get('Subaccount_Code') || row.get('Subaccount Code') || null;
 
-            // Smart Email Detection
             let email = "";
             const rawData = row.toObject(); 
             for (const key in rawData) {
@@ -87,66 +85,45 @@ setInterval(refreshCache, 600000);
 refreshCache(); 
 
 // --- 👥 SMART USER MANAGEMENT ---
-
-// Helper to find the correct header names dynamically
 async function getHeaders(sheet) {
     await sheet.loadHeaderRow();
     const headers = sheet.headerValues;
-    // Look for any header containing "phone" (case insensitive)
     const phoneHeader = headers.find(h => h.toLowerCase().includes('phone')) || 'Phone';
-    // Look for any header containing "code" or "church"
     const codeHeader = headers.find(h => h.toLowerCase().includes('code') || h.toLowerCase().includes('church')) || 'Church_Code';
-    
     return { phoneHeader, codeHeader };
 }
 
 async function getUserChurch(phone) {
     try {
         const doc = await getDoc();
-        const userSheet = doc.sheetsByIndex[3]; // Tab 4
+        const userSheet = doc.sheetsByIndex[3]; 
         const rows = await userSheet.getRows();
         const { phoneHeader, codeHeader } = await getHeaders(userSheet);
-
         const userRow = rows.find(r => r.get(phoneHeader) === phone);
         return userRow ? userRow.get(codeHeader) : null;
-    } catch (e) {
-        console.error("❌ Get User Error:", e.message);
-        return null;
-    }
+    } catch (e) { return null; }
 }
 
 async function registerUser(phone, churchCode) {
     try {
         const doc = await getDoc();
-        const userSheet = doc.sheetsByIndex[3]; // Tab 4
+        const userSheet = doc.sheetsByIndex[3]; 
         const { phoneHeader, codeHeader } = await getHeaders(userSheet);
-        
-        console.log(`📝 Registering User: ${phone} in column [${phoneHeader}] for ${churchCode} in column [${codeHeader}]`);
-
-        // Create object dynamically based on actual headers
         const rowData = {};
         rowData[phoneHeader] = phone;
         rowData[codeHeader] = churchCode;
-
         await userSheet.addRow(rowData);
-        console.log("✅ User Saved to Sheet.");
-    } catch (e) {
-        console.error("❌ Register User Error:", e.message);
-    }
+    } catch (e) { console.error("❌ Register Error:", e.message); }
 }
 
 async function removeUser(phone) {
     try {
         const doc = await getDoc();
-        const userSheet = doc.sheetsByIndex[3]; // Tab 4
+        const userSheet = doc.sheetsByIndex[3]; 
         const rows = await userSheet.getRows();
         const { phoneHeader } = await getHeaders(userSheet);
-
         const rowToDelete = rows.find(r => r.get(phoneHeader) === phone);
-        if (rowToDelete) { 
-            await rowToDelete.delete(); 
-            console.log(`🗑️ Removed User: ${phone}`);
-        }
+        if (rowToDelete) { await rowToDelete.delete(); }
     } catch (e) { console.error("Remove Error:", e.message); }
 }
 
@@ -179,21 +156,16 @@ async function emailReport(churchCode) {
     try {
         await sgMail.send(msg);
         return `✅ Sent to ${church.email}`;
-    } catch (error) { 
-        console.error("❌ SendGrid Error:", error.message);
-        return `❌ Failed for ${churchCode}`; 
-    }
+    } catch (error) { return `❌ Failed for ${churchCode}`; }
 }
 
-// --- 🕰️ SCHEDULED TASKS ---
 cron.schedule('0 8 * * 1', async () => {
-    console.log("⏰ Running Monday Reports...");
     for (const church of cachedChurches) {
         if (church.code && church.email) await emailReport(church.code);
     }
 }, { timezone: "Africa/Johannesburg" });
 
-// --- 📄 PDF FACTORY ---
+// --- 📄 PDF & HELPERS ---
 function generatePDF(type, amount, ref, date, phone, churchName) {
     const doc = new PDFDocument({ size: 'A5', margin: 50 });
     const filename = `receipt_${Date.now()}_${phone.slice(-4)}.pdf`;
@@ -218,11 +190,14 @@ async function logToSheet(phone, churchCode, type, amount, ref) {
     await sheet.addRow({ "Church Code": churchCode, Date: new Date().toLocaleString(), "Name/Phone": phone, Type: type, Amount: amount, Reference: ref });
 }
 
+// 👇 UPDATED: Uses user's selected language
 function getAdSuffix(lang, churchCode) {
+    const safeLang = lang || 'ENGLISH'; // Default to English
     const relevantAds = cachedAds.filter(ad => ad.target === 'Global' || ad.target === churchCode);
     if (relevantAds.length === 0) return "";
     const randomAd = relevantAds[Math.floor(Math.random() * relevantAds.length)];
-    const adText = randomAd[lang] || randomAd['ENGLISH'];
+    // Fallback to English if translation is missing
+    const adText = randomAd[safeLang] || randomAd['ENGLISH'];
     return `\n\n----------------\n📢 *News/Ads:*\n${adText}`;
 }
 
@@ -243,10 +218,13 @@ app.post('/whatsapp', async (req, res) => {
         return;
     }
 
+    // Ensure session exists
+    if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
+
     let churchCode = userSession[cleanPhone]?.churchCode;
     if (!churchCode) {
         churchCode = await getUserChurch(cleanPhone);
-        if (churchCode) userSession[cleanPhone] = { ...userSession[cleanPhone], churchCode };
+        if (churchCode) userSession[cleanPhone].churchCode = churchCode;
     }
 
     if (!churchCode) {
@@ -254,13 +232,13 @@ app.post('/whatsapp', async (req, res) => {
             let list = "Welcome to Seabe! 🇿🇦\nPlease select your church:\n";
             cachedChurches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
             reply = list;
-            userSession[cleanPhone] = { onboarding: true };
+            userSession[cleanPhone].onboarding = true;
         } else {
             const selection = parseInt(incomingMsg) - 1;
             if (cachedChurches[selection]) {
                 const selectedChurch = cachedChurches[selection];
                 await registerUser(cleanPhone, selectedChurch.code);
-                userSession[cleanPhone] = { churchCode: selectedChurch.code };
+                userSession[cleanPhone].churchCode = selectedChurch.code;
                 delete userSession[cleanPhone].onboarding;
                 reply = `Welcome to *${selectedChurch.name}*! 🎉\nReply *Hi* to see your menu.`;
             } else { reply = "⚠️ Invalid selection."; }
@@ -270,10 +248,30 @@ app.post('/whatsapp', async (req, res) => {
         const church = cachedChurches.find(c => c.code === churchCode);
         const churchName = church ? church.name : "Church";
         
+        // 👇 MAIN MENU (With Option 6)
         if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
             userSession[cleanPhone].step = 'MENU';
-            reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* ${church.eventName || 'Event'} (R${church.eventPrice || '0'}) 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner (Auto) 🔁` + getAdSuffix('ENGLISH', churchCode);
+            const currentLang = userSession[cleanPhone].lang || 'ENGLISH';
+            reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* ${church.eventName || 'Event'} (R${church.eventPrice || '0'}) 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner (Auto) 🔁\n*6.* Language / Lulwimi 🗣️` + getAdSuffix(currentLang, churchCode);
         }
+        
+        // 👇 LANGUAGE MENU TRIGGER
+        else if (incomingMsg === '6' && userSession[cleanPhone]?.step === 'MENU') {
+            userSession[cleanPhone].step = 'LANG';
+            reply = "Select Language / Khetha Lulwimi:\n\n*1.* English 🇬🇧\n*2.* isiZulu 🇿🇦\n*3.* Sesotho 🇱🇸";
+        }
+        
+        // 👇 LANGUAGE SELECTION LOGIC
+        else if (['1', '2', '3'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'LANG') {
+            if (incomingMsg === '1') userSession[cleanPhone].lang = 'ENGLISH';
+            if (incomingMsg === '2') userSession[cleanPhone].lang = 'ZULU';
+            if (incomingMsg === '3') userSession[cleanPhone].lang = 'SOTHO';
+            
+            userSession[cleanPhone].step = 'MENU';
+            reply = "✅ Language Updated! Reply *Hi* to see the menu.";
+        }
+
+        // 👇 OTHER MENU OPTIONS (1-5)
         else if (['1', '2', '3', '5'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'MENU') {
             userSession[cleanPhone].step = 'PAY';
             userSession[cleanPhone].choice = incomingMsg;
@@ -303,11 +301,6 @@ app.post('/whatsapp', async (req, res) => {
 
             const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
             const systemEmail = `${cleanPhone}@seabe.io`;
-            
-            const finalChurchCode = churchCode; 
-            const finalType = type;
-            const finalAmount = amount;
-            const finalRef = ref;
             const finalSubaccount = church.subaccount; 
 
             let link;
@@ -319,13 +312,14 @@ app.post('/whatsapp', async (req, res) => {
             
             if (link) {
                 reply = `Tap to pay R${amount}:\n👉 ${link}`;
+                const currentLang = userSession[cleanPhone].lang || 'ENGLISH';
                 if (client) {
                     setTimeout(async () => {
-                        const pdfName = generatePDF(finalType, finalAmount, finalRef, new Date().toLocaleString(), cleanPhone, churchName);
+                        const pdfName = generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, church.name);
                         const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
                         const pdfUrl = `https://${hostUrl}/public/receipts/${pdfName}`;
-                        try { await client.messages.create({ from: 'whatsapp:+14155238886', to: sender, body: `🎉 Payment Received! ${getAdSuffix('ENGLISH', finalChurchCode)}`, mediaUrl: [pdfUrl] }); } catch(e) {}
-                        await logToSheet(cleanPhone, finalChurchCode, finalType, finalAmount, finalRef);
+                        try { await client.messages.create({ from: 'whatsapp:+14155238886', to: sender, body: `🎉 Payment Received! ${getAdSuffix(currentLang, churchCode)}`, mediaUrl: [pdfUrl] }); } catch(e) {}
+                        await logToSheet(cleanPhone, churchCode, type, amount, ref);
                     }, 15000);
                 }
             } else { reply = "⚠️ Error creating link."; }
