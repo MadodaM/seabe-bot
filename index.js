@@ -4,7 +4,8 @@ const bodyParser = require('body-parser');
 const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit');
-const nodemailer = require('nodemailer');
+// 👇 NEW: SendGrid instead of Nodemailer
+const sgMail = require('@sendgrid/mail'); 
 const cron = require('node-cron');
 const { MessagingResponse } = require('twilio').twiml;
 const { createPaymentLink } = require('./services/paystack');
@@ -18,10 +19,11 @@ const GOOGLE_EMAIL = process.env.GOOGLE_EMAIL;
 const GOOGLE_KEY = process.env.GOOGLE_KEY ? process.env.GOOGLE_KEY.replace(/\\n/g, '\n') : null;
 const SHEET_ID = process.env.SHEET_ID;
 
-// EMAIL CONFIG
-const EMAIL_HOST = process.env.EMAIL_HOST || 'smtp.gmail.com'; 
-const EMAIL_USER = process.env.EMAIL_USER;
-const EMAIL_PASS = process.env.EMAIL_PASS;
+// 👇 SENDGRID CONFIG
+const SENDGRID_KEY = process.env.SENDGRID_KEY;
+const EMAIL_FROM = process.env.EMAIL_FROM || 'madoda.mavuso@gmail.com'; // Must match Verified Sender in SendGrid
+
+if (SENDGRID_KEY) sgMail.setApiKey(SENDGRID_KEY);
 
 let client;
 try {
@@ -60,7 +62,7 @@ async function refreshCache() {
             const eventName = row.get('Event_Name') || row.get('Event Name') || 'Special Event';
             const eventPrice = row.get('Event_Price') || row.get('Event Price') || '0';
             
-            // 💡 SMART EMAIL DETECTION (Finds any cell with '@')
+            // Smart Email Detection
             let email = "";
             const rawData = row.toObject(); 
             for (const key in rawData) {
@@ -110,63 +112,50 @@ async function removeUser(phone) {
     } catch (e) { console.error("Remove Error:", e); }
 }
 
-// --- 📧 REPORTING ENGINE (DEBUG MODE) ---
+// --- 📧 REPORTING ENGINE (SENDGRID VERSION) ---
 async function emailReport(churchCode) {
     console.log(`📨 Starting Report Process for: ${churchCode}`);
 
     const church = cachedChurches.find(c => c.code === churchCode);
-    if (!church) return `❌ Church Code ${churchCode} not found in cache.`;
-    if (!church.email) return `❌ Church found, but EMAIL IS MISSING.`;
-
-    console.log(`✅ Found Church: ${church.name} | Email: ${church.email}`);
+    if (!church || !church.email) return `❌ Church/Email missing for ${churchCode}`;
 
     const doc = await getDoc();
     const transSheet = doc.sheetsByIndex[0];
     const rows = await transSheet.getRows();
     const churchRows = rows.filter(r => r.get('Church Code') === churchCode);
     
-    if (churchRows.length === 0) return `⚠️ ${churchCode}: No transactions found in Sheet.`;
+    if (churchRows.length === 0) return `⚠️ ${churchCode}: No transactions.`;
 
     let csvContent = "Date,Type,Amount,Reference,Phone\n"; 
     churchRows.forEach(row => {
         csvContent += `${row.get('Date')},${row.get('Type')},${row.get('Amount')},${row.get('Reference')},${row.get('Name/Phone')}\n`;
     });
 
-    // DEBUG: Check Credentials
-    if (!EMAIL_USER || !EMAIL_PASS) {
-        console.error("❌ CRITICAL: EMAIL_USER or EMAIL_PASS is missing in Environment Variables!");
-        return "❌ Server Error: Missing Email Credentials.";
-    }
+    // Convert string to Base64 for SendGrid attachment
+    const attachment = Buffer.from(csvContent).toString('base64');
 
-       // 👇 UPDATED TRANSPORTER (Uses Port 587)
-// ... inside emailReport function ...
-
-    // 👇 UPDATED TRANSPORTER (Service Mode + IPv4 Force)
-    const transporter = nodemailer.createTransport({
-        service: 'gmail',       // Let Nodemailer handle the host/port
-        auth: {
-            user: EMAIL_USER,
-            pass: EMAIL_PASS
-        },
-        // 🔒 FORCE IPv4 (Fixes the timeout on Render)
-        family: 4 
-    });
+    const msg = {
+        to: church.email,
+        from: EMAIL_FROM, // Must be verified in SendGrid
+        subject: `📊 Report: ${church.name}`,
+        text: `Attached is your automated financial report.`,
+        attachments: [
+            {
+                content: attachment,
+                filename: `${churchCode}_Report.csv`,
+                type: 'text/csv',
+                disposition: 'attachment'
+            }
+        ]
+    };
 
     try {
-        console.log(`📤 Attempting to send via Gmail Service (IPv4)...`);
-        
-        const info = await transporter.sendMail({
-            from: `"Seabe Bot" <${EMAIL_USER}>`, 
-            to: church.email,
-            subject: `📊 Report: ${church.name}`,
-            text: `Attached is your report.`,
-            attachments: [ { filename: `${churchCode}_Report.csv`, content: csvContent } ]
-        });
-
-        console.log("✅ SMTP SUCCESS:", info.response);
+        console.log(`📤 Sending via SendGrid API...`);
+        await sgMail.send(msg);
+        console.log("✅ SendGrid SUCCESS");
         return `✅ Sent to ${church.email}`;
     } catch (error) { 
-        console.error("❌ SMTP ERROR:", error);
+        console.error("❌ SendGrid ERROR:", error.response ? error.response.body : error);
         return `❌ Failed: ${error.message}`; 
     }
 }
