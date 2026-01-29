@@ -50,41 +50,35 @@ async function refreshCache() {
     if (!GOOGLE_EMAIL) return;
     try {
         const doc = await getDoc();
-        
-        // Load Churches (Tab 3)
         const churchSheet = doc.sheetsByIndex[2]; 
         const churchRows = await churchSheet.getRows();
         
         cachedChurches = churchRows.map(row => {
-            // ✅ FIX: Use 'Church Code' to match your sheet exactly
             const code = row.get('Church Code') || row.get('Code'); 
-            
             const eventName = row.get('Event_Name') || row.get('Event Name') || 'Special Event';
             const eventPrice = row.get('Event_Price') || row.get('Event Price') || '0';
-            const email = row.get('Treasurer_Email') || row.get('Treasurer Email');
+            
+            // 💡 NEW LOGIC: Look for ANY column that has an '@' symbol in it
+            let email = "";
+            const rawData = row.toObject(); // Get all data in the row
+            for (const key in rawData) {
+                if (typeof rawData[key] === 'string' && rawData[key].includes('@')) {
+                    email = rawData[key]; // Found it!
+                    break;
+                }
+            }
 
-            return {
-                code: code, // This will now work
-                name: row.get('Name'),
-                eventName: eventName,
-                eventPrice: eventPrice,
-                email: email
-            };
+            return { code, name: row.get('Name'), eventName, eventPrice, email };
         });
 
-        // Load Ads (Tab 2)
+        // ... (Keep existing Ads logic) ...
         const adSheet = doc.sheetsByIndex[1];
         const adRows = await adSheet.getRows();
-        cachedAds = adRows
-            .filter(row => row.get('Status') === 'Active')
-            .map(row => ({
-                target: row.get('Target'),
-                ENGLISH: row.get('English'),
-                ZULU: row.get('Zulu'),
-                SOTHO: row.get('Sotho')
-            }));
+        cachedAds = adRows.filter(r => r.get('Status') === 'Active').map(r => ({
+             target: r.get('Target'), ENGLISH: r.get('English'), ZULU: r.get('Zulu'), SOTHO: r.get('Sotho')
+        }));
             
-        console.log(`♻️ Cache Updated: ${cachedChurches.length} Churches, ${cachedAds.length} Ads.`);
+        console.log(`♻️ Cache Updated. Found email for ${cachedChurches.filter(c => c.email).length} churches.`);
     } catch (e) { console.error("❌ Cache Error:", e.message); }
 }
 setInterval(refreshCache, 600000); 
