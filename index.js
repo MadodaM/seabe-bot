@@ -138,15 +138,16 @@ async function emailReport(churchCode) {
         return "❌ Server Error: Missing Email Credentials.";
     }
 
+       // 👇 UPDATED TRANSPORTER (Uses Port 587)
     const transporter = nodemailer.createTransport({
-        host: EMAIL_HOST,
-        port: 465, 
-        secure: true, 
+        host: 'smtp.gmail.com', // We force Gmail host here
+        port: 587,              // 👈 CHANGED from 465
+        secure: false,          // 👈 CHANGED to false (required for 587)
         auth: { user: EMAIL_USER, pass: EMAIL_PASS }
     });
 
     try {
-        console.log(`📤 Attempting to send via ${EMAIL_HOST}...`);
+        console.log(`📤 Attempting to send via Port 587...`);
         
         const info = await transporter.sendMail({
             from: `"Seabe Bot" <${EMAIL_USER}>`, 
