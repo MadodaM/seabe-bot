@@ -50,6 +50,8 @@ async function refreshCache() {
     if (!GOOGLE_EMAIL) return;
     try {
         const doc = await getDoc();
+        
+        // Load Churches (Tab 3)
         const churchSheet = doc.sheetsByIndex[2]; 
         const churchRows = await churchSheet.getRows();
         
@@ -58,12 +60,12 @@ async function refreshCache() {
             const eventName = row.get('Event_Name') || row.get('Event Name') || 'Special Event';
             const eventPrice = row.get('Event_Price') || row.get('Event Price') || '0';
             
-            // 💡 NEW LOGIC: Look for ANY column that has an '@' symbol in it
+            // 💡 SMART EMAIL DETECTION (Finds any cell with '@')
             let email = "";
-            const rawData = row.toObject(); // Get all data in the row
+            const rawData = row.toObject(); 
             for (const key in rawData) {
                 if (typeof rawData[key] === 'string' && rawData[key].includes('@')) {
-                    email = rawData[key]; // Found it!
+                    email = rawData[key]; 
                     break;
                 }
             }
@@ -71,7 +73,7 @@ async function refreshCache() {
             return { code, name: row.get('Name'), eventName, eventPrice, email };
         });
 
-        // ... (Keep existing Ads logic) ...
+        // Load Ads (Tab 2)
         const adSheet = doc.sheetsByIndex[1];
         const adRows = await adSheet.getRows();
         cachedAds = adRows.filter(r => r.get('Status') === 'Active').map(r => ({
@@ -108,23 +110,33 @@ async function removeUser(phone) {
     } catch (e) { console.error("Remove Error:", e); }
 }
 
-// --- 📧 REPORTING ENGINE ---
+// --- 📧 REPORTING ENGINE (DEBUG MODE) ---
 async function emailReport(churchCode) {
+    console.log(`📨 Starting Report Process for: ${churchCode}`);
+
     const church = cachedChurches.find(c => c.code === churchCode);
-    if (!church || !church.email) return `❌ Skipped ${churchCode} (No Email Found)`;
+    if (!church) return `❌ Church Code ${churchCode} not found in cache.`;
+    if (!church.email) return `❌ Church found, but EMAIL IS MISSING.`;
+
+    console.log(`✅ Found Church: ${church.name} | Email: ${church.email}`);
 
     const doc = await getDoc();
     const transSheet = doc.sheetsByIndex[0];
     const rows = await transSheet.getRows();
-    // ✅ FIX: Match 'Church Code' here too
     const churchRows = rows.filter(r => r.get('Church Code') === churchCode);
     
-    if (churchRows.length === 0) return `⚠️ ${churchCode}: No transactions to report.`;
+    if (churchRows.length === 0) return `⚠️ ${churchCode}: No transactions found in Sheet.`;
 
     let csvContent = "Date,Type,Amount,Reference,Phone\n"; 
     churchRows.forEach(row => {
         csvContent += `${row.get('Date')},${row.get('Type')},${row.get('Amount')},${row.get('Reference')},${row.get('Name/Phone')}\n`;
     });
+
+    // DEBUG: Check Credentials
+    if (!EMAIL_USER || !EMAIL_PASS) {
+        console.error("❌ CRITICAL: EMAIL_USER or EMAIL_PASS is missing in Environment Variables!");
+        return "❌ Server Error: Missing Email Credentials.";
+    }
 
     const transporter = nodemailer.createTransport({
         host: EMAIL_HOST,
@@ -134,15 +146,22 @@ async function emailReport(churchCode) {
     });
 
     try {
-        await transporter.sendMail({
-            from: `"Seabe Automated Reporting" <${EMAIL_USER}>`, 
+        console.log(`📤 Attempting to send via ${EMAIL_HOST}...`);
+        
+        const info = await transporter.sendMail({
+            from: `"Seabe Bot" <${EMAIL_USER}>`, 
             to: church.email,
-            subject: `📊 Weekly Financial Report: ${church.name}`,
-            text: `Attached is your automated report.`,
-            attachments: [ { filename: `${churchCode}_Weekly_Report.csv`, content: csvContent } ]
+            subject: `📊 Report: ${church.name}`,
+            text: `Attached is your report.`,
+            attachments: [ { filename: `${churchCode}_Report.csv`, content: csvContent } ]
         });
+
+        console.log("✅ SMTP SUCCESS:", info.response);
         return `✅ Sent to ${church.email}`;
-    } catch (error) { return `❌ Failed for ${churchCode}`; }
+    } catch (error) { 
+        console.error("❌ SMTP ERROR:", error);
+        return `❌ Failed: ${error.message}`; 
+    }
 }
 
 // --- 🕰️ SCHEDULED TASKS ---
@@ -171,7 +190,6 @@ function generatePDF(type, amount, ref, date, phone, churchName) {
     return filename;
 }
 
-// 📝 UPDATED LOG FUNCTION
 async function logToSheet(phone, churchCode, type, amount, ref) {
     const doc = await getDoc();
     const sheet = doc.sheetsByIndex[0]; 
@@ -270,7 +288,6 @@ app.post('/whatsapp', async (req, res) => {
             const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}`;
             const systemEmail = `${cleanPhone}@seabe.io`;
             
-            // 🔒 FREEZE VARIABLES
             const finalChurchCode = churchCode; 
             const finalType = type;
             const finalAmount = amount;
