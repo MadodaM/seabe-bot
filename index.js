@@ -55,10 +55,21 @@ async function refreshCache() {
         const churchSheet = doc.sheetsByIndex[2]; 
         const churchRows = await churchSheet.getRows();
         
+        // 🕵️‍♂️ DETECTIVE LOG: Print the raw headers the bot sees
+        console.log("🔍 DIAGNOSTIC - HEADERS FOUND:", churchSheet.headerValues);
+
         cachedChurches = churchRows.map(row => {
+            // Safety: Handle different header spellings
             const eventName = row.get('Event_Name') || row.get('Event Name') || 'Special Event';
             const eventPrice = row.get('Event_Price') || row.get('Event Price') || '0';
-            const email = row.get('Treasurer_Email') || row.get('Treasurer Email');
+            
+            // Try every possible spelling for Email
+            const email = row.get('Treasurer_Email') || row.get('Treasurer Email') || row.get('Email') || row.get('TreasurerEmail');
+
+            // 🕵️‍♂️ DETECTIVE LOG: Print what we found for this specific church
+            if (row.get('Code') === 'AFM') {
+                console.log(`🔍 DIAGNOSTIC - AFM DATA: Code=${row.get('Code')}, Email Found=${email}`);
+            }
 
             return {
                 code: row.get('Code'),
