@@ -440,7 +440,7 @@ app.post('/whatsapp', async (req, res) => {
 app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1><p>You can return to WhatsApp.</p>"));
 
 const PORT = process.env.PORT || 3000;
-// --- 🩺 DIAGNOSTIC TOOL ---
+// --- 🩺 DIAGNOSTIC TOOL (X-RAY MODE) ---
 app.get('/test-connection', async (req, res) => {
     try {
         const serviceAccountAuth = new JWT({
@@ -451,30 +451,31 @@ app.get('/test-connection', async (req, res) => {
         
         const doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);
         await doc.loadInfo();
-        
+
+        // INSPECT TAB 3 (CHURCHES)
+        const churchSheet = doc.sheetsByTitle['Churches'] || doc.sheetsByIndex[2];
+        await churchSheet.loadHeaderRow(); // Force load headers
+        const headers = churchSheet.headerValues;
+        const rows = await churchSheet.getRows();
+
         res.send(`
-            <h1>✅ SUCCESS!</h1>
-            <p><strong>Connected to Sheet:</strong> ${doc.title}</p>
-            <p><strong>Sheet Count:</strong> ${doc.sheetCount}</p>
-            <p><strong>Tab 1 Name:</strong> ${doc.sheetsByIndex[0].title}</p>
-            <br>
-            <h3>Bot Memory Status:</h3>
+            <h1>🔍 X-RAY REPORT</h1>
+            <p><strong>Connected to:</strong> ${doc.title}</p>
+            <hr>
+            <h3>1. Checking "Churches" Tab:</h3>
+            <p><strong>Tab Title Found:</strong> "${churchSheet.title}"</p>
+            <p><strong>Headers Detected (Row 1):</strong> [ ${headers.join(' | ')} ]</p>
+            <p><strong>Data Rows Found:</strong> ${rows.length}</p>
+            
+            <h3>2. Row 1 Data Preview (if any):</h3>
+            <pre>${rows.length > 0 ? JSON.stringify(rows[0].toObject(), null, 2) : "⚠️ NO DATA FOUND IN ROW 2"}</pre>
+
+            <hr>
+            <h3>3. Bot Memory:</h3>
             <p>Cached Churches: ${cachedChurches.length}</p>
-            <p>Cached Events: ${cachedEvents.length}</p>
         `);
     } catch (error) {
-        res.send(`
-            <h1>❌ CONNECTION FAILED</h1>
-            <p><strong>Error Message:</strong> ${error.message}</p>
-            <h3>Debug Info:</h3>
-            <ul>
-                <li><strong>Email Loaded:</strong> ${GOOGLE_EMAIL ? "YES (" + GOOGLE_EMAIL + ")" : "NO (Check Env Vars)"}</li>
-                <li><strong>Key Loaded:</strong> ${GOOGLE_KEY ? "YES (Length: " + GOOGLE_KEY.length + ")" : "NO (Check Env Vars)"}</li>
-                <li><strong>Sheet ID:</strong> ${SHEET_ID}</li>
-            </ul>
-            <h3>How to fix:</h3>
-            <pre>${error.stack}</pre>
-        `);
+        res.send(`<h1>❌ ERROR</h1><pre>${error.stack}</pre>`);
     }
 });
 app.listen(PORT, () => console.log(`✅ Seabe Platform running on ${PORT}`));
