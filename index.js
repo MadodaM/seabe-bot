@@ -7,7 +7,7 @@ const PDFDocument = require('pdfkit');
 const sgMail = require('@sendgrid/mail'); 
 const cron = require('node-cron');
 const { MessagingResponse } = require('twilio').twiml;
-const { createPaymentLink } = require('./services/paystack');
+// 👇 FIXED IMPORT (Only one line, importing both functions)
 const { createPaymentLink, createSubscriptionLink } = require('./services/paystack');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
@@ -59,7 +59,6 @@ async function refreshCache() {
             const code = row.get('Church Code') || row.get('Code'); 
             const eventName = row.get('Event_Name') || row.get('Event Name') || 'Special Event';
             const eventPrice = row.get('Event_Price') || row.get('Event Price') || '0';
-            // 👇 NEW: Capture Subaccount Code
             const subaccount = row.get('Subaccount_Code') || row.get('Subaccount Code') || null;
 
             // Smart Email Detection
@@ -231,17 +230,15 @@ app.post('/whatsapp', async (req, res) => {
         const church = cachedChurches.find(c => c.code === churchCode);
         const churchName = church ? church.name : "Church";
         
-        // 👇 UPDATED MENU with Option 5
         if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
             userSession[cleanPhone].step = 'MENU';
             reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* ${church.eventName || 'Event'} (R${church.eventPrice || '0'}) 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner (Auto) 🔁` + getAdSuffix('ENGLISH', churchCode);
         }
-        // 👇 UPDATED CHOICES to include '5'
         else if (['1', '2', '3', '5'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'MENU') {
             userSession[cleanPhone].step = 'PAY';
             userSession[cleanPhone].choice = incomingMsg;
             if (incomingMsg === '3') reply = `Confirm Ticket for ${church.eventName} (R${church.eventPrice})?\nReply *Yes*`;
-            else if (incomingMsg === '5') reply = "Enter Monthly Amount (e.g. R500):"; // 👈 New Prompt for Recurring
+            else if (incomingMsg === '5') reply = "Enter Monthly Amount (e.g. R500):";
             else reply = "Enter Amount (e.g. R100):";
         }
         else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
@@ -254,8 +251,6 @@ app.post('/whatsapp', async (req, res) => {
         }
         else if (userSession[cleanPhone]?.step === 'PAY') {
             let amount = incomingMsg.replace(/\D/g,''); 
-            
-            // 👇 LOGIC: Map Choice 5 to 'RECURRING'
             let type = userSession[cleanPhone].choice === '1' ? 'OFFERING' : (userSession[cleanPhone].choice === '5' ? 'RECURRING' : 'TITHE');
             
             if (userSession[cleanPhone].choice === '3') {
@@ -275,7 +270,6 @@ app.post('/whatsapp', async (req, res) => {
             const finalRef = ref;
             const finalSubaccount = church.subaccount; 
 
-            // 👇 FORK: Choose Recurring vs Normal Payment
             let link;
             if (userSession[cleanPhone].choice === '5') {
                  link = await createSubscriptionLink(amount, ref, systemEmail, finalSubaccount);
