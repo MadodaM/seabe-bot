@@ -46,40 +46,59 @@ async function getDoc() {
     return doc;
 }
 
+// --- 🔄 DATABASE ENGINE (LOUD DEBUG VERSION) ---
 async function refreshCache() {
-    if (!GOOGLE_EMAIL) return;
+    if (!GOOGLE_EMAIL) {
+        console.log("❌ Cache Error: GOOGLE_EMAIL is missing.");
+        return;
+    }
+
+    console.log("🔄 Starting Cache Refresh...");
     try {
         const doc = await getDoc();
         
-        // 🛡️ SAFE LOADER: Find sheets by Title or Index
-        // Adjust these titles if your actual tab names are different!
-        const transSheet = doc.sheetsByTitle['Transactions'] || doc.sheetsByIndex[0];
-        const adSheet    = doc.sheetsByTitle['Ads']          || doc.sheetsByIndex[1];
-        const churchSheet= doc.sheetsByTitle['Churches']     || doc.sheetsByIndex[2];
-        const userSheet  = doc.sheetsByTitle['Users']        || doc.sheetsByIndex[3];
-        const eventSheet = doc.sheetsByTitle['Events']       || doc.sheetsByIndex[4];
+        // 1. Load Churches (Tab 3)
+        // Try finding by title first, then fallback to index 2
+        const churchSheet = doc.sheetsByTitle['Churches'] || doc.sheetsByIndex[2];
+        if (!churchSheet) throw new Error("Could not find 'Churches' tab.");
 
-        if (!churchSheet) throw new Error("CRITICAL: 'Churches' tab not found!");
-
-        // 1. Load Churches
         const churchRows = await churchSheet.getRows();
-        cachedChurches = churchRows.map(row => {
-            const rawCode = row.get('Church Code') || row.get('Code');
-            const code = rawCode ? rawCode.trim() : null; 
-            const subaccount = row.get('Subaccount_Code') || row.get('Subaccount Code');
-            
-            let email = "";
-            const rawData = row.toObject(); 
-            for (const key in rawData) {
-                if (typeof rawData[key] === 'string' && rawData[key].includes('@')) {
-                    email = rawData[key].trim(); 
-                    break;
+        console.log(`📥 Found ${churchRows.length} rows in Churches tab.`);
+
+        cachedChurches = churchRows.map((row, i) => {
+            try {
+                // Safe Data Extraction
+                const rawCode = row.get('Church Code') || row.get('Code');
+                const rawName = row.get('Name') || row.get('Church Name');
+                const rawSub  = row.get('Subaccount Code') || row.get('Subaccount_Code');
+                
+                // Email Hunter (Scans all columns for an @ symbol)
+                let email = "";
+                const rawData = row.toObject(); 
+                for (const key in rawData) {
+                    if (rawData[key] && typeof rawData[key] === 'string' && rawData[key].includes('@')) {
+                        email = rawData[key].trim(); 
+                        break;
+                    }
                 }
+
+                // Log success for first row only (to keep logs clean)
+                if (i === 0) console.log(`✅ Parsed Row 1: ${rawName} (${rawCode})`);
+
+                return { 
+                    code: rawCode ? rawCode.trim() : "UNKNOWN", 
+                    name: rawName ? rawName.trim() : "Unnamed Church", 
+                    email: email, 
+                    subaccount: rawSub ? rawSub.trim() : null 
+                };
+            } catch (err) {
+                console.error(`⚠️ Error parsing Church Row ${i + 2}:`, err.message);
+                return null; // Return null so we can filter it out later
             }
-            return { code, name: row.get('Name'), email, subaccount: subaccount ? subaccount.trim() : null };
-        });
+        }).filter(c => c !== null && c.code !== "UNKNOWN"); // Remove failed rows
 
         // 2. Load Ads (Safe Check)
+        const adSheet = doc.sheetsByTitle['Ads'] || doc.sheetsByIndex[1];
         if (adSheet) {
             const adRows = await adSheet.getRows();
             cachedAds = adRows.filter(r => r.get('Status') && r.get('Status').trim() === 'Active')
@@ -90,6 +109,7 @@ async function refreshCache() {
         }
 
         // 3. Load Events (Safe Check)
+        const eventSheet = doc.sheetsByTitle['Events'] || doc.sheetsByIndex[4];
         if (eventSheet) {
             const eventRows = await eventSheet.getRows();
             cachedEvents = eventRows
@@ -101,14 +121,15 @@ async function refreshCache() {
                     date: r.get('Date')
                 }));
         } else {
-            console.log("⚠️ Warning: 'Events' tab not found. Skipping events.");
-            cachedEvents = []; // Empty events, but don't crash
+            console.log("⚠️ Notice: 'Events' tab not found (Tab 5). Skipping events.");
+            cachedEvents = [];
         }
         
-        console.log(`♻️ System Ready: ${cachedChurches.length} Churches, ${cachedEvents.length} Active Events.`);
+        console.log(`♻️ SUCCESS: Memory loaded with ${cachedChurches.length} Churches.`);
+
     } catch (e) { 
-        console.error("❌ CRITICAL CACHE ERROR:", e.message); 
-        // Keep old cache if refresh fails, to prevent downtime
+        console.error("❌ CRITICAL CACHE FAILURE:", e.stack); 
+        // Do not reset cache to empty if refresh fails; keep old memory
     }
 }
 
