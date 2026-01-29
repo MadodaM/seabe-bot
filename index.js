@@ -7,7 +7,7 @@ const PDFDocument = require('pdfkit');
 const nodemailer = require('nodemailer');
 const cron = require('node-cron'); // 👈 NEW: Timekeeper
 const { MessagingResponse } = require('twilio').twiml;
-const { createPaymentLink } = require('./services/stitch');
+const { createPaymentLink } = require('./services/paystack');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
 
@@ -206,6 +206,38 @@ app.post('/whatsapp', async (req, res) => {
         res.type('text/xml').send(twiml.toString());
         return;
     }
+	else if (userSession[cleanPhone]?.step === 'PAY') {
+            let amount = incomingMsg.replace(/\D/g,'');
+            let type = userSession[cleanPhone].choice === '1' ? 'OFFERING' : 'TITHE';
+            
+            if (userSession[cleanPhone].choice === '3') {
+                if (incomingMsg.includes('yes')) { amount = church.eventPrice; type = 'TICKET'; } 
+                else { 
+                    // ... cancel logic ...
+                    return; 
+                }
+            }
+
+            const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}`;
+            
+            // 🆕 PAYSTACK UPDATE: Generate a dummy email using the phone number
+            const userEmail = `${cleanPhone}@seabe.io`;
+
+            const link = await createPaymentLink(amount, ref, userEmail);
+            
+            if (link) {
+                reply = `Tap to pay R${amount}:\n👉 ${link}`;
+                
+                // ... (Keep your existing PDF & Logging logic here) ...
+                if (client) {
+                   // ... keep the setTimeout logic ...
+                }
+            } else {
+                reply = "⚠️ System Error. Please try again later.";
+            }
+            
+            userSession[cleanPhone].step = 'MENU';
+        }
 
     let churchCode = userSession[cleanPhone]?.churchCode;
     if (!churchCode) {
