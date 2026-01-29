@@ -5,8 +5,9 @@ const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit');
 const nodemailer = require('nodemailer');
-const cron = require('node-cron'); // 👈 NEW: Timekeeper
+const cron = require('node-cron');
 const { MessagingResponse } = require('twilio').twiml;
+// 👇 NEW: We import Paystack instead of Stitch
 const { createPaymentLink } = require('./services/paystack');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
@@ -17,6 +18,9 @@ const AUTH_TOKEN = process.env.TWILIO_AUTH;
 const GOOGLE_EMAIL = process.env.GOOGLE_EMAIL;
 const GOOGLE_KEY = process.env.GOOGLE_KEY ? process.env.GOOGLE_KEY.replace(/\\n/g, '\n') : null;
 const SHEET_ID = process.env.SHEET_ID;
+
+// EMAIL CONFIG
+const EMAIL_HOST = process.env.EMAIL_HOST || 'smtp.gmail.com'; 
 const EMAIL_USER = process.env.EMAIL_USER;
 const EMAIL_PASS = process.env.EMAIL_PASS;
 
@@ -47,8 +51,6 @@ async function refreshCache() {
     if (!GOOGLE_EMAIL) return;
     try {
         const doc = await getDoc();
-        
-        // Load Churches (Tab 3)
         const churchSheet = doc.sheetsByIndex[2]; 
         const churchRows = await churchSheet.getRows();
         cachedChurches = churchRows.map(row => ({
@@ -59,7 +61,6 @@ async function refreshCache() {
             email: row.get('Treasurer_Email')
         }));
 
-        // Load Ads (Tab 2)
         const adSheet = doc.sheetsByIndex[1];
         const adRows = await adSheet.getRows();
         cachedAds = adRows
@@ -74,7 +75,6 @@ async function refreshCache() {
         console.log(`♻️ Cache Updated: ${cachedChurches.length} Churches, ${cachedAds.length} Ads.`);
     } catch (e) { console.error("❌ Cache Error:", e.message); }
 }
-// Refresh cache every 10 mins
 setInterval(refreshCache, 600000); 
 refreshCache(); 
 
@@ -100,8 +100,6 @@ async function emailReport(churchCode) {
     const doc = await getDoc();
     const transSheet = doc.sheetsByIndex[0];
     const rows = await transSheet.getRows();
-    
-    // Filter rows for this church
     const churchRows = rows.filter(r => r.get('Church Code') === churchCode);
     
     if (churchRows.length === 0) return `⚠️ ${churchCode}: No transactions to report.`;
@@ -112,19 +110,19 @@ async function emailReport(churchCode) {
     });
 
     const transporter = nodemailer.createTransport({
-        service: 'gmail',
+        host: EMAIL_HOST,
+        port: 465, 
+        secure: true, 
         auth: { user: EMAIL_USER, pass: EMAIL_PASS }
     });
 
     try {
         await transporter.sendMail({
-            from: `"Seabe Bot" <${EMAIL_USER}>`,
+            from: `"Seabe Automated Reporting" <${EMAIL_USER}>`, 
             to: church.email,
             subject: `📊 Weekly Financial Report: ${church.name}`,
             text: `Dear Treasurer,\n\nAttached is your automated weekly transaction report for ${church.name}.\n\nRegards,\nSeabe Digital Team`,
-            attachments: [
-                { filename: `${churchCode}_Weekly_Report.csv`, content: csvContent }
-            ]
+            attachments: [ { filename: `${churchCode}_Weekly_Report.csv`, content: csvContent } ]
         });
         return `✅ Sent to ${church.email}`;
     } catch (error) {
@@ -133,25 +131,18 @@ async function emailReport(churchCode) {
     }
 }
 
-// --- 🕰️ SCHEDULED TASKS (NEW) ---
-// Syntax: '0 8 * * 1' = At 08:00 on Monday
+// --- 🕰️ SCHEDULED TASKS ---
 cron.schedule('0 8 * * 1', async () => {
     console.log("⏰ Running Weekly Reports...");
-    
-    // Loop through ALL churches and send reports
     for (const church of cachedChurches) {
         if (church.code && church.email) {
             console.log(`📤 Sending report for ${church.name}...`);
-            const result = await emailReport(church.code);
-            console.log(result);
+            await emailReport(church.code);
         }
     }
-}, {
-    timezone: "Africa/Johannesburg"
-});
+}, { timezone: "Africa/Johannesburg" });
 
-
-// --- 📄 PDF & LOGGING ---
+// --- 📄 PDF & HELPERS ---
 function generatePDF(type, amount, ref, date, phone, churchName) {
     const doc = new PDFDocument({ size: 'A5', margin: 50 });
     const filename = `receipt_${Date.now()}_${phone.slice(-4)}.pdf`;
@@ -198,7 +189,6 @@ app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
     let reply = "";
 
-    // Manual Report Trigger (For Admin Testing)
     if (incomingMsg.startsWith('report ')) {
         const targetCode = incomingMsg.split(' ')[1].toUpperCase();
         reply = await emailReport(targetCode);
@@ -206,38 +196,6 @@ app.post('/whatsapp', async (req, res) => {
         res.type('text/xml').send(twiml.toString());
         return;
     }
-	else if (userSession[cleanPhone]?.step === 'PAY') {
-            let amount = incomingMsg.replace(/\D/g,'');
-            let type = userSession[cleanPhone].choice === '1' ? 'OFFERING' : 'TITHE';
-            
-            if (userSession[cleanPhone].choice === '3') {
-                if (incomingMsg.includes('yes')) { amount = church.eventPrice; type = 'TICKET'; } 
-                else { 
-                    // ... cancel logic ...
-                    return; 
-                }
-            }
-
-            const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}`;
-            
-            // 🆕 PAYSTACK UPDATE: Generate a dummy email using the phone number
-            const userEmail = `${cleanPhone}@seabe.io`;
-
-            const link = await createPaymentLink(amount, ref, userEmail);
-            
-            if (link) {
-                reply = `Tap to pay R${amount}:\n👉 ${link}`;
-                
-                // ... (Keep your existing PDF & Logging logic here) ...
-                if (client) {
-                   // ... keep the setTimeout logic ...
-                }
-            } else {
-                reply = "⚠️ System Error. Please try again later.";
-            }
-            
-            userSession[cleanPhone].step = 'MENU';
-        }
 
     let churchCode = userSession[cleanPhone]?.churchCode;
     if (!churchCode) {
@@ -286,31 +244,8 @@ app.post('/whatsapp', async (req, res) => {
             }
 
             const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}`;
-            const link = await createPaymentLink(amount + ".00", ref);
-            reply = `Tap to pay R${amount}:\n👉 ${link}`;
             
-            if (client) {
-                setTimeout(async () => {
-                    const pdfName = generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, churchName);
-                    const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
-                    const pdfUrl = `https://${hostUrl}/public/receipts/${pdfName}`;
-                    try { await client.messages.create({ from: 'whatsapp:+14155238886', to: sender, body: `🎉 Payment Received! ${getAdSuffix('ENGLISH', churchCode)}`, mediaUrl: [pdfUrl] }); } catch(e) {}
-                    await logToSheet(cleanPhone, churchCode, type, amount, ref);
-                }, 15000);
-            }
-            userSession[cleanPhone].step = 'MENU';
-        } else if (incomingMsg === '4') {
-             reply = "Please contact support to switch churches.";
-        } else {
-             reply = "Reply *Hi* to see the menu.";
-        }
-    }
-
-    twiml.message(reply);
-    res.type('text/xml').send(twiml.toString());
-});
-
-app.post('/stitch-webhook', (req, res) => res.sendStatus(200));
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Seabe Platform running on ${PORT}`));
+            // 👇 PAYSTACK LOGIC: Generate System Email
+            const systemEmail = `${cleanPhone}@seabe.io`; // e.g., 27831234567@seabe.io
+            
+            const link =
