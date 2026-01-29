@@ -139,15 +139,21 @@ async function emailReport(churchCode) {
     }
 
        // 👇 UPDATED TRANSPORTER (Uses Port 587)
+// ... inside emailReport function ...
+
+    // 👇 UPDATED TRANSPORTER (Service Mode + IPv4 Force)
     const transporter = nodemailer.createTransport({
-        host: 'smtp.gmail.com', // We force Gmail host here
-        port: 587,              // 👈 CHANGED from 465
-        secure: false,          // 👈 CHANGED to false (required for 587)
-        auth: { user: EMAIL_USER, pass: EMAIL_PASS }
+        service: 'gmail',       // Let Nodemailer handle the host/port
+        auth: {
+            user: EMAIL_USER,
+            pass: EMAIL_PASS
+        },
+        // 🔒 FORCE IPv4 (Fixes the timeout on Render)
+        family: 4 
     });
 
     try {
-        console.log(`📤 Attempting to send via Port 587...`);
+        console.log(`📤 Attempting to send via Gmail Service (IPv4)...`);
         
         const info = await transporter.sendMail({
             from: `"Seabe Bot" <${EMAIL_USER}>`, 
