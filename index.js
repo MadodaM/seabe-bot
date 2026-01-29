@@ -7,7 +7,7 @@ const PDFDocument = require('pdfkit');
 const nodemailer = require('nodemailer');
 const cron = require('node-cron');
 const { MessagingResponse } = require('twilio').twiml;
-// 👇 NEW: We import Paystack instead of Stitch
+// 👇 PAYSTACK IMPORT
 const { createPaymentLink } = require('./services/paystack');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
@@ -51,6 +51,8 @@ async function refreshCache() {
     if (!GOOGLE_EMAIL) return;
     try {
         const doc = await getDoc();
+        
+        // Load Churches (Tab 3)
         const churchSheet = doc.sheetsByIndex[2]; 
         const churchRows = await churchSheet.getRows();
         cachedChurches = churchRows.map(row => ({
@@ -61,6 +63,7 @@ async function refreshCache() {
             email: row.get('Treasurer_Email')
         }));
 
+        // Load Ads (Tab 2)
         const adSheet = doc.sheetsByIndex[1];
         const adRows = await adSheet.getRows();
         cachedAds = adRows
@@ -75,6 +78,7 @@ async function refreshCache() {
         console.log(`♻️ Cache Updated: ${cachedChurches.length} Churches, ${cachedAds.length} Ads.`);
     } catch (e) { console.error("❌ Cache Error:", e.message); }
 }
+// Refresh every 10 mins
 setInterval(refreshCache, 600000); 
 refreshCache(); 
 
@@ -189,6 +193,7 @@ app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
     let reply = "";
 
+    // Admin Report Trigger
     if (incomingMsg.startsWith('report ')) {
         const targetCode = incomingMsg.split(' ')[1].toUpperCase();
         reply = await emailReport(targetCode);
@@ -203,6 +208,7 @@ app.post('/whatsapp', async (req, res) => {
         if (churchCode) userSession[cleanPhone] = { ...userSession[cleanPhone], churchCode };
     }
 
+    // ONBOARDING
     if (!churchCode) {
         if (!userSession[cleanPhone]?.onboarding) {
             let list = "Welcome to Seabe! 🇿🇦\nPlease select your church:\n";
@@ -220,6 +226,7 @@ app.post('/whatsapp', async (req, res) => {
             } else { reply = "⚠️ Invalid selection."; }
         }
     } 
+    // MENU FLOW
     else {
         const church = cachedChurches.find(c => c.code === churchCode);
         const churchName = church ? church.name : "Church";
@@ -245,7 +252,39 @@ app.post('/whatsapp', async (req, res) => {
 
             const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}`;
             
-            // 👇 PAYSTACK LOGIC: Generate System Email
+            // 👇 PAYSTACK LOGIC
             const systemEmail = `${cleanPhone}@seabe.io`; // e.g., 27831234567@seabe.io
             
-            const link =
+            const link = await createPaymentLink(amount, ref, systemEmail);
+            
+            if (link) {
+                reply = `Tap to pay R${amount}:\n👉 ${link}`;
+                
+                if (client) {
+                    setTimeout(async () => {
+                        const pdfName = generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, churchName);
+                        const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
+                        const pdfUrl = `https://${hostUrl}/public/receipts/${pdfName}`;
+                        try { await client.messages.create({ from: 'whatsapp:+14155238886', to: sender, body: `🎉 Payment Received! ${getAdSuffix('ENGLISH', churchCode)}`, mediaUrl: [pdfUrl] }); } catch(e) {}
+                        await logToSheet(cleanPhone, churchCode, type, amount, ref);
+                    }, 15000);
+                }
+            } else {
+                reply = "⚠️ Error creating payment link. Please try again.";
+            }
+
+            userSession[cleanPhone].step = 'MENU';
+        } else if (incomingMsg === '4') { reply = "Please contact support to switch churches."; } 
+        else { reply = "Reply *Hi* to see the menu."; }
+    }
+
+    twiml.message(reply);
+    res.type('text/xml').send(twiml.toString());
+});
+
+app.post('/payment-success', (req, res) => {
+    res.send("<h1>Payment Successful! 🎉</h1><p>You can return to WhatsApp.</p>");
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`✅ Seabe Platform running on ${PORT}`));
