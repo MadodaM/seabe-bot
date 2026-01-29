@@ -49,6 +49,8 @@ async function refreshCache() {
     if (!GOOGLE_EMAIL) return;
     try {
         const doc = await getDoc();
+        
+        // Load Churches (Tab 3)
         const churchSheet = doc.sheetsByIndex[2]; 
         const churchRows = await churchSheet.getRows();
         
@@ -56,8 +58,10 @@ async function refreshCache() {
             const code = row.get('Church Code') || row.get('Code'); 
             const eventName = row.get('Event_Name') || row.get('Event Name') || 'Special Event';
             const eventPrice = row.get('Event_Price') || row.get('Event Price') || '0';
-            const subaccount = row.get('Subaccount_Code') || row.get('Subaccount Code') || null; // 👈 NEW
-            
+            // 👇 NEW: Capture Subaccount Code
+            const subaccount = row.get('Subaccount_Code') || row.get('Subaccount Code') || null;
+
+            // Smart Email Detection
             let email = "";
             const rawData = row.toObject(); 
             for (const key in rawData) {
@@ -66,10 +70,10 @@ async function refreshCache() {
                     break;
                 }
             }
-            // Pass subaccount to cache
-            return { code, name: row.get('Name'), eventName, eventPrice, email, subaccount }; 
+            return { code, name: row.get('Name'), eventName, eventPrice, email, subaccount };
         });
 
+        // Load Ads (Tab 2)
         const adSheet = doc.sheetsByIndex[1];
         const adRows = await adSheet.getRows();
         cachedAds = adRows.filter(r => r.get('Status') === 'Active').map(r => ({
@@ -256,19 +260,21 @@ app.post('/whatsapp', async (req, res) => {
                 else { reply = "❌ Cancelled."; twiml.message(reply); res.type('text/xml').send(twiml.toString()); return; }
             }
 
-            // ... inside the PAY step ...
+            // 👇 THIS IS WHERE YOU WERE MISSING THE DEFINITION 👇
+            const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}`;
+            const systemEmail = `${cleanPhone}@seabe.io`;
+            
             const finalChurchCode = churchCode; 
             const finalType = type;
             const finalAmount = amount;
             const finalRef = ref;
-            // 👇 NEW: Get the subaccount code from memory
+            // Get subaccount from memory
             const finalSubaccount = church.subaccount; 
 
-            // 👇 PASS THE SUBACCOUNT CODE TO PAYSTACK
+            // Pass subaccount to Paystack
             const link = await createPaymentLink(amount, ref, systemEmail, finalSubaccount);
             
             if (link) {
-                 // ... rest of code remains the same
                 reply = `Tap to pay R${amount}:\n👉 ${link}`;
                 if (client) {
                     setTimeout(async () => {
@@ -293,4 +299,4 @@ app.post('/whatsapp', async (req, res) => {
 app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1><p>You can return to WhatsApp.</p>"));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Seabe Platform running on ${PORT}`));	
+app.listen(PORT, () => console.log(`✅ Seabe Platform running on ${PORT}`));
