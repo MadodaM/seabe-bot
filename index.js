@@ -475,6 +475,140 @@ app.post('/whatsapp', async (req, res) => {
         const cleanPhone = sender.replace('whatsapp:', '');
         let reply = "";
 
+// ... inside app.post('/whatsapp'), after defining 'cleanPhone' ...
+
+// 🛑 SECURITY: Only allow specific numbers to be Admin
+// Add your phone number here (format: 27...)
+const ADMIN_NUMBERS = ['278832182707', '27837672503']; 
+
+// --- 🛠️ ADMIN FLOW START ---
+
+// 1. TRIGGER: User types "admin"
+if (incomingMsg.toLowerCase() === 'admin' && ADMIN_NUMBERS.includes(cleanPhone)) {
+    userSession[cleanPhone] = { step: 'ADMIN_MENU' };
+    reply = `🛠️ *Admin Command Center*\n\n` +
+            `What would you like to add?\n` +
+            `*1.* 📅 New Event\n` +
+            `*2.* 📢 News / Ad\n` +
+            `*3.* ❌ Cancel`;
+}
+
+// 2. ADMIN MENU SELECTION
+else if (userSession[cleanPhone]?.step === 'ADMIN_MENU') {
+    if (incomingMsg === '1') {
+        userSession[cleanPhone] = { step: 'ADMIN_EVENT_CHURCH' };
+        reply = `📅 *New Event*\n\nEnter the *Church Code* this event belongs to:\n(e.g., GRA123)`;
+    } else if (incomingMsg === '2') {
+        userSession[cleanPhone] = { step: 'ADMIN_AD_CHURCH' };
+        reply = `📢 *New Ad / News*\n\nEnter the *Church Code* for this ad:\n(e.g., GRA123)`;
+    } else {
+        userSession[cleanPhone] = null; // Exit
+        reply = `❌ Admin mode cancelled.`;
+    }
+}
+
+// --- 📅 FLOW: ADD EVENT ---
+
+// 3. Get Church Code -> Ask for Name
+else if (userSession[cleanPhone]?.step === 'ADMIN_EVENT_CHURCH') {
+    userSession[cleanPhone].churchCode = incomingMsg.toUpperCase();
+    userSession[cleanPhone].step = 'ADMIN_EVENT_NAME';
+    reply = `Got it. Enter the *Event Name*:\n(e.g., Men's Conference)`;
+}
+
+// 4. Get Name -> Ask for Price
+else if (userSession[cleanPhone]?.step === 'ADMIN_EVENT_NAME') {
+    userSession[cleanPhone].eventName = incomingMsg;
+    userSession[cleanPhone].step = 'ADMIN_EVENT_PRICE';
+    reply = `Enter the *Ticket Price* (Numbers only):\n(e.g., 200)`;
+}
+
+// 5. Get Price -> Ask for Date
+else if (userSession[cleanPhone]?.step === 'ADMIN_EVENT_PRICE') {
+    userSession[cleanPhone].eventPrice = incomingMsg;
+    userSession[cleanPhone].step = 'ADMIN_EVENT_DATE';
+    reply = `Enter the *Event Date* (YYYY-MM-DD):\n(e.g., 2026-06-15)`;
+}
+
+// 6. SAVE EVENT
+else if (userSession[cleanPhone]?.step === 'ADMIN_EVENT_DATE') {
+    const data = userSession[cleanPhone];
+    const eventDate = incomingMsg;
+
+    // SAVE TO GOOGLE SHEET
+    try {
+        const doc = await getDoc();
+        const sheet = doc.sheetsByTitle['Events'] || doc.sheetsByIndex[4]; // Ensure this matches your Tab
+        await sheet.addRow({
+            'Church Code': data.churchCode,
+            'Event Name': data.eventName,
+            'Price': data.eventPrice,
+            'Date': eventDate,
+            'Status': 'Active'
+        });
+        
+        // Clear Cache so it shows up immediately
+        await refreshCache();
+
+        reply = `✅ *Event Saved!*\n\n` +
+                `Event: ${data.eventName}\n` +
+                `Price: R${data.eventPrice}\n` +
+                `Date: ${eventDate}\n\n` +
+                `Reply *admin* to add another.`;
+        
+        userSession[cleanPhone] = null; // Reset
+    } catch (e) {
+        console.error(e);
+        reply = `❌ Error saving event. Check logs.`;
+    }
+}
+
+// --- 📢 FLOW: ADD ADVERTISEMENT ---
+
+// 3. Get Church Code -> Ask for Language
+else if (userSession[cleanPhone]?.step === 'ADMIN_AD_CHURCH') {
+    userSession[cleanPhone].churchCode = incomingMsg.toUpperCase();
+    userSession[cleanPhone].step = 'ADMIN_AD_LANG';
+    reply = `Enter *Language Code* (EN, ZU, ST):\n(Or type ALL for everyone)`;
+}
+
+// 4. Get Language -> Ask for Message
+else if (userSession[cleanPhone]?.step === 'ADMIN_AD_LANG') {
+    userSession[cleanPhone].lang = incomingMsg.toUpperCase();
+    userSession[cleanPhone].step = 'ADMIN_AD_MSG';
+    reply = `Enter the *Ad/News Message*:\n(Keep it short!)`;
+}
+
+// 5. SAVE AD
+else if (userSession[cleanPhone]?.step === 'ADMIN_AD_MSG') {
+    const data = userSession[cleanPhone];
+    const adText = incomingMsg;
+
+    try {
+        const doc = await getDoc();
+        const sheet = doc.sheetsByTitle['Ads'] || doc.sheetsByIndex[1]; // Ensure this matches Ads tab
+        await sheet.addRow({
+            'Church Code': data.churchCode,
+            'Language': data.lang,
+            'Ad Text': adText,
+            'Status': 'Active'
+        });
+
+        await refreshCache();
+
+        reply = `✅ *Ad Published!*\n\n` +
+                `"${adText}"\n\n` +
+                `Reply *Hi* to see it in the menu.`;
+
+        userSession[cleanPhone] = null;
+    } catch (e) {
+        reply = `❌ Error saving Ad.`;
+    }
+}
+
+// --- 🛠️ ADMIN FLOW END ---
+// ... continue with your existing 'else if (incomingMsg === 'Hi') ...'
+
         if (incomingMsg.startsWith('report ')) {
             const targetCode = incomingMsg.split(' ')[1].toUpperCase();
             reply = await emailReport(targetCode);
