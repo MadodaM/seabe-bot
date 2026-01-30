@@ -12,7 +12,6 @@ const { createPaymentLink, createSubscriptionLink } = require('./services/paysta
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
 const multer = require('multer');
-const fs = require('fs'); // 👈 Needed to read files for SendGrid
 const upload = multer({ dest: 'uploads/' }); // Temporary storage
 
 // --- CONFIG ---
