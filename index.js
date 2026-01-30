@@ -250,25 +250,45 @@ cron.schedule('0 8 * * 1', async () => {
     }
 }, { timezone: "Africa/Johannesburg" });
 
-// --- 📄 PDF FACTORY ---
+// --- 📄 PDF FACTORY (ASYNC VERSION) ---
 function generatePDF(type, amount, ref, date, phone, churchName, eventDetail = '') {
-    const doc = new PDFDocument({ size: 'A5', margin: 50 });
-    const filename = `receipt_${Date.now()}_${phone.slice(-4)}.pdf`;
-    const filePath = path.join(__dirname, 'public', 'receipts', filename);
-    const dir = path.dirname(filePath);
-    if (!fs.existsSync(dir)){ fs.mkdirSync(dir, { recursive: true }); }
-    const stream = fs.createWriteStream(filePath);
-    doc.pipe(stream);
-    
-    doc.fontSize(20).text(type === 'TICKET' ? 'ADMIT ONE' : 'RECEIPT', 50, 100, { align: 'right' });
-    doc.fontSize(10).text(churchName, { align: 'right' });
-    doc.moveDown(); doc.moveTo(50, 160).lineTo(370, 160).stroke(); doc.moveDown(2);
-    doc.text(`Ref: ${ref}`); doc.text(`Member: ${phone}`); 
-    if(eventDetail) doc.text(`Event: ${eventDetail}`); 
-    doc.moveDown(2);
-    doc.fontSize(16).text(`AMOUNT:  R ${amount}.00`, 50);
-    doc.end();
-    return filename;
+    return new Promise((resolve, reject) => {
+        try {
+            const doc = new PDFDocument({ size: 'A5', margin: 50 });
+            const filename = `receipt_${Date.now()}_${phone.slice(-4)}.pdf`;
+            const filePath = path.join(__dirname, 'public', 'receipts', filename);
+            const dir = path.dirname(filePath);
+
+            // Ensure directory exists
+            if (!fs.existsSync(dir)){ fs.mkdirSync(dir, { recursive: true }); }
+
+            const stream = fs.createWriteStream(filePath);
+            doc.pipe(stream);
+
+            // Content
+            doc.fontSize(20).text(type === 'TICKET' ? 'ADMIT ONE' : 'RECEIPT', 50, 100, { align: 'right' });
+            doc.fontSize(10).text(churchName, { align: 'right' });
+            doc.moveDown(); doc.moveTo(50, 160).lineTo(370, 160).stroke(); doc.moveDown(2);
+            doc.text(`Ref: ${ref}`); doc.text(`Member: ${phone}`); 
+            if(eventDetail) doc.text(`Event: ${eventDetail}`); 
+            doc.moveDown(2);
+            doc.fontSize(16).text(`AMOUNT:  R ${amount}.00`, 50);
+
+            doc.end();
+
+            // 👇 CRITICAL: Wait for the file to be fully written
+            stream.on('finish', () => {
+                resolve(filename); // Only returns when file is ready
+            });
+
+            stream.on('error', (err) => {
+                reject(err);
+            });
+
+        } catch (e) {
+            reject(e);
+        }
+    });
 }
 
 async function logToSheet(phone, churchCode, type, amount, ref) {
@@ -534,16 +554,16 @@ else if (incomingMsg === '7' && userSession[cleanPhone]?.step === 'MENU') {
                         reply = `Tap to pay R${amount}:\n👉 ${link}`;
                         const currentLang = userSession[cleanPhone].lang || 'ENGLISH';
                         // 👇 REPLACE THE OLD setTimeout BLOCK WITH THIS DEBUG VERSION
-if (client) {
-    setTimeout(async () => {
+setTimeout(async () => {
         try {
-            // 1. Generate PDF
-            const pdfName = generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, church.name, eventNameForPdf);
+            // 1. Generate PDF and WAIT for it to finish
+            const pdfName = await generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, church.name, eventNameForPdf);
             
-            // 2. Construct URL (Force HTTPS and correct domain)
-            const hostUrl = req.headers.host || 'seabe.co.za'; 
+            // 2. Construct URL
+            // Using your new domain ensures SSL trust
+            const hostUrl = 'seabe.co.za'; 
             const pdfUrl = `https://${hostUrl}/public/receipts/${pdfName}`;
-            console.log("📄 Attempting to send PDF:", pdfUrl); // <--- LOG THIS
+            console.log("📄 PDF Ready on Disk. Sending to Twilio:", pdfUrl);
 
             // 3. Send WhatsApp
             await client.messages.create({ 
@@ -552,18 +572,17 @@ if (client) {
                 body: `🎉 Payment Received! ${getAdSuffix(currentLang, churchCode)}`, 
                 mediaUrl: [pdfUrl] 
             });
-            console.log("✅ PDF Sent Successfully");
+            console.log("✅ PDF Delivered");
 
             // 4. Log to Sheet
             await logToSheet(cleanPhone, churchCode, type, amount, ref);
 
         } catch (e) {
-            console.error("❌ PDF SENDING FAILED:", e.message); // <--- NOW YOU WILL SEE WHY
-            // Even if PDF fails, try to log the money to the sheet
+            console.error("❌ PDF ERROR:", e.message); 
+            // Log money anyway
             await logToSheet(cleanPhone, churchCode, type, amount, ref);
         }
-    }, 15000); // 15 seconds delay
-}
+    }, 15000);
                     } else { reply = "⚠️ Error creating link."; }
                     userSession[cleanPhone].step = 'MENU';
                 } else { reply = "Reply *Hi* to see the menu."; }

@@ -1,3 +1,3 @@
 git add .
-git commit -m "My Profile / History"
+git commit -m "The Fix: Wait for the "Write Finish" Event"
 git push
