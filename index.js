@@ -561,7 +561,9 @@ setTimeout(async () => {
             
             // 2. Construct URL
             // Using your new domain ensures SSL trust
-            const hostUrl = 'seabe.co.za'; 
+            // TEMPORARY FIX: Use the Render URL until seabe.co.za Certificate is Green
+			// const hostUrl = 'seabe.co.za';  <-- COMMENT THIS OUT FOR NOW
+			const hostUrl = 'seabe-bot.onrender.com'; // <-- USE THIS TEMPORARILY 
             const pdfUrl = `https://${hostUrl}/public/receipts/${pdfName}`;
             console.log("📄 PDF Ready on Disk. Sending to Twilio:", pdfUrl);
 
