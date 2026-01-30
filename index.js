@@ -34,6 +34,18 @@ const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
+// 1. Import Nodemailer
+const nodemailer = require('nodemailer');
+
+// 2. Configure the Transporter (The Mailman)
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.EMAIL_USER, // Your Gmail address
+        pass: process.env.EMAIL_PASS  // Your App Password
+    }
+});
+
 // 👇 NEW: Serve the Website at the Root URL
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
