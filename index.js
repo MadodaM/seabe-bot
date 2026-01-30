@@ -72,7 +72,7 @@ app.get('/register', (req, res) => {
 
 // ...
 
-// 👇 REPLACED ROUTE: API-Based Email (SendGrid) + HubSpot
+// 👇 CORRECTED ROUTE: SendGrid + HubSpot
 app.post('/request-demo', upload.none(), async (req, res) => {
     const { firstname, email, phone } = req.body;
 
@@ -82,12 +82,12 @@ app.post('/request-demo', upload.none(), async (req, res) => {
     }
 
     try {
-        // --- ACTION 1: Send Email via API ---
+        // --- ACTION 1: Send Email via SendGrid ---
+        // We wrap this in its OWN try/catch so email errors don't crash the whole app
         try {
             const msg = {
-                // 👇 UPDATED: Use your new variable name 'EMAIL_FROM'
-                to: process.env.EMAIL_FROM,   // Send it TO yourself
-                from: process.env.EMAIL_FROM, // Send it FROM yourself (Must match SendGrid Verified Email)
+                to: process.env.EMAIL_FROM,    // Send TO yourself
+                from: process.env.EMAIL_FROM,  // Send FROM yourself (Must match SendGrid Verified Sender)
                 subject: `🔥 New Lead: ${firstname}`,
                 html: `
                     <div style="font-family: Arial, sans-serif; padding: 20px;">
@@ -100,8 +100,12 @@ app.post('/request-demo', upload.none(), async (req, res) => {
                     </div>
                 `,
             };
-            await sgMail.send(msg); // Send it!
+            await sgMail.send(msg);
             console.log("✅ Email Sent via SendGrid API");
+        } catch (emailError) {
+            // Log the specific error if SendGrid fails
+            console.error("❌ SendGrid Error:", emailError.response ? emailError.response.body : emailError.message);
+        }
 
         // --- ACTION 2: Send to HubSpot CRM ---
         if (process.env.HUBSPOT_TOKEN) {
@@ -132,8 +136,9 @@ app.post('/request-demo', upload.none(), async (req, res) => {
         `);
 
     } catch (error) {
+        // This is the MAIN catch block that was missing!
         console.error("General Error:", error.message);
-        res.send('<h1>Received!</h1><a href="/">Back</a>');
+        res.send('<h1>Received! (Saved locally)</h1><a href="/">Back</a>');
     }
 });
 
