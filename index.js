@@ -112,48 +112,6 @@ app.post('/request-demo', upload.none(), async (req, res) => {
         res.send('<h1>Received! (Saved locally)</h1><a href="/">Back</a>');
     }
 });
-	
-	properties: {
-        firstname: firstname,
-        email: email,
-        phone: phone,
-        lifecyclestage: 'lead', 
-        hs_lead_status: 'OPEN'  // 👈 CHANGED: 'lead_status' -> 'hs_lead_status'
-    }
-}, {
-            }, {
-                headers: {
-                    'Authorization': `Bearer ${process.env.HUBSPOT_TOKEN}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-            console.log(`✅ HubSpot Contact Created: ${email}`);
-        } else {
-            console.log("⚠️ HubSpot Token missing, skipping CRM sync.");
-        }
-
-        // --- ACTION 3: Success Page ---
-        res.send(`
-            <div style="font-family:sans-serif; text-align:center; padding:100px;">
-                <h1 style="color:#25D366; font-size:3rem;">Received! ✅</h1>
-                <p style="font-size:1.5rem;">Thanks, ${firstname}. We will call you shortly.</p>
-                <a href="/" style="color:#075E54; text-decoration:underline;">Back to Home</a>
-            </div>
-        `);
-
-    } catch (error) {
-        console.error("Demo Request Error:", error.response ? error.response.data : error.message);
-        
-        // Even if HubSpot fails (e.g., duplicate email), show success to the user
-        res.send(`
-            <div style="font-family:sans-serif; text-align:center; padding:100px;">
-                <h1>Thank You</h1>
-                <p>We received your details.</p>
-                <a href="/">Back to Home</a>
-            </div>
-        `);
-    }
-});
 
 // 👇 NEW: Handle Registration + File Uploads
 // 'upload.fields' tells it to look for 'idDoc' and 'bankDoc'
