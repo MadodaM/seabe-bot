@@ -526,6 +526,7 @@ async function emailReport(target) {
 
 // 👇 2. The Corrected WhatsApp Route
 // Notice: We added 'async' here to fix the 'await' error
+
 app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
     
@@ -614,7 +615,7 @@ app.post('/whatsapp', async (req, res) => {
 
         if (incomingMsg.startsWith('report ')) {
             const targetCode = incomingMsg.split(' ')[1].toUpperCase();
-            reply = await emailReport(targetCode);
+            reply = emailReport(targetCode);
             twiml.message(reply);
             res.type('text/xml').send(twiml.toString());
             return;
