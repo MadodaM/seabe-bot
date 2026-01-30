@@ -5,7 +5,6 @@ const { JWT } = require('google-auth-library');
 const MessagingResponse = require('twilio').twiml.MessagingResponse;
 const multer = require('multer');
 const fs = require('fs');
-const axios = require('axios');
 const sgMail = require('@sendgrid/mail');
 require('dotenv').config();
 
@@ -18,7 +17,7 @@ app.use(bodyParser.urlencoded({ extended: false }));
 const PORT = process.env.PORT || 3000;
 const SHEET_ID = '1OKVh9Q-Gcs8EjKWIedXa6KM0N-j77JfK_QHaTd0GKQE';
 
-// --- GOOGLE SHEETS SETUP (Wrapped to prevent crashing) ---
+// --- GOOGLE SHEETS SETUP ---
 const serviceAccountAuth = new JWT({
     email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
     key: process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : '',
@@ -31,18 +30,34 @@ async function getDoc() {
     return doc;
 }
 
-// --- ROUTE 1: HOMEPAGE (Direct HTML) ---
+// --- SAFE STARTUP CHECK ---
+// This runs once when server starts to test the connection
+async function testGoogleConnection() {
+    try {
+        console.log("🔄 Testing Google Sheets Connection...");
+        const doc = await getDoc();
+        console.log(`✅ SUCCESS: Connected to Sheet "${doc.title}"`);
+        return true;
+    } catch (error) {
+        console.error(`⚠️ GOOGLE WARNING: Could not connect to Sheets.`);
+        console.error(`Error Details: ${error.message}`);
+        console.error(`(The bot is still running, but data won't save)`);
+        return false;
+    }
+}
+
+// --- ROUTE 1: HOMEPAGE ---
 app.get('/', (req, res) => {
     res.send(`
         <div style="font-family:sans-serif; text-align:center; padding:50px;">
             <h1 style="color:#075E54;">Seabe Platform is Online 🟢</h1>
-            <p>Our WhatsApp Bot is active.</p>
+            <p>Google Sheets Integration: <strong>Active</strong></p>
             <a href="/register" style="color:#25D366; font-weight:bold;">Register Church</a>
         </div>
     `);
 });
 
-// --- ROUTE 2: REGISTRATION PAGE (Test Uploads) ---
+// --- ROUTE 2: REGISTRATION PAGE ---
 app.get('/register', (req, res) => {
     res.send(`
         <form action="/register-church" method="POST" enctype="multipart/form-data" style="padding:20px; max-width:400px; margin:auto; font-family:sans-serif;">
@@ -56,21 +71,33 @@ app.get('/register', (req, res) => {
     `);
 });
 
-// --- ROUTE 3: PROCESS REGISTRATION (SendGrid) ---
+// --- ROUTE 3: PROCESS REGISTRATION (With Sheets Saving) ---
 app.post('/register-church', upload.fields([{ name: 'idDoc' }, { name: 'bankDoc' }]), async (req, res) => {
     try {
         const { churchName, email } = req.body;
         
-        // 1. Save to Sheets (Try/Catch so it doesn't crash if Google fails)
+        // 1. SAVE TO SHEETS (Wrapped in Try/Catch)
         try {
             const doc = await getDoc();
             const sheet = doc.sheetsByTitle['Churches'];
-            await sheet.addRow({ 'Name': churchName, 'Email': email, 'Subaccount Code': 'PENDING' });
+            
+            // Generate a random code
+            const prefix = churchName.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
+            const newCode = `${prefix}${Math.floor(100 + Math.random() * 900)}`;
+
+            await sheet.addRow({ 
+                'Name': churchName, 
+                'Church Code': newCode,
+                'Email': email, 
+                'Subaccount Code': 'PENDING' 
+            });
+            console.log(`✅ Saved ${churchName} to Sheets.`);
         } catch (sheetError) {
-            console.error("Sheet Error (Ignored):", sheetError.message);
+            console.error("❌ Sheet Save Failed:", sheetError.message);
+            // We continue anyway so the email still sends!
         }
 
-        // 2. Send Email
+        // 2. SEND EMAIL
         if (process.env.SENDGRID_KEY && req.files['idDoc'] && req.files['bankDoc']) {
             sgMail.setApiKey(process.env.SENDGRID_KEY);
             const idFile = req.files['idDoc'][0];
@@ -88,19 +115,18 @@ app.post('/register-church', upload.fields([{ name: 'idDoc' }, { name: 'bankDoc'
             };
             await sgMail.send(msg);
             
-            // Clean up files
             fs.unlinkSync(idFile.path);
             fs.unlinkSync(bankFile.path);
         }
 
-        res.send('<h1>Received! ✅</h1>');
+        res.send('<h1>Received! ✅</h1><p>If connected, data is now in Google Sheets.</p>');
     } catch (error) {
         console.error(error);
         res.send('<h1>Error (Check Logs)</h1>');
     }
 });
 
-// --- ROUTE 4: SIMPLE WHATSAPP BOT ---
+// --- ROUTE 4: WHATSAPP BOT ---
 app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
     const msgBody = req.body.Body ? req.body.Body.trim().toLowerCase() : '';
@@ -120,6 +146,8 @@ app.post('/whatsapp', async (req, res) => {
 });
 
 // --- START SERVER ---
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
     console.log(`✅ Server running on port ${PORT}`);
+    // Run the test AFTER the server starts so it doesn't block the startup
+    await testGoogleConnection();
 });
