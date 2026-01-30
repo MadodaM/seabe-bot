@@ -533,15 +533,37 @@ else if (incomingMsg === '7' && userSession[cleanPhone]?.step === 'MENU') {
                     if (link) {
                         reply = `Tap to pay R${amount}:\n👉 ${link}`;
                         const currentLang = userSession[cleanPhone].lang || 'ENGLISH';
-                        if (client) {
-                            setTimeout(async () => {
-                                const pdfName = generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, church.name, eventNameForPdf);
-                                const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
-                                const pdfUrl = `https://${hostUrl}/public/receipts/${pdfName}`;
-                                try { await client.messages.create({ from: 'whatsapp:+14155238886', to: sender, body: `🎉 Payment Received! ${getAdSuffix(currentLang, churchCode)}`, mediaUrl: [pdfUrl] }); } catch(e) {}
-                                await logToSheet(cleanPhone, churchCode, type, amount, ref);
-                            }, 15000);
-                        }
+                        // 👇 REPLACE THE OLD setTimeout BLOCK WITH THIS DEBUG VERSION
+if (client) {
+    setTimeout(async () => {
+        try {
+            // 1. Generate PDF
+            const pdfName = generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, church.name, eventNameForPdf);
+            
+            // 2. Construct URL (Force HTTPS and correct domain)
+            const hostUrl = req.headers.host || 'seabe.co.za'; 
+            const pdfUrl = `https://${hostUrl}/public/receipts/${pdfName}`;
+            console.log("📄 Attempting to send PDF:", pdfUrl); // <--- LOG THIS
+
+            // 3. Send WhatsApp
+            await client.messages.create({ 
+                from: 'whatsapp:+14155238886', 
+                to: sender, 
+                body: `🎉 Payment Received! ${getAdSuffix(currentLang, churchCode)}`, 
+                mediaUrl: [pdfUrl] 
+            });
+            console.log("✅ PDF Sent Successfully");
+
+            // 4. Log to Sheet
+            await logToSheet(cleanPhone, churchCode, type, amount, ref);
+
+        } catch (e) {
+            console.error("❌ PDF SENDING FAILED:", e.message); // <--- NOW YOU WILL SEE WHY
+            // Even if PDF fails, try to log the money to the sheet
+            await logToSheet(cleanPhone, churchCode, type, amount, ref);
+        }
+    }, 15000); // 15 seconds delay
+}
                     } else { reply = "⚠️ Error creating link."; }
                     userSession[cleanPhone].step = 'MENU';
                 } else { reply = "Reply *Hi* to see the menu."; }
@@ -558,7 +580,16 @@ else if (incomingMsg === '7' && userSession[cleanPhone]?.step === 'MENU') {
     }
 });
 
-app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1><p>You can return to WhatsApp.</p>"));
+// ✅ NEW (Correct)
+app.get('/payment-success', (req, res) => {
+    res.send(`
+        <div style="text-align:center; padding:50px; font-family:sans-serif;">
+            <h1 style="color:#25D366;">Payment Successful! 🎉</h1>
+            <p>You have successfully donated.</p>
+            <p>You can close this window and return to WhatsApp.</p>
+        </div>
+    `);
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ Seabe Platform running on ${PORT}`));
