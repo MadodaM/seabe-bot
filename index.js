@@ -13,6 +13,7 @@ const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
 const multer = require('multer');
 const upload = multer({ dest: 'uploads/' }); // Temporary storage
+const ADMIN_NUMBERS = ['27832182707'];
 
 // --- CONFIG ---
 const ACCOUNT_SID = process.env.TWILIO_SID; 
@@ -510,21 +511,19 @@ async function getMemberProfile(phone) {
     }
 }
 
-// --- 🤖 WHATSAPP LOGIC ---
+// 👇 CORRECTED WHATSAPP ROUTE (Admin + User Logic)
 app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
     
-    // 1. DEFINITIONS (Must come first!)
+    // 1. DEFINITIONS
     const sender = req.body.From;
     const cleanPhone = sender.replace('whatsapp:', '').replace('+', '').trim();
-    
-    // Define msgBody HERE so it exists for the rest of the code
     const msgBody = req.body.Body ? req.body.Body.trim().toLowerCase() : ''; 
-
-    // 2. DEBUG LOG (Now it's safe to use msgBody)
+    
+    // 2. DEBUG LOG
     console.log(`🕵️ ADMIN DEBUG: User=[${cleanPhone}] Msg=[${msgBody}] IsAdmin? ${ADMIN_NUMBERS.includes(cleanPhone)}`);
 
-    // 3. ADMIN CHECK (Must be before the "Hi" check)
+    // 3. ADMIN MENU CHECK (VIP ACCESS)
     if (msgBody === 'admin' && ADMIN_NUMBERS.includes(cleanPhone)) {
         twiml.message(
             `🛠️ *Admin Command Center*\n\n` +
@@ -534,24 +533,64 @@ app.post('/whatsapp', async (req, res) => {
         );
         userState[cleanPhone] = { step: 'ADMIN_MENU' };
         res.type('text/xml').send(twiml.toString());
-        return; // ⛔ STOP here so we don't send the Welcome menu too
+        return; 
     }
 
-    // ... The rest of your code (checking for 'hi', userState, etc.) continues below ...
-
-// 2. ADMIN MENU SELECTION
-else if (userSession[cleanPhone]?.step === 'ADMIN_MENU') {
-    if (incomingMsg === '1') {
-        userSession[cleanPhone] = { step: 'ADMIN_EVENT_CHURCH' };
-        reply = `📅 *New Event*\n\nEnter the *Church Code* this event belongs to:\n(e.g., GRA123)`;
-    } else if (incomingMsg === '2') {
-        userSession[cleanPhone] = { step: 'ADMIN_AD_CHURCH' };
-        reply = `📢 *New Ad / News*\n\nEnter the *Church Code* for this ad:\n(e.g., GRA123)`;
-    } else {
-        userSession[cleanPhone] = null; // Exit
-        reply = `❌ Admin mode cancelled.`;
+    // 4. RESET / CANCEL
+    if (msgBody === 'cancel' || msgBody === 'reset') {
+        delete userState[cleanPhone];
+        twiml.message("🔄 Session reset. Reply with *Hi* to start.");
+        res.type('text/xml').send(twiml.toString());
+        return;
     }
-}
+
+    // 5. STANDARD "HI" MENU
+    if (msgBody === 'hi' || msgBody === 'hello' || msgBody === 'menu') {
+        // Send the Welcome Menu (Image + Text)
+        const msg = twiml.message();
+        msg.media('https://seabe.co.za/img/logo.png'); // Ensure this URL works or remove it
+        msg.body(
+            `👋 *Welcome to Seabe Platform*\n` +
+            `_Connecting the Kingdom_\n\n` +
+            `1️⃣ *Events* (View Upcoming)\n` +
+            `2️⃣ *Churches* (Find a Church)\n` +
+            `3️⃣ *Register* (Add your Church)\n` +
+            `4️⃣ *Support* (Talk to us)\n\n` +
+            `_Reply with a number_`
+        );
+        userState[cleanPhone] = { step: 'MAIN_MENU' };
+        res.type('text/xml').send(twiml.toString());
+        return;
+    }
+
+    // 6. HANDLE USER STATE (Conversation Logic)
+    const state = userState[cleanPhone] ? userState[cleanPhone].step : null;
+
+    if (state === 'ADMIN_MENU') {
+        if (msgBody === '1') {
+            twiml.message("📅 *New Event*\nReply with the Event Name:");
+            userState[cleanPhone] = { step: 'ADD_EVENT_NAME' };
+        } else if (msgBody === '2') {
+            twiml.message("📢 *News/Ad*\nComing soon.");
+            delete userState[cleanPhone];
+        } else {
+            twiml.message("❌ Invalid option. Reply 'admin' to try again.");
+            delete userState[cleanPhone];
+        }
+        res.type('text/xml').send(twiml.toString());
+        return;
+    }
+    
+    // (Add your 'ADD_EVENT_NAME' logic here if you have it ready, otherwise this is safe)
+
+    // 7. DEFAULT FALLBACK
+    if (!state) {
+        twiml.message("👋 I didn't catch that. Reply with *Hi* for the menu.");
+    }
+
+    res.type('text/xml').send(twiml.toString());
+}); 
+// 👆 This closing bracket '});' is likely what was missing!
 
 // --- 📅 FLOW: ADD EVENT ---
 
