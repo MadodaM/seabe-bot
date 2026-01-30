@@ -518,27 +518,41 @@ async function emailReport(code) {
     return "Report functionality is ready (Simulated)."; 
 }
 
-// 👇 2. The Corrected WhatsApp Route (Note the 'async' keyword!)
+// 👇 1. Helper Function (Paste this ABOVE the route if you don't have it)
+async function emailReport(target) {
+    console.log("Generating report for:", target);
+    return "Report functionality coming soon.";
+}
+
+// 👇 2. The Corrected WhatsApp Route
+// Notice: We added 'async' here to fix the 'await' error
 app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
+    
+    // --- STEP 1: DEFINITIONS (Must be first!) ---
     const sender = req.body.From;
     const cleanPhone = sender.replace('whatsapp:', '').replace('+', '').trim();
+    // We define msgBody HERE so it is ready for the logs below
     const msgBody = req.body.Body ? req.body.Body.trim().toLowerCase() : ''; 
 
-    // --- ADMIN CHECK ---
+    // --- STEP 2: DEBUG LOG ---
+    // Now it is safe to log because msgBody exists
+    console.log(`🕵️ ADMIN DEBUG: User=[${cleanPhone}] Msg=[${msgBody}] IsAdmin? ${ADMIN_NUMBERS.includes(cleanPhone)}`);
+
+    // --- STEP 3: ADMIN MENU CHECK ---
     if (msgBody === 'admin' && ADMIN_NUMBERS.includes(cleanPhone)) {
         twiml.message(
-            `🛠️ *Admin Command Center*\n` +
+            `🛠️ *Admin Command Center*\n\n` +
             `1. 📅 New Event\n` +
             `2. 📊 Send Report\n` +
             `3. ❌ Cancel`
         );
         userState[cleanPhone] = { step: 'ADMIN_MENU' };
         res.type('text/xml').send(twiml.toString());
-        return;
+        return; 
     }
 
-    // --- RESET ---
+    // --- STEP 4: RESET / CANCEL ---
     if (msgBody === 'cancel' || msgBody === 'reset') {
         delete userState[cleanPhone];
         twiml.message("🔄 Session reset. Reply *Hi*.");
@@ -546,7 +560,7 @@ app.post('/whatsapp', async (req, res) => {
         return;
     }
 
-    // --- CONVERSATION FLOW ---
+    // --- STEP 5: CONVERSATION LOGIC ---
     const currentState = userState[cleanPhone] ? userState[cleanPhone].step : null;
 
     if (currentState === 'ADMIN_MENU') {
@@ -554,20 +568,19 @@ app.post('/whatsapp', async (req, res) => {
             twiml.message("📅 Reply with *Event Name*:");
             userState[cleanPhone] = { step: 'ADMIN_EVENT_NAME' };
         } else if (msgBody === '2') {
-            // 👇 THIS IS WHERE YOUR ERROR WAS
+            // This 'await' works now because the function is async
             try {
-                const reply = await emailReport('ALL'); // Now safe because 'async' is at the top
-                twiml.message("✅ " + reply);
+                const reportMsg = await emailReport('ALL');
+                twiml.message("✅ " + reportMsg);
             } catch (e) {
-                twiml.message("❌ Report failed.");
                 console.error(e);
+                twiml.message("❌ Failed to generate report.");
             }
             delete userState[cleanPhone];
         } else {
             twiml.message("❌ Invalid option.");
         }
     
-    // --- EVENT CREATION STEPS ---
     } else if (currentState === 'ADMIN_EVENT_NAME') {
         userState[cleanPhone] = { step: 'ADMIN_EVENT_DATE', eventName: req.body.Body };
         twiml.message("🗓️ Reply with *Date*:");
@@ -575,19 +588,22 @@ app.post('/whatsapp', async (req, res) => {
     } else if (currentState === 'ADMIN_EVENT_DATE') {
         const name = userState[cleanPhone].eventName;
         const date = req.body.Body;
-        // Save logic would go here
         twiml.message(`🎉 Event Created:\n*${name}* on *${date}*`);
         delete userState[cleanPhone];
 
-    // --- MAIN MENU ---
-    } else {
-        // Default Welcome Message
-        twiml.message(
+    // --- STEP 6: MAIN MENU (Default) ---
+    } else if (msgBody === 'hi' || msgBody === 'hello' || msgBody === 'menu') {
+        const msg = twiml.message();
+        msg.body(
             `👋 *Welcome to Seabe*\n` +
             `1️⃣ Events\n` +
             `2️⃣ Churches\n` +
             `3️⃣ Register`
         );
+        userState[cleanPhone] = { step: 'MAIN_MENU' };
+
+    } else {
+        twiml.message("👋 I didn't catch that. Reply with *Hi* for the menu.");
     }
 
     res.type('text/xml').send(twiml.toString());
