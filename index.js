@@ -38,17 +38,16 @@ app.use(bodyParser.json());
 const nodemailer = require('nodemailer');
 
 // 2. Configure the Transporter (The Mailman)
-// 👇 USE THIS EXPLICIT CONFIGURATION
+// 👇 TRY PORT 587 (STARTTLS) - Works better on Cloud Servers
 const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 465,
-    secure: true, // This forces SSL (Secure Connection)
+    port: 587,
+    secure: false, // Must be false for Port 587 (it upgrades to secure automatically)
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
     },
     tls: {
-        // This tells the server not to fail if the certificate looks weird
         rejectUnauthorized: false
     }
 });
