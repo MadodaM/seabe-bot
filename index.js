@@ -36,7 +36,56 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// ... existing app.get('/') code ...
 
+// 👇 NEW: Serve Registration Page
+app.get('/register', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'register.html'));
+});
+
+// 👇 NEW: Handle Registration Logic
+app.post('/register-church', async (req, res) => {
+    try {
+        const { churchName, email, eventName, eventPrice } = req.body;
+        
+        // 1. Generate Unique Code (First 3 letters + Random 3 numbers)
+        // e.g., Grace Bible -> GRA + 123 -> GRA123
+        const prefix = churchName.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
+        const randomNum = Math.floor(100 + Math.random() * 900);
+        const newCode = `${prefix}${randomNum}`;
+
+        // 2. Connect to Sheet
+        const doc = await getDoc();
+        const churchSheet = doc.sheetsByTitle['Churches'] || doc.sheetsByIndex[2];
+
+        // 3. Save to Google Sheet
+        await churchSheet.addRow({
+            'Name': churchName,
+            'Church Code': newCode,
+            'Email': email,
+            'Subaccount Code': 'PENDING', // You must update this manually later
+            'Event Name': eventName || 'Special Event',
+            'Event_Price': eventPrice || '0'
+        });
+
+        // 4. Force Refresh Memory
+        await refreshCache();
+
+        res.send(`
+            <div style="font-family:sans-serif; text-align:center; padding:50px;">
+                <h1 style="color:#25D366;">🎉 Registration Successful!</h1>
+                <p><strong>${churchName}</strong> has been added.</p>
+                <p>Your System Code is: <strong style="font-size:1.5em;">${newCode}</strong></p>
+                <p><em>Note: Payments will be active once we verify your banking details.</em></p>
+                <a href="/register">Add Another</a>
+            </div>
+        `);
+
+    } catch (error) {
+        console.error("Registration Error:", error);
+        res.send(`<h1>❌ Error</h1><p>${error.message}</p>`);
+    }
+});
 
 // --- 🧠 MEMORY ---
 let userSession = {}; 

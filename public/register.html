@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register Your Church | Seabe Digital</title>
+    <style>
+        :root { --primary: #25D366; --dark: #075E54; --text: #333; --light: #f4f4f4; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--light); color: var(--text); padding: 20px; }
+        .container { max-width: 600px; margin: 50px auto; background: white; padding: 40px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: var(--dark); }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; }
+        input { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; font-size: 1rem; box-sizing: border-box; }
+        .btn { display: block; width: 100%; background: var(--primary); color: white; padding: 15px; border: none; border-radius: 5px; font-size: 1.2rem; cursor: pointer; font-weight: bold; }
+        .btn:hover { background: var(--dark); }
+        .note { font-size: 0.9rem; color: #666; margin-top: 10px; text-align: center; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Add Your Church ⛪</h1>
+        <p style="text-align:center;">Join the platform to start collecting payments via WhatsApp.</p>
+        
+        <form action="/register-church" method="POST">
+            <div class="form-group">
+                <label>Church Name</label>
+                <input type="text" name="churchName" placeholder="e.g. Grace Bible Church" required>
+            </div>
+
+            <div class="form-group">
+                <label>Admin Email</label>
+                <input type="email" name="email" placeholder="Treasurer's Email Address" required>
+            </div>
+
+            <div class="form-group">
+                <label>Event Name (Optional)</label>
+                <input type="text" name="eventName" placeholder="e.g. Youth Camp 2026">
+            </div>
+
+            <div class="form-group">
+                <label>Event Price (Optional)</label>
+                <input type="number" name="eventPrice" placeholder="e.g. 500">
+            </div>
+
+            <button type="submit" class="btn">Register Church</button>
+            <p class="note">We will contact you to verify banking details.</p>
+        </form>
+    </div>
+
+</body>
+</html>
