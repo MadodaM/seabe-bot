@@ -523,24 +523,28 @@ app.post('/whatsapp', async (req, res) => {
 console.log("🚨 MY PHONE ID IS:", cleanPhone);
         let reply = "";
 
-
-// ... inside app.post('/whatsapp'), after defining 'cleanPhone' ...
-
 // 🛑 SECURITY: Only allow specific numbers to be Admin
 // Add your phone number here (format: 27...)
 const ADMIN_NUMBERS = ['27832182707']; // 👈 Paste the log number here 
 
-// --- 🛠️ ADMIN FLOW START ---
+// 👇 DEBUG: Watch the logs to see exactly what happens
+    console.log(`🕵️ CHECKING ADMIN: User=[${cleanPhone}] Msg=[${msgBody}] Allowed? ${ADMIN_NUMBERS.includes(cleanPhone)}`);
 
-// 1. TRIGGER: User types "admin"
-if (incomingMsg.toLowerCase() === 'admin' && ADMIN_NUMBERS.includes(cleanPhone)) {
-    userSession[cleanPhone] = { step: 'ADMIN_MENU' };
-    reply = `🛠️ *Admin Command Center*\n\n` +
-            `What would you like to add?\n` +
-            `*1.* 📅 New Event\n` +
-            `*2.* 📢 News / Ad\n` +
-            `*3.* ❌ Cancel`;
-}
+    // 👑 PRIORITY 1: ADMIN MENU (Must be first!)
+    if (msgBody === 'admin' && ADMIN_NUMBERS.includes(cleanPhone)) {
+        twiml.message(
+            `🛠️ *Admin Command Center*\n\n` +
+            `1. 📅 New Event\n` +
+            `2. 📢 News / Ad\n` +
+            `3. ❌ Cancel`
+        );
+        
+        // Set state so the bot knows we are in "Admin Mode"
+        userState[cleanPhone] = { step: 'ADMIN_MENU' };
+        
+        res.type('text/xml').send(twiml.toString());
+        return; // ⛔ STOP here! Don't run the rest of the code.
+    }
 
 // 2. ADMIN MENU SELECTION
 else if (userSession[cleanPhone]?.step === 'ADMIN_MENU') {
