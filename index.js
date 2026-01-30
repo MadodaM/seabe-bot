@@ -86,13 +86,14 @@ app.post('/request-demo', upload.none(), async (req, res) => {
         // --- ACTION 2: Send to HubSpot CRM ---
         if (process.env.HUBSPOT_TOKEN) {
             await axios.post('https://api.hubapi.com/crm/v3/objects/contacts', {
-                properties: {
-                    firstname: firstname,
-                    email: email,
-                    phone: phone,
-                    lifecyclestage: 'lead', // Mark them as a Lead
-                    lead_status: 'OPEN'
-                }
+    properties: {
+        firstname: firstname,
+        email: email,
+        phone: phone,
+        lifecyclestage: 'lead', 
+        hs_lead_status: 'OPEN'  // 👈 CHANGED: 'lead_status' -> 'hs_lead_status'
+    }
+}, {
             }, {
                 headers: {
                     'Authorization': `Bearer ${process.env.HUBSPOT_TOKEN}`,
@@ -495,7 +496,7 @@ console.log("🚨 MY PHONE ID IS:", cleanPhone);
 
 // 🛑 SECURITY: Only allow specific numbers to be Admin
 // Add your phone number here (format: 27...)
-const ADMIN_NUMBERS = ['278832182707', '27837672503']; 
+const ADMIN_NUMBERS = ['27832182707', '27837672503']; 
 
 // --- 🛠️ ADMIN FLOW START ---
 
