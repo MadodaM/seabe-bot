@@ -308,6 +308,47 @@ app.get('/test-connection', async (req, res) => {
     `);
 });
 
+// --- 👤 PROFILE ENGINE ---
+async function getMemberProfile(phone) {
+    try {
+        const doc = await getDoc();
+        const sheet = doc.sheetsByIndex[0]; // Transactions Tab
+        const rows = await sheet.getRows();
+        
+        // Filter transactions for this user
+        // We look for the phone number in the "Name/Phone" column
+        const myTransactions = rows.filter(r => {
+            const rowPhone = r.get('Name/Phone');
+            return rowPhone && rowPhone.includes(phone);
+        });
+
+        if (myTransactions.length === 0) return null;
+
+        let totalGiven = 0;
+        let lastDate = "N/A";
+        let txCount = 0;
+
+        myTransactions.forEach(row => {
+            // Clean the amount string (remove 'R' and spaces) to add it up
+            const rawAmount = row.get('Amount');
+            if (rawAmount) {
+                const amount = parseFloat(rawAmount.toString().replace(/[^0-9.]/g, ''));
+                if (!isNaN(amount)) {
+                    totalGiven += amount;
+                    txCount++;
+                }
+            }
+            lastDate = row.get('Date'); // Updates to the most recent one
+        });
+
+        return { total: totalGiven.toFixed(2), count: txCount, lastDate: lastDate };
+
+    } catch (e) {
+        console.error("Profile Error:", e);
+        return null;
+    }
+}
+
 // --- 🤖 WHATSAPP LOGIC ---
 app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
@@ -371,7 +412,19 @@ app.post('/whatsapp', async (req, res) => {
                 if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
                     userSession[cleanPhone].step = 'MENU';
                     const currentLang = userSession[cleanPhone].lang || 'ENGLISH';
-                    reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner (Auto) 🔁\n*6.* Language / Lulwimi 🗣️` + getAdSuffix(currentLang, churchCode);
+                    // OLD LINE:
+					// reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner (Auto) 🔁\n*6.* Language / Lulwimi 🗣️` + getAdSuffix(currentLang, churchCode);
+
+					// 👇 REPLACE WITH THIS NEW BLOCK:
+reply = `Welcome to *${churchName}* 👋\n\n` +
+        `*1.* General Offering 🎁\n` +
+        `*2.* Pay Tithe 🏛️\n` +
+        `*3.* Events & Tickets 🎟️\n` +
+        `*4.* Switch Church 🔄\n` +
+        `*5.* Monthly Partner (Auto) 🔁\n` +
+        `*6.* Language / Lulwimi 🗣️\n` +
+        `*7.* My Profile / History 👤` + 
+        getAdSuffix(currentLang, churchCode);
                 }
                 else if (incomingMsg === '3' && userSession[cleanPhone]?.step === 'MENU') {
                     const events = cachedEvents.filter(e => e.churchCode === churchCode);
@@ -401,6 +454,35 @@ app.post('/whatsapp', async (req, res) => {
                     userSession[cleanPhone].step = 'LANG';
                     reply = "Select Language / Khetha Lulwimi:\n\n*1.* English 🇬🇧\n*2.* isiZulu 🇿🇦\n*3.* Sesotho 🇱🇸";
                 }
+				
+				// ... (existing code for option 6) ...
+
+else if (incomingMsg === '7' && userSession[cleanPhone]?.step === 'MENU') {
+    // 1. Notify user we are checking (it takes 1-2 seconds)
+    // Note: In a simple bot, we just wait and send the result.
+    
+    const profile = await getMemberProfile(cleanPhone);
+    
+    if (profile) {
+        reply = `👤 *Member Profile*\n` +
+                `------------------\n` +
+                `📞 Phone: ${cleanPhone}\n` +
+                `⛪ Church: ${church.name}\n` +
+                `------------------\n` +
+                `💰 *Total Giving:* R${profile.total}\n` +
+                `🔢 *Transactions:* ${profile.count}\n` +
+                `📅 *Last Activity:* ${profile.lastDate}\n\n` +
+                `_Thank you for your faithful support!_ 🙏\n` +
+                `Reply *Hi* to return to menu.`;
+    } else {
+        reply = `👤 *Member Profile*\n\n` +
+                `We couldn't find any transaction history for this number yet.\n\n` +
+                `Make your first contribution today! Reply *Hi* to see options.`;
+    }
+}
+
+// ... (existing code for other options) ...
+				
                 else if (['1', '2', '3'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'LANG') {
                     if (incomingMsg === '1') userSession[cleanPhone].lang = 'ENGLISH';
                     if (incomingMsg === '2') userSession[cleanPhone].lang = 'ZULU';
