@@ -30,7 +30,13 @@ try {
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
-app.use('/public', express.static(path.join(__dirname, 'public')));
+
+// 👇 NEW: Serve the Website at the Root URL
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+
 
 // --- 🧠 MEMORY ---
 let userSession = {}; 

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seabe Digital | Church Giving Simplified</title>
+    <style>
+        :root { --primary: #25D366; --dark: #075E54; --text: #333; --light: #f4f4f4; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; color: var(--text); line-height: 1.6; }
+        .container { max-width: 1100px; margin: auto; padding: 0 20px; }
+        
+        /* Hero Section */
+        header { background: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), url('https://images.unsplash.com/photo-1438232992991-995b7058bbb3?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80'); background-size: cover; background-position: center; color: #fff; height: 90vh; display: flex; flex-direction: column; justify-content: center; text-align: center; }
+        header h1 { font-size: 3.5rem; margin-bottom: 10px; }
+        header p { font-size: 1.5rem; margin-bottom: 30px; opacity: 0.9; }
+        .btn { display: inline-block; background: var(--primary); color: #fff; padding: 15px 40px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 1.2rem; transition: 0.3s; }
+        .btn:hover { background: var(--dark); transform: scale(1.05); }
+
+        /* Features */
+        .features { padding: 80px 0; background: #fff; }
+        .features h2 { text-align: center; margin-bottom: 50px; font-size: 2.5rem; color: var(--dark); }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 30px; }
+        .card { background: var(--light); padding: 30px; border-radius: 10px; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        .card h3 { color: var(--dark); margin-top: 20px; }
+        .icon { font-size: 3rem; color: var(--primary); }
+
+        /* How It Works */
+        .steps { padding: 80px 0; background: var(--light); }
+        .step-item { display: flex; align-items: center; margin-bottom: 40px; }
+        .step-num { font-size: 4rem; font-weight: bold; color: rgba(0,0,0,0.1); margin-right: 20px; }
+        .step-content h3 { font-size: 1.8rem; margin: 0; color: var(--dark); }
+
+        /* Footer */
+        footer { background: #333; color: #fff; padding: 40px 0; text-align: center; }
+        footer a { color: var(--primary); text-decoration: none; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="container">
+            <h1>Giving Made Simple.</h1>
+            <p>The WhatsApp-based financial companion for modern churches.</p>
+            <a href="https://wa.me/+14155238886" class="btn">Start Chatting</a>
+        </div>
+    </header>
+
+    <section class="features">
+        <div class="container">
+            <h2>Why Seabe?</h2>
+            <div class="grid">
+                <div class="card">
+                    <div class="icon">📱</div>
+                    <h3>No App Needed</h3>
+                    <p>Works entirely within WhatsApp. No downloads, no passwords to forget.</p>
+                </div>
+                <div class="card">
+                    <div class="icon">🧾</div>
+                    <h3>Instant Receipts</h3>
+                    <p>Members receive a PDF receipt and Ticket instantly after every payment.</p>
+                </div>
+                <div class="card">
+                    <div class="icon">🔒</div>
+                    <h3>Secure & Verified</h3>
+                    <p>Powered by Paystack. Bank-grade security for Tithes, Offerings, and Events.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="steps">
+        <div class="container">
+            <h2 style="text-align:center; margin-bottom:50px;">How It Works</h2>
+            <div class="step-item">
+                <div class="step-num">01</div>
+                <div class="step-content">
+                    <h3>Say "Hi"</h3>
+                    <p>Save our number and send a message on WhatsApp. Our secure bot greets you instantly.</p>
+                </div>
+            </div>
+            <div class="step-item">
+                <div class="step-num">02</div>
+                <div class="step-content">
+                    <h3>Select Your Giving</h3>
+                    <p>Choose Tithe, Offering, or Event Tickets from the simple menu.</p>
+                </div>
+            </div>
+            <div class="step-item">
+                <div class="step-num">03</div>
+                <div class="step-content">
+                    <h3>Secure Payment</h3>
+                    <p>Tap the link to pay via Card or EFT. Receive your receipt in seconds.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container">
+            <h3>Seabe Digital</h3>
+            <p>Empowering the Church with Technology.</p>
+            <p>Contact Support: <a href="mailto:support@seabe.io">support@seabe.io</a></p>
+            <small>&copy; 2026 Seabe Digital. Powered by Paystack & Twilio.</small>
+        </div>
+    </footer>
+
+</body>
+</html>
