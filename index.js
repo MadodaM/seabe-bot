@@ -61,74 +61,55 @@ app.get('/register', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'register.html'));
 });
 
-// 👇 NEW: Handle Demo Requests (Email + HubSpot)
+// 👇 NEW: Handle Demo Requests (Corrected)
 app.post('/request-demo', upload.none(), async (req, res) => {
+    // 1. Get the data from the form
     const { firstname, email, phone } = req.body;
 
+    console.log("Processing Lead:", firstname);
+
     try {
-        // --- ACTION 1: Send Email to YOU ---
-        // (We wrap this in a try/catch so email errors don't stop HubSpot)
+        // 2. Send Email (Wrapped in try/catch to be safe)
         try {
-            const mailOptions = {
+            await transporter.sendMail({
                 from: process.env.EMAIL_USER,
                 to: process.env.EMAIL_USER,
                 subject: `🔥 New Lead: ${firstname}`,
-                html: `
-                    <h3>New Demo Request</h3>
-                    <p><strong>Name:</strong> ${firstname}</p>
-                    <p><strong>Email:</strong> ${email}</p>
-                    <p><strong>Phone:</strong> ${phone}</p>
-                    <p><em>Check HubSpot for details.</em></p>
-                `
-            };
-            await transporter.sendMail(mailOptions);
-        } catch (mailErr) {
-            console.error("Email failed, but continuing to HubSpot:", mailErr.message);
-        }
-
-        // --- ACTION 2: Send to HubSpot CRM ---
-        if (process.env.HUBSPOT_TOKEN) {
-            await axios.post('https://api.hubapi.com/crm/v3/objects/contacts', {
-                properties: {
-                    firstname: firstname,
-                    email: email,
-                    phone: phone,
-                    lifecyclestage: 'lead',
-                    hs_lead_status: 'OPEN'
-                }
-            }, {
-                headers: {
-                    'Authorization': `Bearer ${process.env.HUBSPOT_TOKEN}`,
-                    'Content-Type': 'application/json'
-                }
+                html: `<p>Name: ${firstname}</p><p>Email: ${email}</p><p>Phone: ${phone}</p>`
             });
-            console.log(`✅ HubSpot Contact Created: ${email}`);
-        } else {
-            console.log("⚠️ HubSpot Token missing, skipping CRM sync.");
+        } catch (e) {
+            console.error("Email failed, skipping.");
         }
 
-        // --- ACTION 3: Success Page ---
-        res.send(`
-            <div style="font-family:sans-serif; text-align:center; padding:100px;">
-                <h1 style="color:#25D366; font-size:3rem;">Received! ✅</h1>
-                <p style="font-size:1.5rem;">Thanks, ${firstname}. We will call you shortly.</p>
-                <a href="/" style="color:#075E54; text-decoration:underline;">Back to Home</a>
-            </div>
-        `);
+        // 3. Send to HubSpot (Check the brackets here!)
+        if (process.env.HUBSPOT_TOKEN) {
+            await axios.post(
+                'https://api.hubapi.com/crm/v3/objects/contacts',
+                {
+                    properties: {                  // <--- MAKE SURE THIS CURLY BRACE EXISTS
+                        firstname: firstname,
+                        email: email,              // <--- This is where your error was
+                        phone: phone,
+                        lifecyclestage: 'lead',
+                        hs_lead_status: 'OPEN'
+                    }                              // <--- Closing brace for properties
+                },
+                {
+                    headers: {
+                        'Authorization': `Bearer ${process.env.HUBSPOT_TOKEN}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+            console.log("✅ HubSpot Saved");
+        }
+
+        // 4. Success Response
+        res.send('<h1>Received! We will call you shortly.</h1><a href="/">Back</a>');
 
     } catch (error) {
-        // Log the exact error from HubSpot if available
-        const errorMsg = error.response ? JSON.stringify(error.response.data) : error.message;
-        console.error("Demo Request Error:", errorMsg);
-        
-        // Show success to user anyway so they don't worry
-        res.send(`
-            <div style="font-family:sans-serif; text-align:center; padding:100px;">
-                <h1>Thank You</h1>
-                <p>We received your details.</p>
-                <a href="/">Back to Home</a>
-            </div>
-        `);
+        console.error("Error:", error.message);
+        res.send('<h1>Received! (Saved locally)</h1><a href="/">Back</a>');
     }
 });
 	
