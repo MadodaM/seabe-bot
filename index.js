@@ -38,11 +38,18 @@ app.use(bodyParser.json());
 const nodemailer = require('nodemailer');
 
 // 2. Configure the Transporter (The Mailman)
+// 👇 USE THIS EXPLICIT CONFIGURATION
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true, // This forces SSL (Secure Connection)
     auth: {
-        user: process.env.EMAIL_USER, // Your Gmail address
-        pass: process.env.EMAIL_PASS  // Your App Password
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+    },
+    tls: {
+        // This tells the server not to fail if the certificate looks weird
+        rejectUnauthorized: false
     }
 });
 
