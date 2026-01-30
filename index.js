@@ -69,7 +69,6 @@ app.get('/register', (req, res) => {
 
 // 👇 NEW: Handle Demo Requests (Corrected)
 // 1. Import SendGrid at the top of your file (add this with other requires)
-const sgMail = require('@sendgrid/mail');
 
 // ...
 
