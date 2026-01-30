@@ -44,7 +44,7 @@ const transporter = nodemailer.createTransport({
     port: 587,
     secure: false, // Must be false for Port 587 (it upgrades to secure automatically)
     auth: {
-        user: process.env.EMAIL_USER,
+        user: process.env.EMAIL_FROM,
         pass: process.env.EMAIL_PASS
     },
     tls: {
@@ -82,11 +82,12 @@ app.post('/request-demo', upload.none(), async (req, res) => {
     }
 
     try {
-        // --- ACTION 1: Send Email via API (No Port Blocking!) ---
+        // --- ACTION 1: Send Email via API ---
         try {
             const msg = {
-                to: process.env.EMAIL_USER, // Your verified email
-                from: process.env.EMAIL_USER, // MUST be the same verified email
+                // 👇 UPDATED: Use your new variable name 'EMAIL_FROM'
+                to: process.env.EMAIL_FROM,   // Send it TO yourself
+                from: process.env.EMAIL_FROM, // Send it FROM yourself (Must match SendGrid Verified Email)
                 subject: `🔥 New Lead: ${firstname}`,
                 html: `
                     <div style="font-family: Arial, sans-serif; padding: 20px;">
@@ -99,11 +100,8 @@ app.post('/request-demo', upload.none(), async (req, res) => {
                     </div>
                 `,
             };
-            await sgMail.send(msg);
+            await sgMail.send(msg); // Send it!
             console.log("✅ Email Sent via SendGrid API");
-        } catch (emailError) {
-            console.error("❌ SendGrid Error:", emailError.response ? emailError.response.body : emailError.message);
-        }
 
         // --- ACTION 2: Send to HubSpot CRM ---
         if (process.env.HUBSPOT_TOKEN) {
@@ -168,8 +166,8 @@ app.post('/register-church', upload.fields([{ name: 'idDoc' }, { name: 'bankDoc'
         // 3. 👇 NEW: Email the Documents to YOU (The Super Admin)
         // Replace 'YOUR_ADMIN_EMAIL' with your actual email address
         const mailOptions = {
-            from: process.env.EMAIL_USER,
-            to: process.env.EMAIL_USER, // Sends to yourself
+            from: process.env.EMAIL_FROM,
+            to: process.env.EMAIL_FROM, // Sends to yourself
             subject: `🆕 New Church Application: ${churchName}`,
             html: `
                 <h2>New Registration Received</h2>
