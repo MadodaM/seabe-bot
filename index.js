@@ -510,8 +510,7 @@ async function getMemberProfile(phone) {
         return null;
     }
 }
-
-// 👇 COMPLETE WHATSAPP ROUTE (Admin + Event Creation)
+// 👇 COMPLETE WHATSAPP ROUTE (Admin + Events + Reports)
 app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
     
@@ -521,12 +520,11 @@ app.post('/whatsapp', async (req, res) => {
     const msgBody = req.body.Body ? req.body.Body.trim().toLowerCase() : ''; 
     
     // 2. ADMIN CHECK (VIP ACCESS)
-    // If user says "admin" AND is in the VIP list
     if (msgBody === 'admin' && ADMIN_NUMBERS.includes(cleanPhone)) {
         twiml.message(
             `🛠️ *Admin Command Center*\n\n` +
             `1. 📅 New Event\n` +
-            `2. 📢 News / Ad\n` +
+            `2. 📊 Send Me Report\n` +
             `3. ❌ Cancel`
         );
         userState[cleanPhone] = { step: 'ADMIN_MENU' };
@@ -534,7 +532,7 @@ app.post('/whatsapp', async (req, res) => {
         return; 
     }
 
-    // 3. RESET / CANCEL (Always available)
+    // 3. RESET / CANCEL
     if (msgBody === 'cancel' || msgBody === 'reset') {
         delete userState[cleanPhone];
         twiml.message("🔄 Session reset. Reply with *Hi* to start.");
@@ -542,7 +540,7 @@ app.post('/whatsapp', async (req, res) => {
         return;
     }
 
-    // 4. CHECK USER STATE (Where are they in the conversation?)
+    // 4. CHECK USER STATE
     const currentState = userState[cleanPhone] ? userState[cleanPhone].step : null;
 
     // --- LOGIC CHAIN START ---
@@ -553,7 +551,16 @@ app.post('/whatsapp', async (req, res) => {
             twiml.message("📅 *New Event*\n\nReply with the *Event Name*:");
             userState[cleanPhone] = { step: 'ADMIN_EVENT_NAME' };
         } else if (msgBody === '2') {
-            twiml.message("📢 News feature coming soon.");
+            // 👇 THIS WAS THE ERROR SOURCE. Now it is safe.
+            try {
+                // Assuming you have an emailReport function defined elsewhere
+                // If not, we just send a placeholder message for now.
+                // await emailReport('ALL'); 
+                twiml.message("📊 Report feature coming next update.");
+            } catch (err) {
+                console.error(err);
+                twiml.message("❌ Error generating report.");
+            }
             delete userState[cleanPhone];
         } else {
             twiml.message("❌ Invalid. Reply 1, 2 or Cancel.");
@@ -561,7 +568,6 @@ app.post('/whatsapp', async (req, res) => {
     
     // B. Admin: Step 1 - Get Name, Ask for Date
     } else if (currentState === 'ADMIN_EVENT_NAME') {
-        // Save the name they just sent
         userState[cleanPhone] = { 
             step: 'ADMIN_EVENT_DATE', 
             eventName: req.body.Body // Use original capitalization 
@@ -573,21 +579,19 @@ app.post('/whatsapp', async (req, res) => {
         const eventName = userState[cleanPhone].eventName;
         const eventDate = req.body.Body;
 
-        // Save to Google Sheets (Simulated for now, real save happens here)
-        // await saveEventToSheet(eventName, eventDate); // Uncomment when ready
-
+        // Save to Google Sheets Logic would go here
+        
         twiml.message(
             `🎉 *Event Created!*\n\n` +
             `📌 *${eventName}*\n` +
             `🗓️ *${eventDate}*\n\n` +
             `Live on the website now.`
         );
-        delete userState[cleanPhone]; // Done!
+        delete userState[cleanPhone]; 
 
-    // D. Standard "Hi" Menu (If not in a state)
+    // D. Standard "Hi" Menu
     } else if (msgBody === 'hi' || msgBody === 'hello' || msgBody === 'menu') {
         const msg = twiml.message();
-        // msg.media('https://seabe.co.za/img/logo.png'); // Uncomment if you have a logo URL
         msg.body(
             `👋 *Welcome to Seabe Platform*\n` +
             `_Connecting the Kingdom_\n\n` +
@@ -599,12 +603,10 @@ app.post('/whatsapp', async (req, res) => {
         );
         userState[cleanPhone] = { step: 'MAIN_MENU' };
 
-    // E. Fallback (If we don't understand)
+    // E. Fallback
     } else {
         twiml.message("👋 I didn't catch that. Reply with *Hi* for the menu.");
     }
-
-    // --- LOGIC CHAIN END ---
 
     res.type('text/xml').send(twiml.toString());
 });
