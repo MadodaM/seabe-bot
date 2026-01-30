@@ -528,7 +528,7 @@ console.log("🚨 MY PHONE ID IS:", cleanPhone);
 
 // 🛑 SECURITY: Only allow specific numbers to be Admin
 // Add your phone number here (format: 27...)
-const ADMIN_NUMBERS = ['27832182707', '27837672503']; 
+const ADMIN_NUMBERS = ['27832182707']; // 👈 Paste the log number here 
 
 // --- 🛠️ ADMIN FLOW START ---
 
