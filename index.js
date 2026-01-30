@@ -88,7 +88,47 @@ async function registerUser(phone, churchCode) {
 app.get('/', (req, res) => {
     res.sendFile(__dirname + '/public/index.html');
 });
-
+// --- ROUTE 1.5: REGISTRATION PAGE (Direct Serve) ---
+app.get('/register', (req, res) => {
+    res.send(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Register Church</title>
+            <style>
+                body { font-family: sans-serif; padding: 40px; background: #f4f4f9; }
+                form { background: white; max-width: 500px; margin: auto; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+                h2 { text-align: center; color: #075E54; }
+                input, label { display: block; width: 100%; margin-bottom: 15px; }
+                input { padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+                button { width: 100%; padding: 15px; background: #25D366; color: white; border: none; font-weight: bold; cursor: pointer; }
+                button:hover { background: #128C7E; }
+            </style>
+        </head>
+        <body>
+            <form action="/register-church" method="POST" enctype="multipart/form-data">
+                <h2>⛪ Church Registration</h2>
+                
+                <label>Church Name</label>
+                <input type="text" name="churchName" required placeholder="e.g. Grace Kingdom">
+                
+                <label>Email Address</label>
+                <input type="email" name="email" required placeholder="pastor@gmail.com">
+                
+                <label>Upload ID Document (PDF/Img)</label>
+                <input type="file" name="idDoc" required>
+                
+                <label>Upload Bank Letter (PDF/Img)</label>
+                <input type="file" name="bankDoc" required>
+                
+                <button type="submit">Submit Application</button>
+            </form>
+        </body>
+        </html>
+    `);
+});
 // --- ROUTE 2: REQUEST DEMO (SendGrid + HubSpot) ---
 app.post('/request-demo', upload.none(), async (req, res) => {
     const { firstname, email, phone } = req.body;
