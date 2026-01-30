@@ -86,7 +86,14 @@ app.post('/request-demo', upload.none(), async (req, res) => {
         // --- ACTION 2: Send to HubSpot CRM ---
         if (process.env.HUBSPOT_TOKEN) {
             await axios.post('https://api.hubapi.com/crm/v3/objects/contacts', {
-    properties: {
+    }, {
+    headers: {
+        'Authorization': `Bearer ${process.env.HUBSPOT_TOKEN}`, // 👈 IMPORTANT: Backticks ` ` not quotes ' '
+        'Content-Type': 'application/json'
+    }
+});
+	
+	properties: {
         firstname: firstname,
         email: email,
         phone: phone,
