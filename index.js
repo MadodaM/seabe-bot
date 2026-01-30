@@ -625,7 +625,7 @@ app.post('/whatsapp', async (req, res) => {
         
         let churchCode = userSession[cleanPhone]?.churchCode;
         if (!churchCode) {
-            churchCode = await getUserChurch(cleanPhone);
+            churchCode = getUserChurch(cleanPhone); // Removed 'await'
             if (churchCode) userSession[cleanPhone].churchCode = churchCode;
         }
 
