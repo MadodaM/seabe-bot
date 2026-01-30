@@ -514,23 +514,17 @@ async function getMemberProfile(phone) {
 app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
     
-    try {
-        const incomingMsg = req.body.Body.trim().toLowerCase(); 
-        const sender = req.body.From; 
-        const cleanPhone = sender.replace('whatsapp:', '').replace('+', ''); // Removes + and whatsapp: prefix
+    // 1. DEFINITIONS (Must come first!)
+    const sender = req.body.From;
+    const cleanPhone = sender.replace('whatsapp:', '').replace('+', '').trim();
+    
+    // Define msgBody HERE so it exists for the rest of the code
+    const msgBody = req.body.Body ? req.body.Body.trim().toLowerCase() : ''; 
 
-// 👇 ADD THIS DEBUG LINE
-console.log("🚨 MY PHONE ID IS:", cleanPhone);
-        let reply = "";
+    // 2. DEBUG LOG (Now it's safe to use msgBody)
+    console.log(`🕵️ ADMIN DEBUG: User=[${cleanPhone}] Msg=[${msgBody}] IsAdmin? ${ADMIN_NUMBERS.includes(cleanPhone)}`);
 
-// 🛑 SECURITY: Only allow specific numbers to be Admin
-// Add your phone number here (format: 27...)
-const ADMIN_NUMBERS = ['27832182707']; // 👈 Paste the log number here 
-
-// 👇 DEBUG: Watch the logs to see exactly what happens
-    console.log(`🕵️ CHECKING ADMIN: User=[${cleanPhone}] Msg=[${msgBody}] Allowed? ${ADMIN_NUMBERS.includes(cleanPhone)}`);
-
-    // 👑 PRIORITY 1: ADMIN MENU (Must be first!)
+    // 3. ADMIN CHECK (Must be before the "Hi" check)
     if (msgBody === 'admin' && ADMIN_NUMBERS.includes(cleanPhone)) {
         twiml.message(
             `🛠️ *Admin Command Center*\n\n` +
@@ -538,13 +532,12 @@ const ADMIN_NUMBERS = ['27832182707']; // 👈 Paste the log number here
             `2. 📢 News / Ad\n` +
             `3. ❌ Cancel`
         );
-        
-        // Set state so the bot knows we are in "Admin Mode"
         userState[cleanPhone] = { step: 'ADMIN_MENU' };
-        
         res.type('text/xml').send(twiml.toString());
-        return; // ⛔ STOP here! Don't run the rest of the code.
+        return; // ⛔ STOP here so we don't send the Welcome menu too
     }
+
+    // ... The rest of your code (checking for 'hi', userState, etc.) continues below ...
 
 // 2. ADMIN MENU SELECTION
 else if (userSession[cleanPhone]?.step === 'ADMIN_MENU') {
