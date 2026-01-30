@@ -78,7 +78,7 @@ app.post('/request-demo', upload.none(), async (req, res) => {
                 html: `<p>Name: ${firstname}</p><p>Email: ${email}</p><p>Phone: ${phone}</p>`
             });
         } catch (e) {
-            console.error("Email failed, skipping.");
+            console.error("❌ EMAIL ERROR DETAILS:", e.message);
         }
 
         // 3. Send to HubSpot (Check the brackets here!)
