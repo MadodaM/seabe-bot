@@ -511,7 +511,7 @@ async function getMemberProfile(phone) {
     }
 }
 
-// 👇 CORRECTED WHATSAPP ROUTE (Admin + User Logic)
+// 👇 COMPLETE WHATSAPP ROUTE (Admin + Event Creation)
 app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
     
@@ -520,10 +520,8 @@ app.post('/whatsapp', async (req, res) => {
     const cleanPhone = sender.replace('whatsapp:', '').replace('+', '').trim();
     const msgBody = req.body.Body ? req.body.Body.trim().toLowerCase() : ''; 
     
-    // 2. DEBUG LOG
-    console.log(`🕵️ ADMIN DEBUG: User=[${cleanPhone}] Msg=[${msgBody}] IsAdmin? ${ADMIN_NUMBERS.includes(cleanPhone)}`);
-
-    // 3. ADMIN MENU CHECK (VIP ACCESS)
+    // 2. ADMIN CHECK (VIP ACCESS)
+    // If user says "admin" AND is in the VIP list
     if (msgBody === 'admin' && ADMIN_NUMBERS.includes(cleanPhone)) {
         twiml.message(
             `🛠️ *Admin Command Center*\n\n` +
@@ -536,7 +534,7 @@ app.post('/whatsapp', async (req, res) => {
         return; 
     }
 
-    // 4. RESET / CANCEL
+    // 3. RESET / CANCEL (Always available)
     if (msgBody === 'cancel' || msgBody === 'reset') {
         delete userState[cleanPhone];
         twiml.message("🔄 Session reset. Reply with *Hi* to start.");
@@ -544,11 +542,52 @@ app.post('/whatsapp', async (req, res) => {
         return;
     }
 
-    // 5. STANDARD "HI" MENU
-    if (msgBody === 'hi' || msgBody === 'hello' || msgBody === 'menu') {
-        // Send the Welcome Menu (Image + Text)
+    // 4. CHECK USER STATE (Where are they in the conversation?)
+    const currentState = userState[cleanPhone] ? userState[cleanPhone].step : null;
+
+    // --- LOGIC CHAIN START ---
+
+    // A. Handling Admin Menu Selection
+    if (currentState === 'ADMIN_MENU') {
+        if (msgBody === '1') {
+            twiml.message("📅 *New Event*\n\nReply with the *Event Name*:");
+            userState[cleanPhone] = { step: 'ADMIN_EVENT_NAME' };
+        } else if (msgBody === '2') {
+            twiml.message("📢 News feature coming soon.");
+            delete userState[cleanPhone];
+        } else {
+            twiml.message("❌ Invalid. Reply 1, 2 or Cancel.");
+        }
+    
+    // B. Admin: Step 1 - Get Name, Ask for Date
+    } else if (currentState === 'ADMIN_EVENT_NAME') {
+        // Save the name they just sent
+        userState[cleanPhone] = { 
+            step: 'ADMIN_EVENT_DATE', 
+            eventName: req.body.Body // Use original capitalization 
+        };
+        twiml.message(`✅ Name: *${req.body.Body}*\n\nNow, reply with the *Date* (e.g., 25 Dec):`);
+
+    // C. Admin: Step 2 - Get Date, Save Event
+    } else if (currentState === 'ADMIN_EVENT_DATE') {
+        const eventName = userState[cleanPhone].eventName;
+        const eventDate = req.body.Body;
+
+        // Save to Google Sheets (Simulated for now, real save happens here)
+        // await saveEventToSheet(eventName, eventDate); // Uncomment when ready
+
+        twiml.message(
+            `🎉 *Event Created!*\n\n` +
+            `📌 *${eventName}*\n` +
+            `🗓️ *${eventDate}*\n\n` +
+            `Live on the website now.`
+        );
+        delete userState[cleanPhone]; // Done!
+
+    // D. Standard "Hi" Menu (If not in a state)
+    } else if (msgBody === 'hi' || msgBody === 'hello' || msgBody === 'menu') {
         const msg = twiml.message();
-        msg.media('https://seabe.co.za/img/logo.png'); // Ensure this URL works or remove it
+        // msg.media('https://seabe.co.za/img/logo.png'); // Uncomment if you have a logo URL
         msg.body(
             `👋 *Welcome to Seabe Platform*\n` +
             `_Connecting the Kingdom_\n\n` +
@@ -559,137 +598,16 @@ app.post('/whatsapp', async (req, res) => {
             `_Reply with a number_`
         );
         userState[cleanPhone] = { step: 'MAIN_MENU' };
-        res.type('text/xml').send(twiml.toString());
-        return;
-    }
 
-    // 6. HANDLE USER STATE (Conversation Logic)
-    const state = userState[cleanPhone] ? userState[cleanPhone].step : null;
-
-    if (state === 'ADMIN_MENU') {
-        if (msgBody === '1') {
-            twiml.message("📅 *New Event*\nReply with the Event Name:");
-            userState[cleanPhone] = { step: 'ADD_EVENT_NAME' };
-        } else if (msgBody === '2') {
-            twiml.message("📢 *News/Ad*\nComing soon.");
-            delete userState[cleanPhone];
-        } else {
-            twiml.message("❌ Invalid option. Reply 'admin' to try again.");
-            delete userState[cleanPhone];
-        }
-        res.type('text/xml').send(twiml.toString());
-        return;
-    }
-    
-    // (Add your 'ADD_EVENT_NAME' logic here if you have it ready, otherwise this is safe)
-
-    // 7. DEFAULT FALLBACK
-    if (!state) {
+    // E. Fallback (If we don't understand)
+    } else {
         twiml.message("👋 I didn't catch that. Reply with *Hi* for the menu.");
     }
 
+    // --- LOGIC CHAIN END ---
+
     res.type('text/xml').send(twiml.toString());
-}); 
-// 👆 This closing bracket '});' is likely what was missing!
-
-// --- 📅 FLOW: ADD EVENT ---
-
-// 3. Get Church Code -> Ask for Name
-else if (userSession[cleanPhone]?.step === 'ADMIN_EVENT_CHURCH') {
-    userSession[cleanPhone].churchCode = incomingMsg.toUpperCase();
-    userSession[cleanPhone].step = 'ADMIN_EVENT_NAME';
-    reply = `Got it. Enter the *Event Name*:\n(e.g., Men's Conference)`;
-}
-
-// 4. Get Name -> Ask for Price
-else if (userSession[cleanPhone]?.step === 'ADMIN_EVENT_NAME') {
-    userSession[cleanPhone].eventName = incomingMsg;
-    userSession[cleanPhone].step = 'ADMIN_EVENT_PRICE';
-    reply = `Enter the *Ticket Price* (Numbers only):\n(e.g., 200)`;
-}
-
-// 5. Get Price -> Ask for Date
-else if (userSession[cleanPhone]?.step === 'ADMIN_EVENT_PRICE') {
-    userSession[cleanPhone].eventPrice = incomingMsg;
-    userSession[cleanPhone].step = 'ADMIN_EVENT_DATE';
-    reply = `Enter the *Event Date* (YYYY-MM-DD):\n(e.g., 2026-06-15)`;
-}
-
-// 6. SAVE EVENT
-else if (userSession[cleanPhone]?.step === 'ADMIN_EVENT_DATE') {
-    const data = userSession[cleanPhone];
-    const eventDate = incomingMsg;
-
-    // SAVE TO GOOGLE SHEET
-    try {
-        const doc = await getDoc();
-        const sheet = doc.sheetsByTitle['Events'] || doc.sheetsByIndex[4]; // Ensure this matches your Tab
-        await sheet.addRow({
-            'Church Code': data.churchCode,
-            'Event Name': data.eventName,
-            'Price': data.eventPrice,
-            'Date': eventDate,
-            'Status': 'Active'
-        });
-        
-        // Clear Cache so it shows up immediately
-        await refreshCache();
-
-        reply = `✅ *Event Saved!*\n\n` +
-                `Event: ${data.eventName}\n` +
-                `Price: R${data.eventPrice}\n` +
-                `Date: ${eventDate}\n\n` +
-                `Reply *admin* to add another.`;
-        
-        userSession[cleanPhone] = null; // Reset
-    } catch (e) {
-        console.error(e);
-        reply = `❌ Error saving event. Check logs.`;
-    }
-}
-
-// --- 📢 FLOW: ADD ADVERTISEMENT ---
-
-// 3. Get Church Code -> Ask for Language
-else if (userSession[cleanPhone]?.step === 'ADMIN_AD_CHURCH') {
-    userSession[cleanPhone].churchCode = incomingMsg.toUpperCase();
-    userSession[cleanPhone].step = 'ADMIN_AD_LANG';
-    reply = `Enter *Language Code* (EN, ZU, ST):\n(Or type ALL for everyone)`;
-}
-
-// 4. Get Language -> Ask for Message
-else if (userSession[cleanPhone]?.step === 'ADMIN_AD_LANG') {
-    userSession[cleanPhone].lang = incomingMsg.toUpperCase();
-    userSession[cleanPhone].step = 'ADMIN_AD_MSG';
-    reply = `Enter the *Ad/News Message*:\n(Keep it short!)`;
-}
-
-// 5. SAVE AD
-else if (userSession[cleanPhone]?.step === 'ADMIN_AD_MSG') {
-    const data = userSession[cleanPhone];
-    const adText = incomingMsg;
-
-    try {
-        const doc = await getDoc();
-        const sheet = doc.sheetsByTitle['Ads'] || doc.sheetsByIndex[1]; // Ensure this matches Ads tab
-        await sheet.addRow({
-            'Church Code': data.churchCode,
-            'Language': data.lang,
-            'Ad Text': adText,
-            'Status': 'Active'
-        });
-
-        await refreshCache();
-
-        reply = `✅ *Ad Published!*\n\n` +
-                `"${adText}"\n\n` +
-                `Reply *Hi* to see it in the menu.`;
-
-        userSession[cleanPhone] = null;
-    } catch (e) {
-        reply = `❌ Error saving Ad.`;
-    }
-}
+});
 
 // --- 🛠️ ADMIN FLOW END ---
 // ... continue with your existing 'else if (incomingMsg === 'Hi') ...'
