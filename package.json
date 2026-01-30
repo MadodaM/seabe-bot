@@ -17,11 +17,13 @@
     "body-parser": "^2.2.2",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
+    "fs": "^0.0.1-security",
     "google-auth-library": "^10.5.0",
     "google-spreadsheet": "^5.0.2",
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",
     "nodemailer": "^7.0.13",
+    "path": "^0.12.7",
     "pdfkit": "^0.17.2",
     "twilio": "^5.12.0"
   }

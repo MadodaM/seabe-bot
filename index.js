@@ -1,3 +1,9 @@
+// ==========================================
+// VERSION 1.0 - SEABE PLATFORM (Enterprise)
+// DATE: 30 JAN 2026
+// FEATURES: Payments, Caching, PDF Receipts, Ads, Multi-Language
+// ==========================================
+
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -7,6 +13,7 @@ const PDFDocument = require('pdfkit');
 const sgMail = require('@sendgrid/mail'); 
 const cron = require('node-cron');
 const { MessagingResponse } = require('twilio').twiml;
+// ⚠️ ENSURE YOU HAVE THE PAYSTACK SERVICE FILE AT ./services/paystack.js
 const { createPaymentLink, createSubscriptionLink } = require('./services/paystack');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
@@ -14,9 +21,9 @@ const { JWT } = require('google-auth-library');
 // --- CONFIG ---
 const ACCOUNT_SID = process.env.TWILIO_SID; 
 const AUTH_TOKEN = process.env.TWILIO_AUTH;
-const GOOGLE_EMAIL = process.env.GOOGLE_EMAIL;
-const GOOGLE_KEY = process.env.GOOGLE_KEY ? process.env.GOOGLE_KEY.replace(/\\n/g, '\n') : null;
-const SHEET_ID = process.env.SHEET_ID;
+const GOOGLE_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL; // Standardized env name
+const GOOGLE_KEY = process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : null;
+const SHEET_ID = '1OKVh9Q-Gcs8EjKWIedXa6KM0N-j77JfK_QHaTd0GKQE'; // Your Sheet ID
 const SENDGRID_KEY = process.env.SENDGRID_KEY;
 const EMAIL_FROM = process.env.EMAIL_FROM;
 
@@ -238,7 +245,7 @@ app.get('/test-connection', async (req, res) => {
     }
 
     res.send(`
-        <h1>🔍 LIVE STATUS REPORT</h1>
+        <h1>🔍 LIVE STATUS REPORT v1.0</h1>
         <p><strong>Status:</strong> ${cachedChurches.length > 0 ? "✅ ONLINE" : "⚠️ LOADING..."}</p>
         <hr>
         <h3>Bot Memory:</h3>
