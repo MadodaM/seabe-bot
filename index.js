@@ -1,4 +1,5 @@
 require('dotenv').config();
+const axios = require('axios'); // For HubSpot
 const express = require('express');
 const bodyParser = require('body-parser');
 const fs = require('fs');
@@ -46,6 +47,72 @@ app.get('/terms', (req, res) => {
 // 👇 NEW: Serve Registration Page
 app.get('/register', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'register.html'));
+});
+
+// 👇 NEW: Handle Demo Requests (Email + HubSpot)
+app.post('/request-demo', upload.none(), async (req, res) => {
+    const { firstname, email, phone } = req.body;
+
+    try {
+        // --- ACTION 1: Send Email to YOU ---
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: process.env.EMAIL_USER,
+            subject: `🔥 New Lead: ${firstname}`,
+            html: `
+                <h3>New Demo Request</h3>
+                <p><strong>Name:</strong> ${firstname}</p>
+                <p><strong>Email:</strong> ${email}</p>
+                <p><strong>Phone:</strong> ${phone}</p>
+                <p><em>Check HubSpot for details.</em></p>
+            `
+        };
+        // Send email but don't crash if it fails
+        transporter.sendMail(mailOptions).catch(err => console.error("Email Lead Failed:", err));
+
+
+        // --- ACTION 2: Send to HubSpot CRM ---
+        if (process.env.HUBSPOT_TOKEN) {
+            await axios.post('https://api.hubapi.com/crm/v3/objects/contacts', {
+                properties: {
+                    firstname: firstname,
+                    email: email,
+                    phone: phone,
+                    lifecyclestage: 'lead', // Mark them as a Lead
+                    lead_status: 'OPEN'
+                }
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${process.env.HUBSPOT_TOKEN}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            console.log(`✅ HubSpot Contact Created: ${email}`);
+        } else {
+            console.log("⚠️ HubSpot Token missing, skipping CRM sync.");
+        }
+
+        // --- ACTION 3: Success Page ---
+        res.send(`
+            <div style="font-family:sans-serif; text-align:center; padding:100px;">
+                <h1 style="color:#25D366; font-size:3rem;">Received! ✅</h1>
+                <p style="font-size:1.5rem;">Thanks, ${firstname}. We will call you shortly.</p>
+                <a href="/" style="color:#075E54; text-decoration:underline;">Back to Home</a>
+            </div>
+        `);
+
+    } catch (error) {
+        console.error("Demo Request Error:", error.response ? error.response.data : error.message);
+        
+        // Even if HubSpot fails (e.g., duplicate email), show success to the user
+        res.send(`
+            <div style="font-family:sans-serif; text-align:center; padding:100px;">
+                <h1>Thank You</h1>
+                <p>We received your details.</p>
+                <a href="/">Back to Home</a>
+            </div>
+        `);
+    }
 });
 
 // 👇 NEW: Handle Registration + File Uploads
