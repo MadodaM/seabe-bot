@@ -16,6 +16,10 @@ app.use(bodyParser.urlencoded({ extended: false }));
 // --- CONFIGURATION ---
 const PORT = process.env.PORT || 3000;
 const SHEET_ID = '1OKVh9Q-Gcs8EjKWIedXa6KM0N-j77JfK_QHaTd0GKQE';
+const ADMIN_NUMBERS = ['27832182707']; // 👈 YOUR NUMBER
+
+// --- IN-MEMORY CACHE (To make the bot fast) ---
+let userState = {}; 
 
 // --- GOOGLE SHEETS SETUP ---
 const serviceAccountAuth = new JWT({
@@ -30,114 +34,129 @@ async function getDoc() {
     return doc;
 }
 
-// --- SAFE STARTUP CHECK ---
-// This runs once when server starts to test the connection
-async function testGoogleConnection() {
+// --- HELPER: GET EVENTS ---
+async function getEventsFromSheet() {
     try {
-        console.log("🔄 Testing Google Sheets Connection...");
         const doc = await getDoc();
-        console.log(`✅ SUCCESS: Connected to Sheet "${doc.title}"`);
+        const sheet = doc.sheetsByTitle['Events']; // Ensure you have a tab named "Events"
+        const rows = await sheet.getRows();
+        
+        if (rows.length === 0) return "No upcoming events.";
+        
+        let message = "📅 *Upcoming Events*\n";
+        rows.slice(0, 5).forEach(row => { // Show max 5
+            message += `\n📌 *${row.get('Event Name')}*\n🗓️ ${row.get('Date')}\n`;
+        });
+        return message;
+    } catch (e) {
+        console.error("Fetch Error:", e);
+        return "⚠️ Could not fetch events right now.";
+    }
+}
+
+// --- HELPER: SAVE EVENT ---
+async function saveEventToSheet(name, date) {
+    try {
+        const doc = await getDoc();
+        const sheet = doc.sheetsByTitle['Events'];
+        // Ensure headers exist: "Event Name", "Date", "Created By"
+        await sheet.addRow({ 
+            'Event Name': name, 
+            'Date': date, 
+            'Created By': 'WhatsApp Admin' 
+        });
         return true;
-    } catch (error) {
-        console.error(`⚠️ GOOGLE WARNING: Could not connect to Sheets.`);
-        console.error(`Error Details: ${error.message}`);
-        console.error(`(The bot is still running, but data won't save)`);
+    } catch (e) {
+        console.error("Save Error:", e);
         return false;
     }
 }
 
 // --- ROUTE 1: HOMEPAGE ---
-app.get('/', (req, res) => {
-    res.send(`
-        <div style="font-family:sans-serif; text-align:center; padding:50px;">
-            <h1 style="color:#075E54;">Seabe Platform is Online 🟢</h1>
-            <p>Google Sheets Integration: <strong>Active</strong></p>
-            <a href="/register" style="color:#25D366; font-weight:bold;">Register Church</a>
-        </div>
-    `);
+app.get('/', async (req, res) => {
+    res.send(`<h1>Seabe Platform Live 🟢</h1><p>Bot is active.</p>`);
 });
 
-// --- ROUTE 2: REGISTRATION PAGE ---
+// --- ROUTE 2: REGISTRATION (Kept simple) ---
 app.get('/register', (req, res) => {
-    res.send(`
-        <form action="/register-church" method="POST" enctype="multipart/form-data" style="padding:20px; max-width:400px; margin:auto; font-family:sans-serif;">
-            <h2>Register Church</h2>
-            <input type="text" name="churchName" placeholder="Church Name" required style="width:100%; margin-bottom:10px; padding:10px;">
-            <input type="email" name="email" placeholder="Email" required style="width:100%; margin-bottom:10px; padding:10px;">
-            <p>Upload ID:</p><input type="file" name="idDoc" required style="margin-bottom:10px;">
-            <p>Upload Bank Letter:</p><input type="file" name="bankDoc" required style="margin-bottom:20px;">
-            <button type="submit" style="background:#25D366; color:white; border:none; padding:15px; width:100%;">Submit</button>
-        </form>
-    `);
+    res.send(`<form action="/register-church" method="POST" enctype="multipart/form-data">
+        <h2>Register</h2><input name="churchName" placeholder="Church Name"><button>Submit</button>
+    </form>`);
 });
 
-// --- ROUTE 3: PROCESS REGISTRATION (With Sheets Saving) ---
-app.post('/register-church', upload.fields([{ name: 'idDoc' }, { name: 'bankDoc' }]), async (req, res) => {
-    try {
-        const { churchName, email } = req.body;
-        
-        // 1. SAVE TO SHEETS (Wrapped in Try/Catch)
-        try {
-            const doc = await getDoc();
-            const sheet = doc.sheetsByTitle['Churches'];
-            
-            // Generate a random code
-            const prefix = churchName.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
-            const newCode = `${prefix}${Math.floor(100 + Math.random() * 900)}`;
-
-            await sheet.addRow({ 
-                'Name': churchName, 
-                'Church Code': newCode,
-                'Email': email, 
-                'Subaccount Code': 'PENDING' 
-            });
-            console.log(`✅ Saved ${churchName} to Sheets.`);
-        } catch (sheetError) {
-            console.error("❌ Sheet Save Failed:", sheetError.message);
-            // We continue anyway so the email still sends!
-        }
-
-        // 2. SEND EMAIL
-        if (process.env.SENDGRID_KEY && req.files['idDoc'] && req.files['bankDoc']) {
-            sgMail.setApiKey(process.env.SENDGRID_KEY);
-            const idFile = req.files['idDoc'][0];
-            const bankFile = req.files['bankDoc'][0];
-
-            const msg = {
-                to: process.env.EMAIL_FROM,
-                from: process.env.EMAIL_FROM,
-                subject: `🆕 Registration: ${churchName}`,
-                html: `<p>New application received for ${churchName}.</p>`,
-                attachments: [
-                    { content: fs.readFileSync(idFile.path).toString("base64"), filename: "ID.pdf", type: "application/pdf", disposition: "attachment" },
-                    { content: fs.readFileSync(bankFile.path).toString("base64"), filename: "Bank.pdf", type: "application/pdf", disposition: "attachment" }
-                ]
-            };
-            await sgMail.send(msg);
-            
-            fs.unlinkSync(idFile.path);
-            fs.unlinkSync(bankFile.path);
-        }
-
-        res.send('<h1>Received! ✅</h1><p>If connected, data is now in Google Sheets.</p>');
-    } catch (error) {
-        console.error(error);
-        res.send('<h1>Error (Check Logs)</h1>');
-    }
-});
-
-// --- ROUTE 4: WHATSAPP BOT ---
+// --- ROUTE 3: WHATSAPP BOT (The Full Version) ---
 app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
-    const msgBody = req.body.Body ? req.body.Body.trim().toLowerCase() : '';
+    const sender = req.body.From;
+    const cleanPhone = sender.replace('whatsapp:', '').replace('+', '').trim();
+    const msgBody = req.body.Body ? req.body.Body.trim().toLowerCase() : ''; 
 
-    if (msgBody === 'hi' || msgBody === 'hello' || msgBody === 'menu') {
+    console.log(`User: ${cleanPhone} | Msg: ${msgBody}`);
+
+    // --- A. ADMIN MENU ---
+    if (msgBody === 'admin' && ADMIN_NUMBERS.includes(cleanPhone)) {
+        twiml.message(`🛠️ *Admin Command Center*\n\n1. 📅 New Event\n2. ❌ Cancel`);
+        userState[cleanPhone] = { step: 'ADMIN_MENU' };
+        res.type('text/xml').send(twiml.toString());
+        return;
+    }
+
+    // --- B. RESET ---
+    if (msgBody === 'cancel' || msgBody === 'reset') {
+        delete userState[cleanPhone];
+        twiml.message("🔄 Reset. Reply *Hi*.");
+        res.type('text/xml').send(twiml.toString());
+        return;
+    }
+
+    // --- C. CONVERSATION FLOW ---
+    const currentState = userState[cleanPhone] ? userState[cleanPhone].step : null;
+
+    // 1. Handling Admin Selection
+    if (currentState === 'ADMIN_MENU') {
+        if (msgBody === '1') {
+            twiml.message("📅 *New Event*\nReply with the *Event Name*:");
+            userState[cleanPhone] = { step: 'ADMIN_EVENT_NAME' };
+        } else {
+            twiml.message("❌ Invalid. Reply 1 or Cancel.");
+        }
+    
+    // 2. Admin: Get Name -> Ask Date
+    } else if (currentState === 'ADMIN_EVENT_NAME') {
+        userState[cleanPhone] = { step: 'ADMIN_EVENT_DATE', eventName: req.body.Body };
+        twiml.message("🗓️ Reply with *Date* (e.g. 25 Dec):");
+
+    // 3. Admin: Get Date -> Save to Sheet
+    } else if (currentState === 'ADMIN_EVENT_DATE') {
+        const name = userState[cleanPhone].eventName;
+        const date = req.body.Body;
+        
+        twiml.message("⏳ Saving to Google Sheets...");
+        
+        const success = await saveEventToSheet(name, date);
+        
+        if (success) {
+            twiml.message(`✅ *Event Saved!*\n📌 ${name}\n🗓️ ${date}`);
+        } else {
+            twiml.message("⚠️ Error saving to Sheet. Check logs.");
+        }
+        delete userState[cleanPhone];
+
+    // 4. MAIN MENU
+    } else if (msgBody === 'hi' || msgBody === 'hello' || msgBody === 'menu') {
         twiml.message(
             `👋 *Welcome to Seabe*\n` +
-            `1️⃣ Events\n` +
-            `2️⃣ Churches\n` +
-            `3️⃣ Register`
+            `1️⃣ *Events* (View Upcoming)\n` +
+            `2️⃣ *Register* (Add Church)`
         );
+        userState[cleanPhone] = { step: 'MAIN_MENU' };
+
+    // 5. USER SELECTION
+    } else if (currentState === 'MAIN_MENU' && msgBody === '1') {
+        const eventsMsg = await getEventsFromSheet();
+        twiml.message(eventsMsg);
+        delete userState[cleanPhone];
+
     } else {
         twiml.message("👋 Reply *Hi* for the menu.");
     }
@@ -146,8 +165,6 @@ app.post('/whatsapp', async (req, res) => {
 });
 
 // --- START SERVER ---
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
     console.log(`✅ Server running on port ${PORT}`);
-    // Run the test AFTER the server starts so it doesn't block the startup
-    await testGoogleConnection();
 });
