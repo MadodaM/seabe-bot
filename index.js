@@ -36,7 +36,10 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// ... existing app.get('/') code ...
+// 👇 NEW: Terms of Service Page
+app.get('/terms', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'terms.html'));
+});
 
 // 👇 NEW: Serve Registration Page
 app.get('/register', (req, res) => {
