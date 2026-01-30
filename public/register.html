@@ -23,30 +23,46 @@
         <h1>Add Your Church ⛪</h1>
         <p style="text-align:center;">Join the platform to start collecting payments via WhatsApp.</p>
         
-        <form action="/register-church" method="POST">
-            <div class="form-group">
-                <label>Church Name</label>
-                <input type="text" name="churchName" placeholder="e.g. Grace Bible Church" required>
-            </div>
+<form action="/register-church" method="POST" enctype="multipart/form-data">
+    
+    <div class="form-group">
+        <label>Church Name</label>
+        <input type="text" name="churchName" placeholder="e.g. Grace Bible Church" required>
+    </div>
 
-            <div class="form-group">
-                <label>Admin Email</label>
-                <input type="email" name="email" placeholder="Treasurer's Email Address" required>
-            </div>
+    <div class="form-group">
+        <label>Admin Email</label>
+        <input type="email" name="email" placeholder="Treasurer's Email Address" required>
+    </div>
 
-            <div class="form-group">
-                <label>Event Name (Optional)</label>
-                <input type="text" name="eventName" placeholder="e.g. Youth Camp 2026">
-            </div>
+    <div class="form-group">
+        <label>Event Name (Optional)</label>
+        <input type="text" name="eventName" placeholder="e.g. Youth Camp 2026">
+    </div>
 
-            <div class="form-group">
-                <label>Event Price (Optional)</label>
-                <input type="number" name="eventPrice" placeholder="e.g. 500">
-            </div>
+    <div class="form-group">
+        <label>Event Price (Optional)</label>
+        <input type="number" name="eventPrice" placeholder="e.g. 500">
+    </div>
 
-            <button type="submit" class="btn">Register Church</button>
-            <p class="note">We will contact you to verify banking details.</p>
-        </form>
+    <div style="background: #e8f5e9; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+        <h3 style="margin-top:0; color:#075E54; font-size:1rem;">📂 Verification Documents</h3>
+        <p style="font-size:0.8rem; color:#555;">Required for Paystack approval.</p>
+        
+        <div class="form-group">
+            <label>Admin ID Copy (PDF/Image)</label>
+            <input type="file" name="idDoc" accept=".pdf,.jpg,.png" required>
+        </div>
+
+        <div class="form-group">
+            <label>Bank Confirmation Letter</label>
+            <input type="file" name="bankDoc" accept=".pdf,.jpg,.png" required>
+        </div>
+    </div>
+
+    <button type="submit" class="btn">Register Church</button>
+    <p class="note">We will contact you once verification is complete.</p>
+</form>
     </div>
 
 </body>

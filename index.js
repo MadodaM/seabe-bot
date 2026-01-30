@@ -10,6 +10,8 @@ const { MessagingResponse } = require('twilio').twiml;
 const { createPaymentLink, createSubscriptionLink } = require('./services/paystack');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
+const multer = require('multer');
+const upload = multer({ dest: 'uploads/' }); // Temporary storage
 
 // --- CONFIG ---
 const ACCOUNT_SID = process.env.TWILIO_SID; 
@@ -46,40 +48,67 @@ app.get('/register', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'register.html'));
 });
 
-// 👇 NEW: Handle Registration Logic
-app.post('/register-church', async (req, res) => {
+// 👇 NEW: Handle Registration + File Uploads
+// 'upload.fields' tells it to look for 'idDoc' and 'bankDoc'
+app.post('/register-church', upload.fields([{ name: 'idDoc' }, { name: 'bankDoc' }]), async (req, res) => {
     try {
         const { churchName, email, eventName, eventPrice } = req.body;
-        
-        // 1. Generate Unique Code (First 3 letters + Random 3 numbers)
-        // e.g., Grace Bible -> GRA + 123 -> GRA123
+        const files = req.files; // Access uploaded files
+
+        // 1. Generate Church Code
         const prefix = churchName.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
         const randomNum = Math.floor(100 + Math.random() * 900);
         const newCode = `${prefix}${randomNum}`;
 
-        // 2. Connect to Sheet
+        // 2. Save to Google Sheet
         const doc = await getDoc();
         const churchSheet = doc.sheetsByTitle['Churches'] || doc.sheetsByIndex[2];
-
-        // 3. Save to Google Sheet
         await churchSheet.addRow({
             'Name': churchName,
             'Church Code': newCode,
             'Email': email,
-            'Subaccount Code': 'PENDING', // You must update this manually later
+            'Subaccount Code': 'PENDING',
             'Event Name': eventName || 'Special Event',
             'Event_Price': eventPrice || '0'
         });
 
-        // 4. Force Refresh Memory
         await refreshCache();
 
+        // 3. 👇 NEW: Email the Documents to YOU (The Super Admin)
+        // Replace 'YOUR_ADMIN_EMAIL' with your actual email address
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: process.env.EMAIL_USER, // Sends to yourself
+            subject: `🆕 New Church Application: ${churchName}`,
+            html: `
+                <h2>New Registration Received</h2>
+                <p><strong>Church:</strong> ${churchName}</p>
+                <p><strong>Code:</strong> ${newCode}</p>
+                <p><strong>Contact:</strong> ${email}</p>
+                <hr>
+                <p>Attached are the KYC documents for Paystack verification.</p>
+            `,
+            attachments: [
+                { path: files['idDoc'][0].path, originalname: `${newCode}_ID.pdf` },
+                { path: files['bankDoc'][0].path, originalname: `${newCode}_Bank.pdf` }
+            ]
+        };
+
+        await transporter.sendMail(mailOptions);
+
+        // 4. Clean up (Delete temp files to save space)
+        // We use fs.unlink to delete the temp files after emailing
+        const fs = require('fs');
+        fs.unlink(files['idDoc'][0].path, () => {}); 
+        fs.unlink(files['bankDoc'][0].path, () => {});
+
+        // 5. Success Response
         res.send(`
             <div style="font-family:sans-serif; text-align:center; padding:50px;">
-                <h1 style="color:#25D366;">🎉 Registration Successful!</h1>
-                <p><strong>${churchName}</strong> has been added.</p>
+                <h1 style="color:#25D366;">🎉 Application Received!</h1>
+                <p><strong>${churchName}</strong> is under review.</p>
+                <p>We have received your ID and Bank Letter.</p>
                 <p>Your System Code is: <strong style="font-size:1.5em;">${newCode}</strong></p>
-                <p><em>Note: Payments will be active once we verify your banking details.</em></p>
                 <a href="/register">Add Another</a>
             </div>
         `);
