@@ -1,7 +1,7 @@
 // ==========================================
-// VERSION 1.0 - SEABE PLATFORM (Enterprise)
+// VERSION 1.1 - SEABE PLATFORM (HYBRID EDITION)
 // DATE: 30 JAN 2026
-// FEATURES: Payments, Caching, PDF Receipts, Ads, Multi-Language
+// MERGE: v1.0 (Payments/Cache) + v0.9 (Admin/CRM)
 // ==========================================
 
 require('dotenv').config();
@@ -12,40 +12,46 @@ const path = require('path');
 const PDFDocument = require('pdfkit');
 const sgMail = require('@sendgrid/mail'); 
 const cron = require('node-cron');
+const axios = require('axios'); // For HubSpot
+const multer = require('multer'); // For Web Forms
+const twilio = require('twilio'); 
 const { MessagingResponse } = require('twilio').twiml;
-// ⚠️ ENSURE YOU HAVE THE PAYSTACK SERVICE FILE AT ./services/paystack.js
 const { createPaymentLink, createSubscriptionLink } = require('./services/paystack');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
 
-// --- CONFIG ---
-const ACCOUNT_SID = process.env.TWILIO_SID; 
-const AUTH_TOKEN = process.env.TWILIO_AUTH;
-const GOOGLE_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL; // Standardized env name
+// --- CONFIGURATION ---
+const PORT = process.env.PORT || 3000;
+const ACCOUNT_SID = process.env.TWILIO_SID || process.env.TWILIO_ACCOUNT_SID; 
+const AUTH_TOKEN = process.env.TWILIO_AUTH || process.env.TWILIO_AUTH_TOKEN;
+const GOOGLE_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const GOOGLE_KEY = process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : null;
-const SHEET_ID = '1OKVh9Q-Gcs8EjKWIedXa6KM0N-j77JfK_QHaTd0GKQE'; // Your Sheet ID
+const SHEET_ID = '1OKVh9Q-Gcs8EjKWIedXa6KM0N-j77JfK_QHaTd0GKQE'; 
 const SENDGRID_KEY = process.env.SENDGRID_KEY;
 const EMAIL_FROM = process.env.EMAIL_FROM;
+const ADMIN_NUMBERS = ['27832182707']; // Add your number here
+const LOGO_URL = 'https://seabe.co.za/img/logo.png';
 
+// --- SETUP ---
 if (SENDGRID_KEY) sgMail.setApiKey(SENDGRID_KEY);
+const app = express();
+const upload = multer({ dest: 'uploads/' });
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
+app.use('/public', express.static(path.join(__dirname, 'public')));
 
 let client;
 try {
     if (ACCOUNT_SID && AUTH_TOKEN) client = require('twilio')(ACCOUNT_SID, AUTH_TOKEN);
 } catch (e) { console.log("⚠️ Twilio Error"); }
 
-const app = express();
-app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
-app.use('/public', express.static(path.join(__dirname, 'public')));
-
-// --- 🧠 MEMORY ---
+// --- 🧠 MEMORY CACHE ---
 let userSession = {}; 
 let cachedChurches = []; 
 let cachedAds = [];  
 let cachedEvents = []; 
 
-// --- 🔄 DATABASE ENGINE (BULLETPROOF VERSION) ---
+// --- 🔄 DATABASE ENGINE ---
 async function getDoc() {
     if (!GOOGLE_EMAIL || !GOOGLE_KEY) throw new Error("Missing Google Credentials");
     const serviceAccountAuth = new JWT({ email: GOOGLE_EMAIL, key: GOOGLE_KEY, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
@@ -54,378 +60,240 @@ async function getDoc() {
     return doc;
 }
 
-// Global Refresh Function (Exposed for Debugging)
+// Global Refresh Function (The v1.0 Speed Engine)
 async function refreshCache() {
-    console.log("🔄 Starting Cache Refresh...");
+    console.log("🔄 Refreshing Cache...");
     try {
         const doc = await getDoc();
         
-        // 1. Load Churches (Tab 3) - Uses strict headers from your X-Ray
+        // 1. Churches
         const churchSheet = doc.sheetsByTitle['Churches'] || doc.sheetsByIndex[2];
         const churchRows = await churchSheet.getRows();
-        
         cachedChurches = churchRows.map(row => {
-            // STRICT MAPPING based on your X-Ray report
             const name = row.get('Name');
             const code = row.get('Church Code');
             const subaccount = row.get('Subaccount Code'); 
             const email = row.get('Email');
-
-            // Validation: Must have at least a Name and Code
             if (!name || !code) return null;
+            return { code: code.trim(), name: name.trim(), email: email ? email.trim() : "", subaccount: subaccount ? subaccount.trim() : null };
+        }).filter(c => c !== null);
 
-            return { 
-                code: code.trim(), 
-                name: name.trim(), 
-                email: email ? email.trim() : "", 
-                subaccount: subaccount ? subaccount.trim() : null 
-            };
-        }).filter(c => c !== null); // Filter out empty rows
-
-        // 2. Load Ads (Tab 2)
+        // 2. Ads
         const adSheet = doc.sheetsByTitle['Ads'] || doc.sheetsByIndex[1];
         if (adSheet) {
             const adRows = await adSheet.getRows();
-            cachedAds = adRows.filter(r => r.get('Status') && r.get('Status').trim() === 'Active')
-                .map(r => ({
-                     target: r.get('Target') ? r.get('Target').trim() : 'Global', 
-                     ENGLISH: r.get('English'), ZULU: r.get('Zulu'), SOTHO: r.get('Sotho')
-                }));
+            cachedAds = adRows.filter(r => r.get('Status') === 'Active').map(r => ({
+                 target: r.get('Target') || 'Global', 
+                 ENGLISH: r.get('English'), ZULU: r.get('Zulu'), SOTHO: r.get('Sotho')
+            }));
         }
 
-        // 3. Load Events (Tab 5)
+        // 3. Events
         const eventSheet = doc.sheetsByTitle['Events'] || doc.sheetsByIndex[4];
         if (eventSheet) {
             const eventRows = await eventSheet.getRows();
-            cachedEvents = eventRows
-                .filter(r => r.get('Status') && r.get('Status').trim() === 'Active')
-                .map(r => ({
-                    churchCode: r.get('Church Code') ? r.get('Church Code').trim() : null,
-                    name: r.get('Event Name'),
-                    price: r.get('Price'),
-                    date: r.get('Date')
-                }));
+            cachedEvents = eventRows.filter(r => r.get('Status') === 'Active').map(r => ({
+                churchCode: r.get('Church Code'), name: r.get('Event Name'), price: r.get('Price'), date: r.get('Date')
+            }));
         }
-        
-        console.log(`♻️ REFRESH COMPLETE: ${cachedChurches.length} Churches, ${cachedEvents.length} Events.`);
-        return `Success: Loaded ${cachedChurches.length} Churches`;
-
-    } catch (e) { 
-        console.error("❌ CRITICAL CACHE ERROR:", e.message); 
-        return `Error: ${e.message}`;
-    }
+        console.log(`✅ Cache Updated: ${cachedChurches.length} Churches, ${cachedEvents.length} Events.`);
+        return true;
+    } catch (e) { console.error("❌ Cache Error:", e.message); return false; }
 }
-// Run once on startup
-refreshCache();
-// Run every 10 mins
-setInterval(refreshCache, 600000); 
+refreshCache(); // Start immediately
+setInterval(refreshCache, 600000); // Repeat every 10 mins
 
-// --- 👥 USER MANAGEMENT ---
-async function getHeaders(sheet) {
-    await sheet.loadHeaderRow();
-    const headers = sheet.headerValues;
-    const phoneHeader = headers.find(h => h.toLowerCase().includes('phone')) || 'Phone';
-    const codeHeader = headers.find(h => h.toLowerCase().includes('code') || h.toLowerCase().includes('church')) || 'Church_Code';
-    return { phoneHeader, codeHeader };
+// --- 🛠️ HELPER FUNCTIONS ---
+
+// v0.9 CRM: Sync to HubSpot
+async function syncToHubSpot(data) {
+    if (!process.env.HUBSPOT_TOKEN) return;
+    try {
+        await axios.post('https://api.hubapi.com/crm/v3/objects/contacts', {
+            properties: { firstname: data.name, email: data.email, phone: data.phone, lifecyclestage: 'lead' }
+        }, { headers: { 'Authorization': `Bearer ${process.env.HUBSPOT_TOKEN}` } });
+    } catch (e) { console.error("HubSpot Error:", e.message); }
 }
 
-async function getUserChurch(phone) {
+// v0.9 Admin: Save Event (And refresh cache!)
+async function saveEventToSheet(name, date, price = '0') {
     try {
         const doc = await getDoc();
-        const userSheet = doc.sheetsByIndex[3]; 
-        const rows = await userSheet.getRows();
-        const { phoneHeader, codeHeader } = await getHeaders(userSheet);
-        const userRow = rows.find(r => r.get(phoneHeader) === phone);
-        return userRow ? userRow.get(codeHeader) : null;
-    } catch (e) { return null; }
+        const sheet = doc.sheetsByTitle['Events'];
+        // Default to Global (or specific church if we had one)
+        await sheet.addRow({ 
+            'Church Code': 'GLOBAL', 
+            'Event Name': name, 
+            'Date': date, 
+            'Price': price, 
+            'Status': 'Active', 
+            'Created By': 'WhatsApp Admin' 
+        });
+        await refreshCache(); // 🔥 Instant Update
+        return true;
+    } catch (e) { return false; }
 }
 
-async function registerUser(phone, churchCode) {
+// v0.9 Admin: Broadcast
+async function broadcastMessage(messageBody) {
+    if (!client) return "⚠️ Twilio Client not ready.";
+    let count = 0;
     try {
         const doc = await getDoc();
-        const userSheet = doc.sheetsByIndex[3]; 
-        const { phoneHeader, codeHeader } = await getHeaders(userSheet);
-        const rowData = {};
-        rowData[phoneHeader] = phone;
-        rowData[codeHeader] = churchCode;
-        await userSheet.addRow(rowData);
-    } catch (e) { console.error("Register Error:", e.message); }
+        const sheet = doc.sheetsByTitle['Subscribers'];
+        if (!sheet) return "⚠️ No Subscribers sheet.";
+        const rows = await sheet.getRows();
+        for (const row of rows) {
+            const number = row.get('Phone');
+            if (number) {
+                const toNum = number.includes('whatsapp:') ? number : `whatsapp:${number}`;
+                await client.messages.create({ body: `📢 *Seabe News*\n\n${messageBody}`, from: 'whatsapp:+14155238886', to: toNum });
+                count++;
+            }
+        }
+        return `✅ Sent to ${count} subscribers.`;
+    } catch (e) { return "⚠️ Broadcast failed."; }
 }
 
-async function removeUser(phone) {
+// v1.0 User: Save Subscriber
+async function saveSubscriber(phone) {
     try {
         const doc = await getDoc();
-        const userSheet = doc.sheetsByIndex[3]; 
-        const rows = await userSheet.getRows();
-        const { phoneHeader } = await getHeaders(userSheet);
-        const rowToDelete = rows.find(r => r.get(phoneHeader) === phone);
-        if (rowToDelete) { await rowToDelete.delete(); }
-    } catch (e) { console.error("Remove Error:", e.message); }
+        let sheet = doc.sheetsByTitle['Subscribers'];
+        if (!sheet) sheet = await doc.addSheet({ title: 'Subscribers', headerValues: ['Phone'] });
+        const rows = await sheet.getRows();
+        if (!rows.some(r => r.get('Phone') === phone)) await sheet.addRow({ 'Phone': phone });
+    } catch (e) { console.error("Sub Save Error:", e.message); }
 }
 
-// --- 📧 REPORTING ---
-async function emailReport(churchCode) {
-    const church = cachedChurches.find(c => c.code === churchCode);
-    if (!church || !church.email) return `❌ Skipped ${churchCode}`;
-
-    const doc = await getDoc();
-    const transSheet = doc.sheetsByIndex[0];
-    const rows = await transSheet.getRows();
-    const churchRows = rows.filter(r => r.get('Church Code') === churchCode);
-    
-    if (churchRows.length === 0) return `⚠️ ${churchCode}: No transactions.`;
-
-    let csvContent = "Date,Type,Amount,Reference,Phone\n"; 
-    churchRows.forEach(row => {
-        csvContent += `${row.get('Date')},${row.get('Type')},${row.get('Amount')},${row.get('Reference')},${row.get('Name/Phone')}\n`;
-    });
-
-    const attachment = Buffer.from(csvContent).toString('base64');
-    const msg = {
-        to: church.email,
-        from: EMAIL_FROM, 
-        subject: `📊 Weekly Report: ${church.name}`,
-        text: `Attached is your automated financial report from Seabe Digital.`,
-        attachments: [{ content: attachment, filename: `${churchCode}_Report.csv`, type: 'text/csv', disposition: 'attachment' }]
-    };
-
-    try { await sgMail.send(msg); return `✅ Sent to ${church.email}`; } 
-    catch (error) { return `❌ Failed for ${churchCode}`; }
-}
-
-cron.schedule('0 8 * * 1', async () => {
-    for (const church of cachedChurches) {
-        if (church.code && church.email) await emailReport(church.code);
-    }
-}, { timezone: "Africa/Johannesburg" });
-
-// --- 📄 PDF FACTORY ---
-function generatePDF(type, amount, ref, date, phone, churchName, eventDetail = '') {
+// v1.0 PDF Receipt
+function generatePDF(type, amount, ref, date, phone, churchName) {
     const doc = new PDFDocument({ size: 'A5', margin: 50 });
     const filename = `receipt_${Date.now()}_${phone.slice(-4)}.pdf`;
     const filePath = path.join(__dirname, 'public', 'receipts', filename);
-    const dir = path.dirname(filePath);
-    if (!fs.existsSync(dir)){ fs.mkdirSync(dir, { recursive: true }); }
-    const stream = fs.createWriteStream(filePath);
-    doc.pipe(stream);
-    
-    doc.fontSize(20).text(type === 'TICKET' ? 'ADMIT ONE' : 'RECEIPT', 50, 100, { align: 'right' });
+    if (!fs.existsSync(path.dirname(filePath))){ fs.mkdirSync(path.dirname(filePath), { recursive: true }); }
+    doc.pipe(fs.createWriteStream(filePath));
+    doc.fontSize(20).text('RECEIPT', 50, 100, { align: 'right' });
     doc.fontSize(10).text(churchName, { align: 'right' });
-    doc.moveDown(); doc.moveTo(50, 160).lineTo(370, 160).stroke(); doc.moveDown(2);
     doc.text(`Ref: ${ref}`); doc.text(`Member: ${phone}`); 
-    if(eventDetail) doc.text(`Event: ${eventDetail}`); 
-    doc.moveDown(2);
-    doc.fontSize(16).text(`AMOUNT:  R ${amount}.00`, 50);
+    doc.fontSize(16).text(`AMOUNT: R ${amount}.00`, 50);
     doc.end();
     return filename;
 }
 
-async function logToSheet(phone, churchCode, type, amount, ref) {
-    const doc = await getDoc();
-    const sheet = doc.sheetsByIndex[0]; 
-    await sheet.addRow({ "Church Code": churchCode, Date: new Date().toLocaleString(), "Name/Phone": phone, Type: type, Amount: amount, Reference: ref });
-}
+// --- 🌐 WEB ROUTES ---
+app.get('/', (req, res) => res.send(`<h1>Seabe v1.1 Hybrid Live 🟢</h1><p>Payments + Admin Active.</p>`));
 
-function getAdSuffix(lang, churchCode) {
-    const safeLang = lang || 'ENGLISH'; 
-    const relevantAds = cachedAds.filter(ad => ad.target === 'Global' || ad.target === churchCode);
-    if (relevantAds.length === 0) return "";
-    const randomAd = relevantAds[Math.floor(Math.random() * relevantAds.length)];
-    const adText = randomAd[safeLang] || randomAd['ENGLISH'];
-    return `\n\n----------------\n📢 *News/Ads:*\n${adText}`;
-}
+app.get('/register', (req, res) => res.send(`<form action="/register-church" method="POST"><h2>Register Church</h2><input name="churchName" placeholder="Name"><button>Submit</button></form>`));
 
-// --- 🩺 DIAGNOSTIC TOOL (WITH REFRESH BUTTON) ---
-app.get('/test-connection', async (req, res) => {
-    // Allows manual refresh from browser
-    if (req.query.refresh === 'true') {
-        const result = await refreshCache();
-        res.send(`<h1>${result}</h1><p><a href="/test-connection">Back to Report</a></p>`);
-        return;
-    }
-
-    res.send(`
-        <h1>🔍 LIVE STATUS REPORT v1.0</h1>
-        <p><strong>Status:</strong> ${cachedChurches.length > 0 ? "✅ ONLINE" : "⚠️ LOADING..."}</p>
-        <hr>
-        <h3>Bot Memory:</h3>
-        <p>Cached Churches: <strong>${cachedChurches.length}</strong></p>
-        <p>Cached Events: <strong>${cachedEvents.length}</strong></p>
-        <p>Cached Ads: <strong>${cachedAds.length}</strong></p>
-        <hr>
-        <button onclick="window.location.href='/test-connection?refresh=true'" style="padding:15px; font-size:18px;">🔄 FORCE REFRESH DATABASE</button>
-    `);
+// v0.9 CRM: Demo Request
+app.get('/demo', (req, res) => res.send(`<form action="/request-demo" method="POST"><input name="firstname" placeholder="Name"><input name="email" placeholder="Email"><button>Request</button></form>`));
+app.post('/request-demo', upload.none(), async (req, res) => {
+    const { firstname, email, phone } = req.body;
+    if (SENDGRID_KEY) await sgMail.send({ to: EMAIL_FROM, from: EMAIL_FROM, subject: `🔥 Lead: ${firstname}`, html: `<p>New Lead</p>` });
+    await syncToHubSpot({ name: firstname, email, phone });
+    res.send("<h1>Done ✅</h1>");
 });
 
 // --- 🤖 WHATSAPP LOGIC ---
 app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
-    
-    try {
-        const incomingMsg = req.body.Body.trim().toLowerCase(); 
-        const sender = req.body.From; 
-        const cleanPhone = sender.replace('whatsapp:', '');
-        let reply = "";
+    const incomingMsg = req.body.Body.trim().toLowerCase(); 
+    const sender = req.body.From; 
+    const cleanPhone = sender.replace('whatsapp:', '');
+    let reply = "";
 
-        if (incomingMsg.startsWith('report ')) {
-            const targetCode = incomingMsg.split(' ')[1].toUpperCase();
-            reply = await emailReport(targetCode);
-            twiml.message(reply);
-            res.type('text/xml').send(twiml.toString());
-            return;
+    // 🛡️ ADMIN GATEKEEPER (v0.9 Logic)
+    if (ADMIN_NUMBERS.includes(cleanPhone)) {
+        if (incomingMsg === 'admin') {
+            userSession[cleanPhone] = { step: 'ADMIN_MENU' };
+            reply = `🛠️ *Admin Menu*\n\n1. 📅 New Event\n2. 📢 Broadcast\n3. 🔄 Refresh Cache\n4. 🔙 Exit`;
+            twiml.message(reply); res.type('text/xml').send(twiml.toString()); return;
         }
-
-        if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
-        
-        let churchCode = userSession[cleanPhone]?.churchCode;
-        if (!churchCode) {
-            churchCode = await getUserChurch(cleanPhone);
-            if (churchCode) userSession[cleanPhone].churchCode = churchCode;
-        }
-
-        if (!churchCode) {
-            if (['hi', 'hello', 'menu', 'start'].includes(incomingMsg) || !userSession[cleanPhone]?.onboarding) {
-                let list = "Welcome to Seabe! 🇿🇦\nPlease select your church:\n";
-                if (cachedChurches.length === 0) {
-                    list = "⚠️ System Startup... Please reply 'Hi' in 1 minute.";
-                    // Attempt background refresh if empty
-                    refreshCache(); 
-                } else {
-                    cachedChurches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
-                }
-                reply = list;
-                userSession[cleanPhone].onboarding = true;
-            } 
-            else {
-                const selection = parseInt(incomingMsg) - 1;
-                if (!isNaN(selection) && cachedChurches[selection]) {
-                    const selectedChurch = cachedChurches[selection];
-                    await registerUser(cleanPhone, selectedChurch.code);
-                    userSession[cleanPhone].churchCode = selectedChurch.code;
-                    delete userSession[cleanPhone].onboarding;
-                    reply = `Welcome to *${selectedChurch.name}*! 🎉\nReply *Hi* to see your menu.`;
-                } else { 
-                    reply = "⚠️ Invalid number. Reply *Hi* to see the list."; 
-                }
+        if (userSession[cleanPhone]?.step?.startsWith('ADMIN')) {
+            const step = userSession[cleanPhone].step;
+            if (step === 'ADMIN_MENU') {
+                if (incomingMsg === '1') { reply = "📅 *Event Name?*"; userSession[cleanPhone].step = 'ADMIN_EVENT_NAME'; }
+                else if (incomingMsg === '2') { reply = "📢 *Message?*"; userSession[cleanPhone].step = 'ADMIN_BROADCAST'; }
+                else if (incomingMsg === '3') { await refreshCache(); reply = "✅ Cache Refreshed!"; }
+                else { delete userSession[cleanPhone]; reply = "Exited Admin Mode."; }
             }
-        } else {
-            const church = cachedChurches.find(c => c.code === churchCode);
-            if (!church) {
-                await removeUser(cleanPhone);
-                delete userSession[cleanPhone];
-                reply = "⚠️ Your church setup has changed. Reply *Hi* to reset.";
-            } else {
-                const churchName = church.name;
-                
-                if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
-                    userSession[cleanPhone].step = 'MENU';
-                    const currentLang = userSession[cleanPhone].lang || 'ENGLISH';
-                    reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner (Auto) 🔁\n*6.* Language / Lulwimi 🗣️` + getAdSuffix(currentLang, churchCode);
-                }
-                else if (incomingMsg === '3' && userSession[cleanPhone]?.step === 'MENU') {
-                    const events = cachedEvents.filter(e => e.churchCode === churchCode);
-                    if (events.length === 0) {
-                        reply = "⚠️ No upcoming events found.";
-                        userSession[cleanPhone].step = 'MENU';
-                    } else {
-                        let list = "*Select an Event:*\n";
-                        events.forEach((e, index) => { list += `*${index + 1}.* ${e.name} (R${e.price})\n`; });
-                        reply = list;
-                        userSession[cleanPhone].step = 'EVENT_SELECT';
-                        userSession[cleanPhone].availableEvents = events; 
-                    }
-                }
-                else if (userSession[cleanPhone]?.step === 'EVENT_SELECT') {
-                    const index = parseInt(incomingMsg) - 1;
-                    const events = userSession[cleanPhone].availableEvents;
-                    if (events && events[index]) {
-                        const selectedEvent = events[index];
-                        userSession[cleanPhone].step = 'PAY';
-                        userSession[cleanPhone].choice = 'EVENT';
-                        userSession[cleanPhone].selectedEvent = selectedEvent; 
-                        reply = `Confirm Ticket for *${selectedEvent.name}* (R${selectedEvent.price})?\nReply *Yes*`;
-                    } else { reply = "⚠️ Invalid selection. Reply *Hi* to restart."; }
-                }
-                else if (incomingMsg === '6' && userSession[cleanPhone]?.step === 'MENU') {
-                    userSession[cleanPhone].step = 'LANG';
-                    reply = "Select Language / Khetha Lulwimi:\n\n*1.* English 🇬🇧\n*2.* isiZulu 🇿🇦\n*3.* Sesotho 🇱🇸";
-                }
-                else if (['1', '2', '3'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'LANG') {
-                    if (incomingMsg === '1') userSession[cleanPhone].lang = 'ENGLISH';
-                    if (incomingMsg === '2') userSession[cleanPhone].lang = 'ZULU';
-                    if (incomingMsg === '3') userSession[cleanPhone].lang = 'SOTHO';
-                    userSession[cleanPhone].step = 'MENU';
-                    reply = "✅ Language Updated! Reply *Hi*.";
-                }
-                else if (['1', '2', '5'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'MENU') {
-                    userSession[cleanPhone].step = 'PAY';
-                    userSession[cleanPhone].choice = incomingMsg;
-                    if (incomingMsg === '5') reply = "Enter Monthly Amount (e.g. R500):";
-                    else reply = "Enter Amount (e.g. R100):";
-                }
-                else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
-                    await removeUser(cleanPhone);
-                    delete userSession[cleanPhone];
-                    let list = "🔄 *Switch Church*\n\nPlease select your church:\n";
-                    cachedChurches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
-                    reply = list;
-                    userSession[cleanPhone] = { onboarding: true };
-                }
-                else if (userSession[cleanPhone]?.step === 'PAY') {
-                    let amount = incomingMsg.replace(/\D/g,''); 
-                    let type = '';
-                    let eventNameForPdf = '';
-
-                    if (userSession[cleanPhone].choice === '1') type = 'OFFERING';
-                    else if (userSession[cleanPhone].choice === '5') type = 'RECURRING';
-                    else if (userSession[cleanPhone].choice === 'EVENT') {
-                        type = 'TICKET';
-                        const evt = userSession[cleanPhone].selectedEvent;
-                        amount = evt.price.toString().replace(/\D/g,'');
-                        eventNameForPdf = evt.name;
-                        const isAffirmative = ['yes', 'y', 'yeah', 'yebo', 'ok', 'sure', 'confirm'].some(w => incomingMsg.includes(w));
-                        if (!isAffirmative && incomingMsg !== amount) {
-                            reply = "❌ Cancelled."; twiml.message(reply); res.type('text/xml').send(twiml.toString()); return;
-                        }
-                    } else type = 'TITHE'; 
-
-                    const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
-                    const systemEmail = `${cleanPhone}@seabe.io`;
-                    const finalSubaccount = church.subaccount; 
-                    
-                    let link;
-                    if (type === 'RECURRING') link = await createSubscriptionLink(amount, ref, systemEmail, finalSubaccount);
-                    else link = await createPaymentLink(amount, ref, systemEmail, finalSubaccount);
-                    
-                    if (link) {
-                        reply = `Tap to pay R${amount}:\n👉 ${link}`;
-                        const currentLang = userSession[cleanPhone].lang || 'ENGLISH';
-                        if (client) {
-                            setTimeout(async () => {
-                                const pdfName = generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, church.name, eventNameForPdf);
-                                const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
-                                const pdfUrl = `https://${hostUrl}/public/receipts/${pdfName}`;
-                                try { await client.messages.create({ from: 'whatsapp:+14155238886', to: sender, body: `🎉 Payment Received! ${getAdSuffix(currentLang, churchCode)}`, mediaUrl: [pdfUrl] }); } catch(e) {}
-                                await logToSheet(cleanPhone, churchCode, type, amount, ref);
-                            }, 15000);
-                        }
-                    } else { reply = "⚠️ Error creating link."; }
-                    userSession[cleanPhone].step = 'MENU';
-                } else { reply = "Reply *Hi* to see the menu."; }
+            else if (step === 'ADMIN_EVENT_NAME') {
+                userSession[cleanPhone].step = 'ADMIN_EVENT_DATE'; userSession[cleanPhone].eventName = req.body.Body; reply = "🗓️ *Date?* (e.g. 25 Dec)";
             }
+            else if (step === 'ADMIN_EVENT_DATE') {
+                await saveEventToSheet(userSession[cleanPhone].eventName, req.body.Body);
+                reply = "✅ Event Saved & Live!"; delete userSession[cleanPhone];
+            }
+            else if (step === 'ADMIN_BROADCAST') {
+                reply = await broadcastMessage(req.body.Body); delete userSession[cleanPhone];
+            }
+            twiml.message(reply); res.type('text/xml').send(twiml.toString()); return;
         }
-        
-        twiml.message(reply);
-        res.type('text/xml').send(twiml.toString());
-
-    } catch (error) {
-        console.error("❌ FATAL BOT CRASH:", error);
-        twiml.message("⚠️ System Error: Please try again in 1 minute.");
-        res.type('text/xml').send(twiml.toString());
     }
+
+    // 👤 USER LOGIC (v1.0 Logic)
+    if (incomingMsg === 'hi' || incomingMsg === 'menu') {
+        saveSubscriber(sender); // Build mailing list
+        // Dynamic Search in Cache
+        let list = "👋 *Welcome to Seabe*\n_Connecting the Kingdom_\n\n*Select a Church:*\n";
+        cachedChurches.forEach((c, i) => list += `*${i+1}.* ${c.name}\n`);
+        reply = list;
+        userSession[cleanPhone] = { step: 'SELECT_CHURCH' };
+    } 
+    else if (userSession[cleanPhone]?.step === 'SELECT_CHURCH') {
+        const selection = parseInt(incomingMsg) - 1;
+        if (cachedChurches[selection]) {
+            userSession[cleanPhone].church = cachedChurches[selection];
+            userSession[cleanPhone].step = 'MAIN_MENU';
+            const msg = twiml.message();
+            msg.media(LOGO_URL); // v0.9 Branding
+            msg.body(`Welcome to *${cachedChurches[selection].name}* ⛪\n\n1. Pay Tithe 💰\n2. Offering 🎁\n3. Events 🎟️\n4. Switch Church 🔄`);
+            res.type('text/xml').send(twiml.toString()); return;
+        } else reply = "⚠️ Invalid number.";
+    }
+    else if (userSession[cleanPhone]?.step === 'MAIN_MENU') {
+        if (['1', '2'].includes(incomingMsg)) {
+            userSession[cleanPhone].step = 'PAY_AMOUNT';
+            userSession[cleanPhone].payType = incomingMsg === '1' ? 'TITHE' : 'OFFERING';
+            reply = "Enter Amount (e.g. 100):";
+        }
+        else if (incomingMsg === '3') {
+            const events = cachedEvents; // Use cached events
+            if (events.length === 0) reply = "No upcoming events.";
+            else {
+                let list = "*Select Event:*\n";
+                events.forEach((e, i) => list += `*${i+1}.* ${e.name} (R${e.price})\n`);
+                reply = list;
+                userSession[cleanPhone].step = 'SELECT_EVENT';
+            }
+        }
+        else if (incomingMsg === '4') { delete userSession[cleanPhone]; reply = "Reply Hi to start over."; }
+    }
+    else if (userSession[cleanPhone]?.step === 'PAY_AMOUNT') {
+        const amount = incomingMsg.replace(/\D/g, '');
+        const church = userSession[cleanPhone].church;
+        const type = userSession[cleanPhone].payType;
+        const ref = `${church.code}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
+        
+        // v1.0 Payment Link
+        const link = await createPaymentLink(amount, ref, `${cleanPhone}@seabe.io`, church.subaccount);
+        
+        if (link) {
+            reply = `Tap to Pay R${amount}:\n👉 ${link}`;
+            // v1.0 Async Receipt Logic
+            setTimeout(async () => {
+                 const pdfName = generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, church.name);
+                 const host = req.headers.host || 'seabe-bot.onrender.com';
+                 try { await client.messages.create({ from: 'whatsapp:+14155238886', to: sender, body: `🎉 Payment Received!`, mediaUrl: [`https://${host}/public/receipts/${pdfName}`] }); } catch(e){}
+            }, 15000); // Simulate payment success delay
+        } else reply = "Error creating link.";
+        userSession[cleanPhone].step = 'MAIN_MENU';
+    }
+
+    if (!reply) reply = "Reply *Hi* to start.";
+    twiml.message(reply);
+    res.type('text/xml').send(twiml.toString());
 });
 
-app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1><p>You can return to WhatsApp.</p>"));
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Seabe Platform running on ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Seabe v1.1 running on ${PORT}`));
