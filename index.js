@@ -472,8 +472,12 @@ app.post('/whatsapp', async (req, res) => {
     try {
         const incomingMsg = req.body.Body.trim().toLowerCase(); 
         const sender = req.body.From; 
-        const cleanPhone = sender.replace('whatsapp:', '');
+        const cleanPhone = sender.replace('whatsapp:', '').replace('+', ''); // Removes + and whatsapp: prefix
+
+// 👇 ADD THIS DEBUG LINE
+console.log("🚨 MY PHONE ID IS:", cleanPhone);
         let reply = "";
+
 
 // ... inside app.post('/whatsapp'), after defining 'cleanPhone' ...
 
