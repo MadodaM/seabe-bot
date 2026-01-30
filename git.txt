@@ -1,3 +1,3 @@
 		git add .
-		git commit -m "Send Grid implimentation update 3"
+		git commit -m "Send Grid implimentation on registration"
 		git push

@@ -12,6 +12,7 @@ const { createPaymentLink, createSubscriptionLink } = require('./services/paysta
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
 const multer = require('multer');
+const fs = require('fs'); // 👈 Needed to read files for SendGrid
 const upload = multer({ dest: 'uploads/' }); // Temporary storage
 
 // --- CONFIG ---
@@ -142,8 +143,7 @@ app.post('/request-demo', upload.none(), async (req, res) => {
     }
 });
 
-// 👇 NEW: Handle Registration + File Uploads
-// 'upload.fields' tells it to look for 'idDoc' and 'bankDoc'
+// 👇 UPDATED: Church Registration (SendGrid + Attachments)
 app.post('/register-church', upload.fields([{ name: 'idDoc' }, { name: 'bankDoc' }]), async (req, res) => {
     try {
         const { churchName, email, eventName, eventPrice } = req.body;
@@ -168,40 +168,59 @@ app.post('/register-church', upload.fields([{ name: 'idDoc' }, { name: 'bankDoc'
 
         await refreshCache();
 
-        // 3. 👇 NEW: Email the Documents to YOU (The Super Admin)
-        // Replace 'YOUR_ADMIN_EMAIL' with your actual email address
-        const mailOptions = {
-            from: process.env.EMAIL_FROM,
-            to: process.env.EMAIL_FROM, // Sends to yourself
-            subject: `🆕 New Church Application: ${churchName}`,
-            html: `
-                <h2>New Registration Received</h2>
-                <p><strong>Church:</strong> ${churchName}</p>
-                <p><strong>Code:</strong> ${newCode}</p>
-                <p><strong>Contact:</strong> ${email}</p>
-                <hr>
-                <p>Attached are the KYC documents for Paystack verification.</p>
-            `,
-            attachments: [
-                { path: files['idDoc'][0].path, originalname: `${newCode}_ID.pdf` },
-                { path: files['bankDoc'][0].path, originalname: `${newCode}_Bank.pdf` }
-            ]
-        };
+        // 3. Prepare Attachments for SendGrid
+        // We must read the file from disk and convert to Base64
+        const idFile = files['idDoc'][0];
+        const bankFile = files['bankDoc'][0];
 
-        await transporter.sendMail(mailOptions);
+        const attachment1 = fs.readFileSync(idFile.path).toString("base64");
+        const attachment2 = fs.readFileSync(bankFile.path).toString("base64");
 
-        // 4. Clean up (Delete temp files to save space)
-        // We use fs.unlink to delete the temp files after emailing
-        const fs = require('fs');
-        fs.unlink(files['idDoc'][0].path, () => {}); 
-        fs.unlink(files['bankDoc'][0].path, () => {});
+        // 4. Send Email via SendGrid
+        if (process.env.SENDGRID_KEY) {
+            sgMail.setApiKey(process.env.SENDGRID_KEY);
+            
+            const msg = {
+                to: process.env.EMAIL_FROM,    // Send to Admin
+                from: process.env.EMAIL_FROM,  // From Verified Sender
+                subject: `🆕 New Church Application: ${churchName}`,
+                html: `
+                    <h2>New Registration Received</h2>
+                    <p><strong>Church:</strong> ${churchName}</p>
+                    <p><strong>Code:</strong> ${newCode}</p>
+                    <p><strong>Contact:</strong> ${email}</p>
+                    <hr>
+                    <p>Attached are the KYC documents for Paystack verification.</p>
+                `,
+                attachments: [
+                    {
+                        content: attachment1,
+                        filename: `${newCode}_ID.pdf`, // Renaming for clarity
+                        type: idFile.mimetype,
+                        disposition: "attachment"
+                    },
+                    {
+                        content: attachment2,
+                        filename: `${newCode}_Bank.pdf`,
+                        type: bankFile.mimetype,
+                        disposition: "attachment"
+                    }
+                ]
+            };
+            await sgMail.send(msg);
+            console.log("✅ Registration Email Sent with Attachments");
+        }
 
-        // 5. Success Response
+        // 5. Clean up (Delete temp files from server)
+        fs.unlinkSync(idFile.path); 
+        fs.unlinkSync(bankFile.path);
+
+        // 6. Success Response
         res.send(`
             <div style="font-family:sans-serif; text-align:center; padding:50px;">
                 <h1 style="color:#25D366;">🎉 Application Received!</h1>
                 <p><strong>${churchName}</strong> is under review.</p>
-                <p>We have received your ID and Bank Letter.</p>
+                <p>We have received your documents.</p>
                 <p>Your System Code is: <strong style="font-size:1.5em;">${newCode}</strong></p>
                 <a href="/register">Add Another</a>
             </div>
