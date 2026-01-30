@@ -68,54 +68,75 @@ app.get('/register', (req, res) => {
 });
 
 // 👇 NEW: Handle Demo Requests (Corrected)
+// 1. Import SendGrid at the top of your file (add this with other requires)
+const sgMail = require('@sendgrid/mail');
+
+// ...
+
+// 👇 REPLACED ROUTE: API-Based Email (SendGrid) + HubSpot
 app.post('/request-demo', upload.none(), async (req, res) => {
-    // 1. Get the data from the form
     const { firstname, email, phone } = req.body;
 
-    console.log("Processing Lead:", firstname);
+    // Set the API Key dynamically
+    if (process.env.SENDGRID_KEY) {
+        sgMail.setApiKey(process.env.SENDGRID_KEY);
+    }
 
     try {
-        // 2. Send Email (Wrapped in try/catch to be safe)
+        // --- ACTION 1: Send Email via API (No Port Blocking!) ---
         try {
-            await transporter.sendMail({
-                from: process.env.EMAIL_USER,
-                to: process.env.EMAIL_USER,
+            const msg = {
+                to: process.env.EMAIL_USER, // Your verified email
+                from: process.env.EMAIL_USER, // MUST be the same verified email
                 subject: `🔥 New Lead: ${firstname}`,
-                html: `<p>Name: ${firstname}</p><p>Email: ${email}</p><p>Phone: ${phone}</p>`
-            });
-        } catch (e) {
-            console.error("❌ EMAIL ERROR DETAILS:", e.message);
+                html: `
+                    <div style="font-family: Arial, sans-serif; padding: 20px;">
+                        <h2 style="color: #075E54;">New Demo Request</h2>
+                        <p><strong>Name:</strong> ${firstname}</p>
+                        <p><strong>Email:</strong> ${email}</p>
+                        <p><strong>Phone:</strong> ${phone}</p>
+                        <hr>
+                        <p><em>This lead has been synced to HubSpot.</em></p>
+                    </div>
+                `,
+            };
+            await sgMail.send(msg);
+            console.log("✅ Email Sent via SendGrid API");
+        } catch (emailError) {
+            console.error("❌ SendGrid Error:", emailError.response ? emailError.response.body : emailError.message);
         }
 
-        // 3. Send to HubSpot (Check the brackets here!)
+        // --- ACTION 2: Send to HubSpot CRM ---
         if (process.env.HUBSPOT_TOKEN) {
-            await axios.post(
-                'https://api.hubapi.com/crm/v3/objects/contacts',
-                {
-                    properties: {                  // <--- MAKE SURE THIS CURLY BRACE EXISTS
-                        firstname: firstname,
-                        email: email,              // <--- This is where your error was
-                        phone: phone,
-                        lifecyclestage: 'lead',
-                        hs_lead_status: 'OPEN'
-                    }                              // <--- Closing brace for properties
-                },
-                {
-                    headers: {
-                        'Authorization': `Bearer ${process.env.HUBSPOT_TOKEN}`,
-                        'Content-Type': 'application/json'
-                    }
+            await axios.post('https://api.hubapi.com/crm/v3/objects/contacts', {
+                properties: {
+                    firstname: firstname,
+                    email: email,
+                    phone: phone,
+                    lifecyclestage: 'lead',
+                    hs_lead_status: 'OPEN'
                 }
-            );
-            console.log("✅ HubSpot Saved");
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${process.env.HUBSPOT_TOKEN}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            console.log(`✅ HubSpot Contact Created`);
         }
 
-        // 4. Success Response
-        res.send('<h1>Received! We will call you shortly.</h1><a href="/">Back</a>');
+        // --- ACTION 3: Success Page ---
+        res.send(`
+            <div style="font-family:sans-serif; text-align:center; padding:100px;">
+                <h1 style="color:#25D366; font-size:3rem;">Received! ✅</h1>
+                <p style="font-size:1.5rem;">Thanks, ${firstname}. We will call you shortly.</p>
+                <a href="/" style="color:#075E54; text-decoration:underline;">Back to Home</a>
+            </div>
+        `);
 
     } catch (error) {
-        console.error("Error:", error.message);
-        res.send('<h1>Received! (Saved locally)</h1><a href="/">Back</a>');
+        console.error("General Error:", error.message);
+        res.send('<h1>Received!</h1><a href="/">Back</a>');
     }
 });
 
