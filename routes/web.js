@@ -1,5 +1,5 @@
 // routes/web.js
-// VERSION: 1.5 (Legal Compliance Update)
+// VERSION: 1.5.1 (Syntax Fix)
 const sgMail = require('@sendgrid/mail');
 const fs = require('fs');
 require('dotenv').config();
@@ -88,7 +88,7 @@ module.exports = function(app, upload, { getDoc, refreshCache, syncToHubSpot }) 
     });
 
     // ==========================================
-    // 2. MASTER SERVICE AGREEMENT (UPDATED)
+    // 2. MASTER SERVICE AGREEMENT
     // ==========================================
     app.get('/terms', (req, res) => {
         res.send(`
@@ -255,3 +255,86 @@ module.exports = function(app, upload, { getDoc, refreshCache, syncToHubSpot }) 
                     to: EMAIL_FROM,
                     from: EMAIL_FROM,
                     subject: `📝 NEW REGISTRATION: ${churchName}`,
+                    html: `
+                        <h2>New Church Application</h2>
+                        <p><strong>Church:</strong> ${churchName}</p>
+                        <p><strong>Code:</strong> ${newCode}</p>
+                        <p><strong>Email:</strong> ${email}</p>
+                        <hr>
+                        <p>KYC Documents are attached for review.</p>
+                    `,
+                    attachments: attachments
+                });
+            }
+
+            filePathsToDelete.forEach(p => { try { fs.unlinkSync(p); } catch(e){} });
+
+            res.send(`
+                <div style="font-family:sans-serif; text-align:center; padding:50px;">
+                    <div style="font-size:50px;">🎉</div>
+                    <h1 style="color:#25D366;">Application Received</h1>
+                    <p>We have received your registration for <strong>${churchName}</strong>.</p>
+                    <p>Your documents are being reviewed by our compliance team.</p>
+                    <br>
+                    <a href="/" style="color:#25D366; text-decoration:none; font-weight:bold;">Return to Home</a>
+                </div>
+            `);
+
+        } catch (e) {
+            console.error(e);
+            res.send("<h1>Error</h1><p>Something went wrong. Please try again.</p>");
+        }
+    });
+
+    // ==========================================
+    // 4. BOOK A DEMO (FORM + HUBSPOT)
+    // ==========================================
+    app.get('/demo', (req, res) => {
+        res.send(`
+            <div style="font-family:sans-serif; max-width:400px; margin:auto; padding:20px; text-align:center;">
+                <h2 style="color:#007bff;">Book a Free Demo 📅</h2>
+                <p>See how Seabe can transform your ministry.</p>
+                <form action="/request-demo" method="POST" style="text-align:left; background:#f0f8ff; padding:20px; border-radius:10px;">
+                    <label>Name</label>
+                    <input name="firstname" placeholder="Your Name" required style="width:100%; padding:10px; margin-bottom:15px; border:1px solid #ccc; border-radius:4px;">
+                    
+                    <label>Email</label>
+                    <input name="email" placeholder="you@church.com" required style="width:100%; padding:10px; margin-bottom:15px; border:1px solid #ccc; border-radius:4px;">
+                    
+                    <label>Phone (WhatsApp)</label>
+                    <input name="phone" placeholder="+27..." style="width:100%; padding:10px; margin-bottom:15px; border:1px solid #ccc; border-radius:4px;">
+                    
+                    <button style="width:100%; padding:15px; background:#007bff; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer;">Request Demo</button>
+                </form>
+                <br>
+                <a href="/" style="color:#999; text-decoration:none;">Back to Home</a>
+            </div>
+        `);
+    });
+
+    app.post('/request-demo', upload.none(), async (req, res) => {
+        const { firstname, email, phone } = req.body;
+        
+        if (process.env.SENDGRID_KEY) {
+            await sgMail.send({
+                to: EMAIL_FROM,
+                from: EMAIL_FROM,
+                subject: `🔥 LEAD: ${firstname}`,
+                html: `<p>New Demo Request: ${firstname} (${email}) - ${phone}</p>`
+            });
+        }
+        await syncToHubSpot({ name: firstname, email, phone });
+        
+        res.send(`
+            <div style="font-family:sans-serif; text-align:center; padding:50px;">
+                <h1 style="color:#007bff;">Request Sent! ✅</h1>
+                <p>Our team will contact you shortly on WhatsApp.</p>
+                <a href="/" style="text-decoration:none;">Back to Home</a>
+            </div>
+        `);
+    });
+
+    app.post('/payment-success', (req, res) => {
+        res.send("<h1>Payment Successful! 🎉</h1><p>You can return to WhatsApp.</p>");
+    });
+};
