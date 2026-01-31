@@ -1,7 +1,7 @@
 // ==========================================
-// VERSION 1.2 - SEABE PLATFORM (CLEAN ARCHITECTURE)
+// VERSION 1.3 - SEABE PLATFORM (KYC UPDATE)
 // DATE: 31 JAN 2026
-// FEATURES: Payments, Cache, CRM, ToS, Modular Routes
+// FEATURES: KYC Uploads, Payments, Cache, CRM, ToS
 // ==========================================
 
 require('dotenv').config();
@@ -36,7 +36,11 @@ try {
 } catch (e) { console.log("⚠️ Twilio Error"); }
 
 const app = express();
-const upload = multer(); 
+
+// ✅ KYC UPDATE: Configure File Storage
+// We create a temp folder 'uploads/' to hold files before emailing them.
+const upload = multer({ dest: 'uploads/' }); 
+
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 app.use('/public', express.static(path.join(__dirname, 'public')));
@@ -105,14 +109,11 @@ async function syncToHubSpot(data) {
         await axios.post('https://api.hubapi.com/crm/v3/objects/contacts', {
             properties: { firstname: data.name, email: data.email, phone: data.phone, lifecyclestage: 'lead' }
         }, { headers: { 'Authorization': `Bearer ${process.env.HUBSPOT_TOKEN}` } });
-        console.log("✅ HubSpot Synced: " + data.email);
     } catch (e) { console.error("HubSpot Error:", e.message); }
 }
 
-// --- 🌐 WEB ROUTES (IMPORTED) ---
-// 🔥 This one line replaces 100 lines of code!
+// --- 🌐 WEB ROUTES ---
 require('./routes/web')(app, upload, { getDoc, refreshCache, syncToHubSpot });
-
 
 // --- 👥 USER MANAGEMENT HELPERS ---
 async function getHeaders(sheet) {
@@ -236,7 +237,7 @@ app.get('/test-connection', async (req, res) => {
         res.send(`<h1>${result}</h1><p><a href="/test-connection">Back to Report</a></p>`);
         return;
     }
-    res.send(`<h1>🔍 STATUS v1.2</h1><p>Status: ${cachedChurches.length > 0 ? "✅ ONLINE" : "⚠️ LOADING"}</p><button onclick="window.location.href='/test-connection?refresh=true'">🔄 REFRESH</button>`);
+    res.send(`<h1>🔍 STATUS v1.3</h1><p>Status: ${cachedChurches.length > 0 ? "✅ ONLINE" : "⚠️ LOADING"}</p><button onclick="window.location.href='/test-connection?refresh=true'">🔄 REFRESH</button>`);
 });
 
 // --- 🤖 WHATSAPP LOGIC ---
