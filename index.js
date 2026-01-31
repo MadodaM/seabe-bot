@@ -1,7 +1,7 @@
 // ==========================================
-// VERSION 1.0 - SEABE PLATFORM (Enterprise)
-// DATE: 30 JAN 2026
-// FEATURES: Payments, Caching, PDF Receipts, Ads, Multi-Language
+// VERSION 1.2 - SEABE PLATFORM (CLEAN ARCHITECTURE)
+// DATE: 31 JAN 2026
+// FEATURES: Payments, Cache, CRM, ToS, Modular Routes
 // ==========================================
 
 require('dotenv').config();
@@ -12,8 +12,9 @@ const path = require('path');
 const PDFDocument = require('pdfkit');
 const sgMail = require('@sendgrid/mail'); 
 const cron = require('node-cron');
+const axios = require('axios'); 
+const multer = require('multer'); 
 const { MessagingResponse } = require('twilio').twiml;
-// ⚠️ ENSURE YOU HAVE THE PAYSTACK SERVICE FILE AT ./services/paystack.js
 const { createPaymentLink, createSubscriptionLink } = require('./services/paystack');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
@@ -21,9 +22,9 @@ const { JWT } = require('google-auth-library');
 // --- CONFIG ---
 const ACCOUNT_SID = process.env.TWILIO_SID; 
 const AUTH_TOKEN = process.env.TWILIO_AUTH;
-const GOOGLE_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL; // Standardized env name
+const GOOGLE_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL; 
 const GOOGLE_KEY = process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : null;
-const SHEET_ID = '1OKVh9Q-Gcs8EjKWIedXa6KM0N-j77JfK_QHaTd0GKQE'; // Your Sheet ID
+const SHEET_ID = '1OKVh9Q-Gcs8EjKWIedXa6KM0N-j77JfK_QHaTd0GKQE'; 
 const SENDGRID_KEY = process.env.SENDGRID_KEY;
 const EMAIL_FROM = process.env.EMAIL_FROM;
 
@@ -35,6 +36,7 @@ try {
 } catch (e) { console.log("⚠️ Twilio Error"); }
 
 const app = express();
+const upload = multer(); 
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 app.use('/public', express.static(path.join(__dirname, 'public')));
@@ -45,7 +47,7 @@ let cachedChurches = [];
 let cachedAds = [];  
 let cachedEvents = []; 
 
-// --- 🔄 DATABASE ENGINE (BULLETPROOF VERSION) ---
+// --- 🔄 DATABASE ENGINE ---
 async function getDoc() {
     if (!GOOGLE_EMAIL || !GOOGLE_KEY) throw new Error("Missing Google Credentials");
     const serviceAccountAuth = new JWT({ email: GOOGLE_EMAIL, key: GOOGLE_KEY, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
@@ -54,73 +56,65 @@ async function getDoc() {
     return doc;
 }
 
-// Global Refresh Function (Exposed for Debugging)
+// Global Refresh Function
 async function refreshCache() {
     console.log("🔄 Starting Cache Refresh...");
     try {
         const doc = await getDoc();
         
-        // 1. Load Churches (Tab 3) - Uses strict headers from your X-Ray
+        // 1. Load Churches
         const churchSheet = doc.sheetsByTitle['Churches'] || doc.sheetsByIndex[2];
         const churchRows = await churchSheet.getRows();
         
         cachedChurches = churchRows.map(row => {
-            // STRICT MAPPING based on your X-Ray report
             const name = row.get('Name');
             const code = row.get('Church Code');
             const subaccount = row.get('Subaccount Code'); 
             const email = row.get('Email');
-
-            // Validation: Must have at least a Name and Code
             if (!name || !code) return null;
+            return { code: code.trim(), name: name.trim(), email: email ? email.trim() : "", subaccount: subaccount ? subaccount.trim() : null };
+        }).filter(c => c !== null);
 
-            return { 
-                code: code.trim(), 
-                name: name.trim(), 
-                email: email ? email.trim() : "", 
-                subaccount: subaccount ? subaccount.trim() : null 
-            };
-        }).filter(c => c !== null); // Filter out empty rows
-
-        // 2. Load Ads (Tab 2)
+        // 2. Load Ads
         const adSheet = doc.sheetsByTitle['Ads'] || doc.sheetsByIndex[1];
         if (adSheet) {
             const adRows = await adSheet.getRows();
             cachedAds = adRows.filter(r => r.get('Status') && r.get('Status').trim() === 'Active')
-                .map(r => ({
-                     target: r.get('Target') ? r.get('Target').trim() : 'Global', 
-                     ENGLISH: r.get('English'), ZULU: r.get('Zulu'), SOTHO: r.get('Sotho')
-                }));
+                .map(r => ({ target: r.get('Target') || 'Global', ENGLISH: r.get('English'), ZULU: r.get('Zulu'), SOTHO: r.get('Sotho') }));
         }
 
-        // 3. Load Events (Tab 5)
+        // 3. Load Events
         const eventSheet = doc.sheetsByTitle['Events'] || doc.sheetsByIndex[4];
         if (eventSheet) {
             const eventRows = await eventSheet.getRows();
-            cachedEvents = eventRows
-                .filter(r => r.get('Status') && r.get('Status').trim() === 'Active')
-                .map(r => ({
-                    churchCode: r.get('Church Code') ? r.get('Church Code').trim() : null,
-                    name: r.get('Event Name'),
-                    price: r.get('Price'),
-                    date: r.get('Date')
-                }));
+            cachedEvents = eventRows.filter(r => r.get('Status') && r.get('Status').trim() === 'Active')
+                .map(r => ({ churchCode: r.get('Church Code'), name: r.get('Event Name'), price: r.get('Price'), date: r.get('Date') }));
         }
-        
-        console.log(`♻️ REFRESH COMPLETE: ${cachedChurches.length} Churches, ${cachedEvents.length} Events.`);
+        console.log(`♻️ REFRESH COMPLETE: ${cachedChurches.length} Churches.`);
         return `Success: Loaded ${cachedChurches.length} Churches`;
 
-    } catch (e) { 
-        console.error("❌ CRITICAL CACHE ERROR:", e.message); 
-        return `Error: ${e.message}`;
-    }
+    } catch (e) { console.error("❌ CRITICAL CACHE ERROR:", e.message); return `Error: ${e.message}`; }
 }
-// Run once on startup
 refreshCache();
-// Run every 10 mins
 setInterval(refreshCache, 600000); 
 
-// --- 👥 USER MANAGEMENT ---
+// --- 🛠️ HUBSPOT CRM SYNC ---
+async function syncToHubSpot(data) {
+    if (!process.env.HUBSPOT_TOKEN) return;
+    try {
+        await axios.post('https://api.hubapi.com/crm/v3/objects/contacts', {
+            properties: { firstname: data.name, email: data.email, phone: data.phone, lifecyclestage: 'lead' }
+        }, { headers: { 'Authorization': `Bearer ${process.env.HUBSPOT_TOKEN}` } });
+        console.log("✅ HubSpot Synced: " + data.email);
+    } catch (e) { console.error("HubSpot Error:", e.message); }
+}
+
+// --- 🌐 WEB ROUTES (IMPORTED) ---
+// 🔥 This one line replaces 100 lines of code!
+require('./routes/web')(app, upload, { getDoc, refreshCache, syncToHubSpot });
+
+
+// --- 👥 USER MANAGEMENT HELPERS ---
 async function getHeaders(sheet) {
     await sheet.loadHeaderRow();
     const headers = sheet.headerValues;
@@ -235,26 +229,14 @@ function getAdSuffix(lang, churchCode) {
     return `\n\n----------------\n📢 *News/Ads:*\n${adText}`;
 }
 
-// --- 🩺 DIAGNOSTIC TOOL (WITH REFRESH BUTTON) ---
+// --- 🩺 DIAGNOSTIC ---
 app.get('/test-connection', async (req, res) => {
-    // Allows manual refresh from browser
     if (req.query.refresh === 'true') {
         const result = await refreshCache();
         res.send(`<h1>${result}</h1><p><a href="/test-connection">Back to Report</a></p>`);
         return;
     }
-
-    res.send(`
-        <h1>🔍 LIVE STATUS REPORT v1.0</h1>
-        <p><strong>Status:</strong> ${cachedChurches.length > 0 ? "✅ ONLINE" : "⚠️ LOADING..."}</p>
-        <hr>
-        <h3>Bot Memory:</h3>
-        <p>Cached Churches: <strong>${cachedChurches.length}</strong></p>
-        <p>Cached Events: <strong>${cachedEvents.length}</strong></p>
-        <p>Cached Ads: <strong>${cachedAds.length}</strong></p>
-        <hr>
-        <button onclick="window.location.href='/test-connection?refresh=true'" style="padding:15px; font-size:18px;">🔄 FORCE REFRESH DATABASE</button>
-    `);
+    res.send(`<h1>🔍 STATUS v1.2</h1><p>Status: ${cachedChurches.length > 0 ? "✅ ONLINE" : "⚠️ LOADING"}</p><button onclick="window.location.href='/test-connection?refresh=true'">🔄 REFRESH</button>`);
 });
 
 // --- 🤖 WHATSAPP LOGIC ---
@@ -288,7 +270,6 @@ app.post('/whatsapp', async (req, res) => {
                 let list = "Welcome to Seabe! 🇿🇦\nPlease select your church:\n";
                 if (cachedChurches.length === 0) {
                     list = "⚠️ System Startup... Please reply 'Hi' in 1 minute.";
-                    // Attempt background refresh if empty
                     refreshCache(); 
                 } else {
                     cachedChurches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
@@ -304,9 +285,7 @@ app.post('/whatsapp', async (req, res) => {
                     userSession[cleanPhone].churchCode = selectedChurch.code;
                     delete userSession[cleanPhone].onboarding;
                     reply = `Welcome to *${selectedChurch.name}*! 🎉\nReply *Hi* to see your menu.`;
-                } else { 
-                    reply = "⚠️ Invalid number. Reply *Hi* to see the list."; 
-                }
+                } else { reply = "⚠️ Invalid number. Reply *Hi* to see the list."; }
             }
         } else {
             const church = cachedChurches.find(c => c.code === churchCode);
