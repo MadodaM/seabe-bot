@@ -1,0 +1,59 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Church {
+  id             Int      @id @default(autoincrement())
+  name           String
+  code           String   @unique
+  subaccountCode String   @default("PENDING")
+  email          String
+  tosAcceptedAt  DateTime @default(now())
+  createdAt      DateTime @default(now())
+  
+  // Relationships
+  members        Member[]
+  transactions   Transaction[]
+  events         Event[]
+}
+
+model Member {
+  id         Int      @id @default(autoincrement())
+  phone      String   @unique
+  churchCode String
+  joinedAt   DateTime @default(now())
+
+  // Relationships
+  church     Church   @relation(fields: [churchCode], references: [code])
+}
+
+model Transaction {
+  id         Int      @id @default(autoincrement())
+  reference  String   @unique
+  amount     Float
+  type       String   // TITHE, OFFERING, TICKET
+  phone      String
+  date       DateTime @default(now())
+  churchCode String
+
+  // Relationships
+  church     Church   @relation(fields: [churchCode], references: [code])
+}
+
+model Event {
+  id         Int      @id @default(autoincrement())
+  name       String
+  date       String
+  price      Float
+  status     String   @default("Active")
+  churchCode String
+
+  // Relationships
+  church     Church   @relation(fields: [churchCode], references: [code])
+}
