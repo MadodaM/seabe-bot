@@ -1,8 +1,6 @@
 // ==========================================
-// SEABE PLATFORM - VERSION 2.1 (POSTGRESQL EDITION)
-// ENGINE: Node.js + Prisma (Neon DB)
-// UI: Premium Web v2.0
-// BOT LOGIC: v1.3 (Parity)
+// SEABE PLATFORM - VERSION 3.0 (Dynamic Engine)
+// CONNECTED TO: Admin Console & PostgreSQL
 // ==========================================
 
 require('dotenv').config();
@@ -16,11 +14,11 @@ const cron = require('node-cron');
 const axios = require('axios'); 
 const multer = require('multer'); 
 const { MessagingResponse } = require('twilio').twiml;
-const { PrismaClient } = require('@prisma/client'); // 🔌 Database Driver
+const { PrismaClient } = require('@prisma/client');
 const { createPaymentLink, createSubscriptionLink } = require('./services/paystack');
 
 // --- CONFIG ---
-const prisma = new PrismaClient(); // Connect to DB
+const prisma = new PrismaClient();
 const ACCOUNT_SID = process.env.TWILIO_SID; 
 const AUTH_TOKEN = process.env.TWILIO_AUTH;
 const SENDGRID_KEY = process.env.SENDGRID_KEY;
@@ -40,14 +38,7 @@ app.use(bodyParser.json());
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
 // --- 🧠 MEMORY ---
-// We keep active conversation state in RAM, but long-term data in DB.
 let userSession = {}; 
-
-// --- 📢 ADS (Static for now to preserve v1.3 functionality) ---
-const STATIC_ADS = [
-    { target: 'Global', text: "Download the 'Bible and Me' App today!" },
-    { target: 'Global', text: "Join the Kingdom Steward's Leadership Course." }
-];
 
 // --- 🛠️ HUBSPOT CRM SYNC ---
 async function syncToHubSpot(data) {
@@ -59,53 +50,37 @@ async function syncToHubSpot(data) {
     } catch (e) { console.error("HubSpot Error:", e.message); }
 }
 
-// --- 🌐 WEB ROUTES (Injecting Prisma) ---
-// Passing 'prisma' instead of 'getDoc'
-// --- 🌐 WEB ROUTES ---
-require('./routes/web')(app, upload, { prisma, syncToHubSpot }); // Public Website
-require('./routes/admin')(app, { prisma }); // Admin Console (New)
+// --- 🌐 ROUTES (Web & Admin) ---
+require('./routes/web')(app, upload, { prisma, syncToHubSpot });
+require('./routes/admin')(app, { prisma });
 
-
-// --- 📧 REPORTING (DB POWERED) ---
+// --- 📧 REPORTING ---
 async function emailReport(churchCode) {
-    // 1. Get Church
     const church = await prisma.church.findUnique({ where: { code: churchCode } });
     if (!church || !church.email) return `❌ Church not found: ${churchCode}`;
 
-    // 2. Get Transactions
     const transactions = await prisma.transaction.findMany({
-        where: { churchCode: churchCode },
-        orderBy: { date: 'desc' },
-        take: 500
+        where: { churchCode: churchCode }, orderBy: { date: 'desc' }, take: 500
     });
     
     if (transactions.length === 0) return `⚠️ ${churchCode}: No transactions.`;
 
-    // 3. Generate CSV
     let csvContent = "Date,Type,Amount,Reference,Phone\n"; 
-    transactions.forEach(t => {
-        csvContent += `${t.date.toISOString()},${t.type},${t.amount},${t.reference},${t.phone}\n`;
-    });
+    transactions.forEach(t => { csvContent += `${t.date.toISOString()},${t.type},${t.amount},${t.reference},${t.phone}\n`; });
 
-    const attachment = Buffer.from(csvContent).toString('base64');
     const msg = {
-        to: church.email,
-        from: EMAIL_FROM, 
-        subject: `📊 Weekly Report: ${church.name}`,
+        to: church.email, from: EMAIL_FROM, subject: `📊 Weekly Report: ${church.name}`,
         text: "Attached is your automated financial report.",
-        attachments: [{ content: attachment, filename: `${churchCode}_Report.csv`, type: 'text/csv', disposition: 'attachment' }]
+        attachments: [{ content: Buffer.from(csvContent).toString('base64'), filename: `${churchCode}_Report.csv`, type: 'text/csv', disposition: 'attachment' }]
     };
 
     try { await sgMail.send(msg); return `✅ Sent to ${church.email}`; } 
     catch (error) { return `❌ Failed for ${churchCode}`; }
 }
 
-// Weekly Cron Job
 cron.schedule('0 8 * * 1', async () => {
     const churches = await prisma.church.findMany();
-    for (const church of churches) {
-        if (church.email) await emailReport(church.code);
-    }
+    for (const church of churches) { if (church.email) await emailReport(church.code); }
 }, { timezone: "Africa/Johannesburg" });
 
 // --- 📄 PDF FACTORY ---
@@ -129,23 +104,27 @@ function generatePDF(type, amount, ref, date, phone, churchName, eventDetail = '
     return filename;
 }
 
-function getAdSuffix(lang, churchCode) {
-    // Simple logic to mimic v1.3
-    const ad = STATIC_ADS[Math.floor(Math.random() * STATIC_ADS.length)];
-    return `\n\n----------------\n📢 *News:*\n${ad.text}`;
+// --- 📢 DYNAMIC ADS (The Brain) ---
+async function getAdSuffix(churchCode) {
+    try {
+        // Find 1 random Active ad that hasn't expired
+        // Matches either 'Global' or this specific ChurchCode
+        const ad = await prisma.ad.findFirst({
+            where: {
+                status: 'Active',
+                expiryDate: { gte: new Date() },
+                OR: [{ target: 'Global' }, { target: churchCode }]
+            },
+            take: 1,
+            skip: Math.floor(Math.random() * await prisma.ad.count({ where: { status: 'Active', expiryDate: { gte: new Date() } } }))
+        });
+
+        if (ad) return `\n\n----------------\n💡 *Did you know?*\n${ad.text}`;
+        return ""; // No ads found
+    } catch (e) { return ""; }
 }
 
-// --- 🩺 DIAGNOSTIC ---
-app.get('/test-connection', async (req, res) => {
-    try {
-        const count = await prisma.church.count();
-        res.send(`<h1>✅ System Online</h1><p>PostgreSQL Connected.</p><p>Active Churches: <strong>${count}</strong></p>`);
-    } catch (e) {
-        res.send(`<h1>❌ System Error</h1><p>${e.message}</p>`);
-    }
-});
-
-// --- 🤖 WHATSAPP LOGIC (DB ADAPTED) ---
+// --- 🤖 WHATSAPP LOGIC ---
 app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
     
@@ -155,7 +134,6 @@ app.post('/whatsapp', async (req, res) => {
         const cleanPhone = sender.replace('whatsapp:', '');
         let reply = "";
 
-        // Report Command
         if (incomingMsg.startsWith('report ')) {
             const targetCode = incomingMsg.split(' ')[1].toUpperCase();
             reply = await emailReport(targetCode);
@@ -164,13 +142,10 @@ app.post('/whatsapp', async (req, res) => {
 
         if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
         
-        // 1. IDENTIFY USER (DB CHECK)
+        // 1. IDENTIFY USER
         if (!userSession[cleanPhone].churchCode) {
-            // Check DB for existing member
             const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
-            
             if (member) {
-                // Found in DB -> Load into RAM
                 const church = await prisma.church.findUnique({ where: { code: member.churchCode } });
                 if (church) {
                     userSession[cleanPhone].churchCode = church.code;
@@ -180,12 +155,10 @@ app.post('/whatsapp', async (req, res) => {
             }
         }
 
-        // 2. ONBOARDING (If still no church)
+        // 2. ONBOARDING
         if (!userSession[cleanPhone].churchCode) {
             if (['hi', 'hello', 'menu', 'start'].includes(incomingMsg) || !userSession[cleanPhone]?.onboarding) {
-                // Fetch list from DB
                 const churches = await prisma.church.findMany({ orderBy: { name: 'asc' } });
-                
                 if (churches.length === 0) {
                     reply = "⚠️ System Startup... No churches found.";
                 } else {
@@ -201,18 +174,14 @@ app.post('/whatsapp', async (req, res) => {
                 const churches = userSession[cleanPhone].churchList;
                 if (churches && !isNaN(selection) && churches[selection]) {
                     const selectedChurch = churches[selection];
-                    
-                    // SAVE TO DB (Register Member)
                     await prisma.member.upsert({
                         where: { phone: cleanPhone },
                         update: { churchCode: selectedChurch.code },
                         create: { phone: cleanPhone, churchCode: selectedChurch.code }
                     });
-
                     userSession[cleanPhone].churchCode = selectedChurch.code;
                     userSession[cleanPhone].churchName = selectedChurch.name;
                     userSession[cleanPhone].subaccount = selectedChurch.subaccountCode;
-                    
                     delete userSession[cleanPhone].onboarding;
                     reply = `Welcome to *${selectedChurch.name}*! 🎉\nReply *Hi* to see your menu.`;
                 } else { reply = "⚠️ Invalid selection."; }
@@ -226,13 +195,33 @@ app.post('/whatsapp', async (req, res) => {
             
             if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
                 userSession[cleanPhone].step = 'MENU';
-                reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner (Auto) 🔁` + getAdSuffix('ENGLISH', churchCode);
+                const adText = await getAdSuffix(churchCode); // Fetch Dynamic Ad
+                reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner 🔁\n*6.* Ministry News 📰` + adText;
             }
             
+            // --- NEW: NEWS FEATURE ---
+            else if (incomingMsg === '6' && userSession[cleanPhone]?.step === 'MENU') {
+                const news = await prisma.news.findMany({
+                    where: { status: 'Active', expiryDate: { gte: new Date() } },
+                    orderBy: { createdAt: 'desc' },
+                    take: 3
+                });
+
+                if (news.length === 0) {
+                    reply = "📰 No news updates at the moment.";
+                } else {
+                    reply = "*Latest Ministry News:*\n\n";
+                    news.forEach(n => {
+                        reply += `📌 *${n.headline}*\n${n.body || ''}\n\n`;
+                    });
+                }
+                userSession[cleanPhone].step = 'MENU';
+            }
+
             // Events Flow
             else if (incomingMsg === '3' && userSession[cleanPhone]?.step === 'MENU') {
                 const events = await prisma.event.findMany({ 
-                    where: { churchCode: churchCode, status: 'Active' } 
+                    where: { churchCode: churchCode, status: 'Active', expiryDate: { gte: new Date() } } 
                 });
                 
                 if (events.length === 0) {
@@ -240,7 +229,7 @@ app.post('/whatsapp', async (req, res) => {
                     userSession[cleanPhone].step = 'MENU';
                 } else {
                     let list = "*Select an Event:*\n";
-                    events.forEach((e, index) => { list += `*${index + 1}.* ${e.name} (R${e.price})\n`; });
+                    events.forEach((e, index) => { list += `*${index + 1}.* ${e.name} (R${e.price})\n_${e.date}_\n`; });
                     reply = list;
                     userSession[cleanPhone].step = 'EVENT_SELECT';
                     userSession[cleanPhone].availableEvents = events; 
@@ -266,8 +255,6 @@ app.post('/whatsapp', async (req, res) => {
             }
             else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
                 delete userSession[cleanPhone];
-                // Optional: Remove from DB if you want to force re-selection every time
-                // await prisma.member.delete({ where: { phone: cleanPhone } });
                 reply = "🔄 Unlinked. Reply *Hi* to select a new church.";
             }
             
@@ -332,4 +319,4 @@ app.post('/whatsapp', async (req, res) => {
 app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1>"));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Seabe PostgreSQL Engine running on ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Seabe Engine v3.0 running on ${PORT}`));
