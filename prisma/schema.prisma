@@ -1,4 +1,5 @@
 // prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,52 +9,68 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// --- 1. CHURCHES & MEMBERS ---
 model Church {
   id             Int      @id @default(autoincrement())
   name           String
-  code           String   @unique
-  subaccountCode String   @default("PENDING")
-  email          String
-  tosAcceptedAt  DateTime @default(now())
-  createdAt      DateTime @default(now())
-  
-  // Relationships
+  code           String   @unique // e.g. "GRACE123"
+  email          String?
+  subaccountCode String   @default("PENDING") // Paystack Subaccount
+  tosAcceptedAt  DateTime?
   members        Member[]
   transactions   Transaction[]
   events         Event[]
+  createdAt      DateTime @default(now())
 }
 
 model Member {
   id         Int      @id @default(autoincrement())
-  phone      String   @unique
+  phone      String   @unique // WhatsApp Number
   churchCode String
-  joinedAt   DateTime @default(now())
-
-  // Relationships
   church     Church   @relation(fields: [churchCode], references: [code])
+  createdAt  DateTime @default(now())
 }
 
+// --- 2. TRANSACTIONS ---
 model Transaction {
   id         Int      @id @default(autoincrement())
   reference  String   @unique
   amount     Float
-  type       String   // TITHE, OFFERING, TICKET
+  type       String   // TITHE, OFFERING, EVENT
   phone      String
-  date       DateTime @default(now())
   churchCode String
-
-  // Relationships
   church     Church   @relation(fields: [churchCode], references: [code])
+  date       DateTime @default(now())
 }
 
+// --- 3. EVENTS (Updated with Expiry) ---
 model Event {
-  id         Int      @id @default(autoincrement())
+  id         Int       @id @default(autoincrement())
   name       String
-  date       String
+  date       String    // Display text e.g. "Friday 7pm"
   price      Float
-  status     String   @default("Active")
+  status     String    @default("Active") // Active / Inactive
+  expiryDate DateTime? // Auto-hide after this date
   churchCode String
+  church     Church    @relation(fields: [churchCode], references: [code])
+}
 
-  // Relationships
-  church     Church   @relation(fields: [churchCode], references: [code])
+// --- 4. ADS & NEWS (New) ---
+model Ad {
+  id         Int      @id @default(autoincrement())
+  text       String
+  target     String   @default("Global") // "Global" or ChurchCode
+  status     String   @default("Active")
+  expiryDate DateTime 
+  createdAt  DateTime @default(now())
+}
+
+model News {
+  id         Int      @id @default(autoincrement())
+  headline   String
+  body       String?
+  target     String   @default("Global")
+  status     String   @default("Active")
+  expiryDate DateTime 
+  createdAt  DateTime @default(now())
 }
