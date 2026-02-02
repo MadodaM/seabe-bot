@@ -61,7 +61,10 @@ async function syncToHubSpot(data) {
 
 // --- 🌐 WEB ROUTES (Injecting Prisma) ---
 // Passing 'prisma' instead of 'getDoc'
-require('./routes/web')(app, upload, { prisma, syncToHubSpot });
+// --- 🌐 WEB ROUTES ---
+require('./routes/web')(app, upload, { prisma, syncToHubSpot }); // Public Website
+require('./routes/admin')(app, { prisma }); // Admin Console (New)
+
 
 // --- 📧 REPORTING (DB POWERED) ---
 async function emailReport(churchCode) {
