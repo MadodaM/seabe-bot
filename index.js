@@ -1,7 +1,8 @@
 // ==========================================
-// VERSION 2.0 - SEABE PLATFORM (DATABASE EDITION)
-// DATE: 31 JAN 2026
-// INFRASTRUCTURE: Node.js + PostgreSQL (Neon)
+// SEABE PLATFORM - VERSION 2.1 (POSTGRESQL EDITION)
+// ENGINE: Node.js + Prisma (Neon DB)
+// UI: Premium Web v2.0
+// BOT LOGIC: v1.3 (Parity)
 // ==========================================
 
 require('dotenv').config();
@@ -15,15 +16,15 @@ const cron = require('node-cron');
 const axios = require('axios'); 
 const multer = require('multer'); 
 const { MessagingResponse } = require('twilio').twiml;
-const { PrismaClient } = require('@prisma/client'); // 🔌 The New Engine
+const { PrismaClient } = require('@prisma/client'); // 🔌 Database Driver
+const { createPaymentLink, createSubscriptionLink } = require('./services/paystack');
 
 // --- CONFIG ---
-const prisma = new PrismaClient(); // Initialize DB
+const prisma = new PrismaClient(); // Connect to DB
 const ACCOUNT_SID = process.env.TWILIO_SID; 
 const AUTH_TOKEN = process.env.TWILIO_AUTH;
 const SENDGRID_KEY = process.env.SENDGRID_KEY;
 const EMAIL_FROM = process.env.EMAIL_FROM;
-const { createPaymentLink, createSubscriptionLink } = require('./services/paystack');
 
 if (SENDGRID_KEY) sgMail.setApiKey(SENDGRID_KEY);
 
@@ -38,9 +39,15 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
-// --- 🧠 SESSION MEMORY (FAST RAM) ---
-// We keep user session in RAM for speed, but data lives in DB.
+// --- 🧠 MEMORY ---
+// We keep active conversation state in RAM, but long-term data in DB.
 let userSession = {}; 
+
+// --- 📢 ADS (Static for now to preserve v1.3 functionality) ---
+const STATIC_ADS = [
+    { target: 'Global', text: "Download the 'Bible and Me' App today!" },
+    { target: 'Global', text: "Join the Kingdom Steward's Leadership Course." }
+];
 
 // --- 🛠️ HUBSPOT CRM SYNC ---
 async function syncToHubSpot(data) {
@@ -52,24 +59,26 @@ async function syncToHubSpot(data) {
     } catch (e) { console.error("HubSpot Error:", e.message); }
 }
 
-// --- 🌐 WEB ROUTES (Pass Prisma to the website) ---
+// --- 🌐 WEB ROUTES (Injecting Prisma) ---
+// Passing 'prisma' instead of 'getDoc'
 require('./routes/web')(app, upload, { prisma, syncToHubSpot });
 
-
-// --- 📧 REPORTING (POWERED BY DB) ---
+// --- 📧 REPORTING (DB POWERED) ---
 async function emailReport(churchCode) {
+    // 1. Get Church
     const church = await prisma.church.findUnique({ where: { code: churchCode } });
     if (!church || !church.email) return `❌ Church not found: ${churchCode}`;
 
-    // Query Transactions from DB
+    // 2. Get Transactions
     const transactions = await prisma.transaction.findMany({
         where: { churchCode: churchCode },
         orderBy: { date: 'desc' },
-        take: 1000 // Limit to last 1000 for email size safety
+        take: 500
     });
     
-    if (transactions.length === 0) return `⚠️ ${churchCode}: No transactions found.`;
+    if (transactions.length === 0) return `⚠️ ${churchCode}: No transactions.`;
 
+    // 3. Generate CSV
     let csvContent = "Date,Type,Amount,Reference,Phone\n"; 
     transactions.forEach(t => {
         csvContent += `${t.date.toISOString()},${t.type},${t.amount},${t.reference},${t.phone}\n`;
@@ -80,7 +89,7 @@ async function emailReport(churchCode) {
         to: church.email,
         from: EMAIL_FROM, 
         subject: `📊 Weekly Report: ${church.name}`,
-        text: `Attached is your automated financial report from Seabe Digital.`,
+        text: "Attached is your automated financial report.",
         attachments: [{ content: attachment, filename: `${churchCode}_Report.csv`, type: 'text/csv', disposition: 'attachment' }]
     };
 
@@ -88,7 +97,7 @@ async function emailReport(churchCode) {
     catch (error) { return `❌ Failed for ${churchCode}`; }
 }
 
-// Cron Job: Runs every Monday at 8 AM
+// Weekly Cron Job
 cron.schedule('0 8 * * 1', async () => {
     const churches = await prisma.church.findMany();
     for (const church of churches) {
@@ -117,36 +126,23 @@ function generatePDF(type, amount, ref, date, phone, churchName, eventDetail = '
     return filename;
 }
 
-// --- 💾 DATABASE LOGGER ---
-async function logToDB(phone, churchCode, type, amount, ref) {
-    try {
-        await prisma.transaction.create({
-            data: {
-                churchCode: churchCode,
-                phone: phone,
-                type: type,
-                amount: parseFloat(amount),
-                reference: ref,
-                date: new Date()
-            }
-        });
-        console.log(`✅ Logged transaction: ${ref}`);
-    } catch (e) {
-        console.error("❌ DB Log Error:", e);
-    }
+function getAdSuffix(lang, churchCode) {
+    // Simple logic to mimic v1.3
+    const ad = STATIC_ADS[Math.floor(Math.random() * STATIC_ADS.length)];
+    return `\n\n----------------\n📢 *News:*\n${ad.text}`;
 }
 
 // --- 🩺 DIAGNOSTIC ---
 app.get('/test-connection', async (req, res) => {
     try {
         const count = await prisma.church.count();
-        res.send(`<h1>✅ System Online</h1><p>Connected to PostgreSQL.</p><p>Active Churches: <strong>${count}</strong></p>`);
+        res.send(`<h1>✅ System Online</h1><p>PostgreSQL Connected.</p><p>Active Churches: <strong>${count}</strong></p>`);
     } catch (e) {
         res.send(`<h1>❌ System Error</h1><p>${e.message}</p>`);
     }
 });
 
-// --- 🤖 WHATSAPP LOGIC ---
+// --- 🤖 WHATSAPP LOGIC (DB ADAPTED) ---
 app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
     
@@ -156,24 +152,36 @@ app.post('/whatsapp', async (req, res) => {
         const cleanPhone = sender.replace('whatsapp:', '');
         let reply = "";
 
-        // Report Trigger
+        // Report Command
         if (incomingMsg.startsWith('report ')) {
             const targetCode = incomingMsg.split(' ')[1].toUpperCase();
             reply = await emailReport(targetCode);
-            twiml.message(reply);
-            res.type('text/xml').send(twiml.toString());
-            return;
+            twiml.message(reply); res.type('text/xml').send(twiml.toString()); return;
         }
 
         if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
         
-        // Check if user is already linked to a church in session
-        // (In V3, we could check prisma.member table here)
-        
+        // 1. IDENTIFY USER (DB CHECK)
+        if (!userSession[cleanPhone].churchCode) {
+            // Check DB for existing member
+            const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
+            
+            if (member) {
+                // Found in DB -> Load into RAM
+                const church = await prisma.church.findUnique({ where: { code: member.churchCode } });
+                if (church) {
+                    userSession[cleanPhone].churchCode = church.code;
+                    userSession[cleanPhone].churchName = church.name;
+                    userSession[cleanPhone].subaccount = church.subaccountCode;
+                }
+            }
+        }
+
+        // 2. ONBOARDING (If still no church)
         if (!userSession[cleanPhone].churchCode) {
             if (['hi', 'hello', 'menu', 'start'].includes(incomingMsg) || !userSession[cleanPhone]?.onboarding) {
-                // Fetch Churches directly from DB
-                const churches = await prisma.church.findMany({ orderBy: { id: 'asc' } });
+                // Fetch list from DB
+                const churches = await prisma.church.findMany({ orderBy: { name: 'asc' } });
                 
                 if (churches.length === 0) {
                     reply = "⚠️ System Startup... No churches found.";
@@ -182,37 +190,44 @@ app.post('/whatsapp', async (req, res) => {
                     churches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
                     reply = list;
                     userSession[cleanPhone].onboarding = true;
-                    userSession[cleanPhone].churchList = churches; // Temp store list for selection
+                    userSession[cleanPhone].churchList = churches; 
                 }
             } 
             else {
                 const selection = parseInt(incomingMsg) - 1;
                 const churches = userSession[cleanPhone].churchList;
-                
                 if (churches && !isNaN(selection) && churches[selection]) {
                     const selectedChurch = churches[selection];
-                    // Link user to church in Session
+                    
+                    // SAVE TO DB (Register Member)
+                    await prisma.member.upsert({
+                        where: { phone: cleanPhone },
+                        update: { churchCode: selectedChurch.code },
+                        create: { phone: cleanPhone, churchCode: selectedChurch.code }
+                    });
+
                     userSession[cleanPhone].churchCode = selectedChurch.code;
                     userSession[cleanPhone].churchName = selectedChurch.name;
                     userSession[cleanPhone].subaccount = selectedChurch.subaccountCode;
                     
                     delete userSession[cleanPhone].onboarding;
                     reply = `Welcome to *${selectedChurch.name}*! 🎉\nReply *Hi* to see your menu.`;
-                } else { 
-                    reply = "⚠️ Invalid selection. Reply *Hi* to see the list."; 
-                }
+                } else { reply = "⚠️ Invalid selection."; }
             }
-        } else {
-            // User is logged into a church
+        } 
+        
+        // 3. MAIN MENU (Logged In)
+        else {
             const churchCode = userSession[cleanPhone].churchCode;
             const churchName = userSession[cleanPhone].churchName;
             
             if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
                 userSession[cleanPhone].step = 'MENU';
-                reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner (Auto) 🔁`;
+                reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner (Auto) 🔁` + getAdSuffix('ENGLISH', churchCode);
             }
+            
+            // Events Flow
             else if (incomingMsg === '3' && userSession[cleanPhone]?.step === 'MENU') {
-                // Fetch Events from DB
                 const events = await prisma.event.findMany({ 
                     where: { churchCode: churchCode, status: 'Active' } 
                 });
@@ -232,13 +247,14 @@ app.post('/whatsapp', async (req, res) => {
                 const index = parseInt(incomingMsg) - 1;
                 const events = userSession[cleanPhone].availableEvents;
                 if (events && events[index]) {
-                    const selectedEvent = events[index];
                     userSession[cleanPhone].step = 'PAY';
                     userSession[cleanPhone].choice = 'EVENT';
-                    userSession[cleanPhone].selectedEvent = selectedEvent; 
-                    reply = `Confirm Ticket for *${selectedEvent.name}* (R${selectedEvent.price})?\nReply *Yes*`;
-                } else { reply = "⚠️ Invalid selection. Reply *Hi* to restart."; }
+                    userSession[cleanPhone].selectedEvent = events[index]; 
+                    reply = `Confirm Ticket for *${events[index].name}* (R${events[index].price})?\nReply *Yes*`;
+                } else { reply = "⚠️ Invalid."; }
             }
+            
+            // Language / Other Options
             else if (['1', '2', '5'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'MENU') {
                 userSession[cleanPhone].step = 'PAY';
                 userSession[cleanPhone].choice = incomingMsg;
@@ -247,8 +263,12 @@ app.post('/whatsapp', async (req, res) => {
             }
             else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
                 delete userSession[cleanPhone];
-                reply = "🔄 Church Unlinked. Reply *Hi* to select a new church.";
+                // Optional: Remove from DB if you want to force re-selection every time
+                // await prisma.member.delete({ where: { phone: cleanPhone } });
+                reply = "🔄 Unlinked. Reply *Hi* to select a new church.";
             }
+            
+            // Payment Flow
             else if (userSession[cleanPhone]?.step === 'PAY') {
                 let amount = incomingMsg.replace(/\D/g,''); 
                 let type = '';
@@ -261,8 +281,7 @@ app.post('/whatsapp', async (req, res) => {
                     const evt = userSession[cleanPhone].selectedEvent;
                     amount = evt.price.toString().replace(/\D/g,'');
                     eventNameForPdf = evt.name;
-                    const isAffirmative = ['yes', 'y', 'yeah', 'yebo', 'ok', 'sure', 'confirm'].some(w => incomingMsg.includes(w));
-                    if (!isAffirmative && incomingMsg !== amount) {
+                    if (!['yes', 'y', 'ok'].some(w => incomingMsg.includes(w))) {
                         reply = "❌ Cancelled."; twiml.message(reply); res.type('text/xml').send(twiml.toString()); return;
                     }
                 } else type = 'TITHE'; 
@@ -271,43 +290,43 @@ app.post('/whatsapp', async (req, res) => {
                 const systemEmail = `${cleanPhone}@seabe.io`;
                 const finalSubaccount = userSession[cleanPhone].subaccount;
                 
-                let link;
-                if (type === 'RECURRING') link = await createSubscriptionLink(amount, ref, systemEmail, finalSubaccount);
-                else link = await createPaymentLink(amount, ref, systemEmail, finalSubaccount);
+                const link = (type === 'RECURRING') 
+                    ? await createSubscriptionLink(amount, ref, systemEmail, finalSubaccount)
+                    : await createPaymentLink(amount, ref, systemEmail, finalSubaccount);
                 
                 if (link) {
                     reply = `Tap to pay R${amount}:\n👉 ${link}`;
                     if (client) {
                         setTimeout(async () => {
-                            // Generate Receipt
                             const pdfName = generatePDF(type, amount, ref, new Date().toLocaleString(), cleanPhone, churchName, eventNameForPdf);
                             const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
-                            const pdfUrl = `https://${hostUrl}/public/receipts/${pdfName}`;
+                            try { await client.messages.create({ from: 'whatsapp:+14155238886', to: sender, body: `🎉 Payment Received!`, mediaUrl: [`https://${hostUrl}/public/receipts/${pdfName}`] }); } catch(e) {}
                             
-                            // Send Receipt via WhatsApp
-                            try { await client.messages.create({ from: 'whatsapp:+14155238886', to: sender, body: `🎉 Payment Received!`, mediaUrl: [pdfUrl] }); } catch(e) {}
-                            
-                            // Log to Database (Not Sheets!)
-                            await logToDB(cleanPhone, churchCode, type, amount, ref);
-                            
+                            // LOG TO DB
+                            try {
+                                await prisma.transaction.create({
+                                    data: { churchCode, phone: cleanPhone, type, amount: parseFloat(amount), reference: ref, date: new Date() }
+                                });
+                            } catch(e) { console.error("DB Log Fail", e); }
+
                         }, 15000);
                     }
-                } else { reply = "⚠️ Error creating link."; }
+                } else { reply = "⚠️ Link Error."; }
                 userSession[cleanPhone].step = 'MENU';
-            } else { reply = "Reply *Hi* to see the menu."; }
+            } else { reply = "Reply *Hi* for menu."; }
         }
         
         twiml.message(reply);
         res.type('text/xml').send(twiml.toString());
 
     } catch (error) {
-        console.error("❌ FATAL BOT CRASH:", error);
-        twiml.message("⚠️ System Error: Please try again in 1 minute.");
+        console.error("FATAL:", error);
+        twiml.message("⚠️ System Error.");
         res.type('text/xml').send(twiml.toString());
     }
 });
 
-app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1><p>You can return to WhatsApp.</p>"));
+app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1>"));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Seabe Database Engine running on ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Seabe PostgreSQL Engine running on ${PORT}`));
