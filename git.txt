@@ -1,3 +1,8 @@
 		git add .
 		git commit -m "upgrade to Posgres"
 		git push
+		
+		
+		git add .
+git commit -m "Fix: Linked admin routes in index.js"
+git push origin test
