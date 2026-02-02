@@ -1,5 +1,5 @@
 // routes/admin.js
-// VERSION: 2.8 (Expanded & Readable CMS)
+// VERSION: 3.0 (Master Version: Robust, Readable, Fully Featured)
 require('dotenv').config();
 
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
@@ -19,8 +19,14 @@ function isAuthenticated(req) {
     return cookies[COOKIE_NAME] === ADMIN_SECRET;
 }
 
-// --- UI LAYOUT ---
-function renderAdminPage(title, content) {
+// Helper: Ensure Dates don't crash the database
+function safeDate(d) {
+    if (!d) return new Date(); // Default to 'Now' if empty
+    return new Date(d);
+}
+
+// --- UI LAYOUT (Full & Readable) ---
+function renderAdminPage(title, content, error = null) {
     return `
         <!DOCTYPE html>
         <html>
@@ -40,6 +46,9 @@ function renderAdminPage(title, content) {
                 .main { margin-left: 250px; flex: 1; padding: 40px; }
                 h1 { color: #0a4d3c; border-bottom: 2px solid #D4AF37; display: inline-block; padding-bottom: 5px; margin-bottom: 30px; }
                 
+                /* Error Box */
+                .error-box { background: #fee; color: #c00; padding: 15px; border-radius: 5px; border: 1px solid #fcc; margin-bottom: 20px; }
+
                 /* Tables */
                 table { width:100%; border-collapse:collapse; background:white; border-radius:8px; overflow:hidden; box-shadow:0 4px 10px rgba(0,0,0,0.05); margin-top: 20px; }
                 thead { background:#0a4d3c; color:white; }
@@ -80,6 +89,7 @@ function renderAdminPage(title, content) {
             </div>
             <div class="main">
                 <h1>${title}</h1>
+                ${error ? `<div class="error-box"><strong>Error:</strong> ${error}</div>` : ''}
                 ${content}
             </div>
         </body>
@@ -121,65 +131,71 @@ module.exports = function(app, { prisma }) {
     app.get('/admin', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         
-        const counts = {
-            churches: await prisma.church.count(),
-            events: await prisma.event.count({ where: { status: 'Active' } }),
-            ads: await prisma.ad.count({ where: { status: 'Active' } })
-        };
+        try {
+            const counts = {
+                churches: await prisma.church.count(),
+                events: await prisma.event.count().catch(() => 0), // Safe check
+                ads: await prisma.ad.count().catch(() => 0)
+            };
 
-        res.send(renderAdminPage('Dashboard', `
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:20px;">
-                <div style="background:white; padding:25px; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,0.05);">
-                    <h3 style="margin:0; font-size:2.5rem; color:#0a4d3c;">${counts.churches}</h3>
-                    <p style="color:#666; font-weight:bold; margin-top:5px;">Active Churches</p>
+            res.send(renderAdminPage('Dashboard', `
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:20px;">
+                    <div style="background:white; padding:25px; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,0.05);">
+                        <h3 style="margin:0; font-size:2.5rem; color:#0a4d3c;">${counts.churches}</h3>
+                        <p style="color:#666; font-weight:bold; margin-top:5px;">Active Churches</p>
+                    </div>
+                    <div style="background:white; padding:25px; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,0.05);">
+                        <h3 style="margin:0; font-size:2.5rem; color:#0a4d3c;">${counts.events}</h3>
+                        <p style="color:#666; font-weight:bold; margin-top:5px;">Active Events</p>
+                    </div>
+                    <div style="background:white; padding:25px; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,0.05);">
+                        <h3 style="margin:0; font-size:2.5rem; color:#0a4d3c;">${counts.ads}</h3>
+                        <p style="color:#666; font-weight:bold; margin-top:5px;">Active Ads</p>
+                    </div>
                 </div>
-                <div style="background:white; padding:25px; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,0.05);">
-                    <h3 style="margin:0; font-size:2.5rem; color:#0a4d3c;">${counts.events}</h3>
-                    <p style="color:#666; font-weight:bold; margin-top:5px;">Active Events</p>
-                </div>
-                <div style="background:white; padding:25px; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,0.05);">
-                    <h3 style="margin:0; font-size:2.5rem; color:#0a4d3c;">${counts.ads}</h3>
-                    <p style="color:#666; font-weight:bold; margin-top:5px;">Active Ads</p>
-                </div>
-            </div>
-        `));
+            `));
+        } catch (e) {
+            res.send(renderAdminPage('Dashboard', '', `Database Error: ${e.message}`));
+        }
     });
 
     // ============================================================
-    // 1. CHURCHES (Search, Add, Edit)
+    // 1. CHURCHES
     // ============================================================
     app.get('/admin/churches', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         const q = req.query.q || '';
-        const items = await prisma.church.findMany({ 
-            where: { OR: [{name:{contains:q, mode:'insensitive'}}, {code:{contains:q, mode:'insensitive'}}, {email:{contains:q, mode:'insensitive'}}] },
-            orderBy: { createdAt: 'desc' }
-        });
+        
+        try {
+            const items = await prisma.church.findMany({ 
+                where: { OR: [{name:{contains:q, mode:'insensitive'}}, {code:{contains:q, mode:'insensitive'}}, {email:{contains:q, mode:'insensitive'}}] },
+                orderBy: { createdAt: 'desc' }
+            });
 
-        const rows = items.map(c => `
-            <tr>
-                <td>${c.name}</td>
-                <td><span class="tag tag-active">${c.code}</span></td>
-                <td>${c.email}</td>
-                <td>${c.subaccountCode}</td>
-                <td style="text-align:right;"><a href="/admin/churches/edit/${c.code}" class="btn btn-edit">Edit</a></td>
-            </tr>
-        `).join('');
+            const rows = items.map(c => `
+                <tr>
+                    <td>${c.name}</td>
+                    <td><span class="tag tag-active">${c.code}</span></td>
+                    <td>${c.email}</td>
+                    <td>${c.subaccountCode}</td>
+                    <td style="text-align:right;"><a href="/admin/churches/edit/${c.code}" class="btn btn-edit">Edit</a></td>
+                </tr>
+            `).join('');
 
-        res.send(renderAdminPage('Manage Churches', `
-            <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
-                <form action="/admin/churches" class="search-bar" style="margin:0;">
-                    <input name="q" value="${q}" placeholder="Search Name, Code, Email..." style="padding:10px; width:300px; border:1px solid #ddd; border-radius:4px;">
-                    <button class="btn btn-primary">Search</button>
-                    ${q ? '<a href="/admin/churches" class="btn" style="background:#eee; color:#333;">Clear</a>' : ''}
-                </form>
-                <a href="/admin/churches/add" class="btn btn-primary">+ Add New Church</a>
-            </div>
-            <table>
-                <thead><tr><th>Name</th><th>Code</th><th>Email</th><th>Subaccount</th><th style="text-align:right;">Actions</th></tr></thead>
-                <tbody>${rows.length > 0 ? rows : '<tr><td colspan="5" style="text-align:center; padding:30px;">No results found.</td></tr>'}</tbody>
-            </table>
-        `));
+            res.send(renderAdminPage('Manage Churches', `
+                <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
+                    <form action="/admin/churches" class="search-bar" style="margin:0;">
+                        <input name="q" value="${q}" placeholder="Search Name, Code, Email..." style="padding:10px; width:300px; border:1px solid #ddd; border-radius:4px;">
+                        <button class="btn btn-primary">Search</button>
+                    </form>
+                    <a href="/admin/churches/add" class="btn btn-primary">+ Add New Church</a>
+                </div>
+                <table>
+                    <thead><tr><th>Name</th><th>Code</th><th>Email</th><th>Subaccount</th><th style="text-align:right;">Actions</th></tr></thead>
+                    <tbody>${rows.length > 0 ? rows : '<tr><td colspan="5" style="text-align:center; padding:30px;">No results found.</td></tr>'}</tbody>
+                </table>
+            `));
+        } catch (e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
     app.get('/admin/churches/add', (req, res) => {
@@ -244,31 +260,33 @@ module.exports = function(app, { prisma }) {
     });
 
     // ============================================================
-    // 2. EVENTS (Status & Expiry)
+    // 2. EVENTS
     // ============================================================
     app.get('/admin/events', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
-        const events = await prisma.event.findMany({ include: { church: true }, orderBy: { id: 'desc' } });
-        
-        const rows = events.map(e => `
-            <tr>
-                <td>${e.name}</td>
-                <td>${e.date}</td>
-                <td>R${e.price}</td>
-                <td>${e.church.name}</td>
-                <td><span class="tag ${e.status === 'Active' ? 'tag-active' : 'tag-inactive'}">${e.status}</span></td>
-                <td>${e.expiryDate ? new Date(e.expiryDate).toLocaleDateString() : '-'}</td>
-                <td style="text-align:right;"><a href="/admin/events/edit/${e.id}" class="btn btn-edit">Edit</a></td>
-            </tr>
-        `).join('');
+        try {
+            const events = await prisma.event.findMany({ include: { church: true }, orderBy: { id: 'desc' } });
+            
+            const rows = events.map(e => `
+                <tr>
+                    <td>${e.name}</td>
+                    <td>${e.date}</td>
+                    <td>R${e.price}</td>
+                    <td>${e.church.name}</td>
+                    <td><span class="tag ${e.status === 'Active' ? 'tag-active' : 'tag-inactive'}">${e.status}</span></td>
+                    <td>${e.expiryDate ? new Date(e.expiryDate).toLocaleDateString() : '-'}</td>
+                    <td style="text-align:right;"><a href="/admin/events/edit/${e.id}" class="btn btn-edit">Edit</a></td>
+                </tr>
+            `).join('');
 
-        res.send(renderAdminPage('Manage Events', `
-            <div style="text-align:right; margin-bottom:20px;"><a href="/admin/events/add" class="btn btn-primary">+ Add Event</a></div>
-            <table>
-                <thead><tr><th>Event</th><th>Date Text</th><th>Price</th><th>Church</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead>
-                <tbody>${rows.length > 0 ? rows : '<tr><td colspan="7" style="text-align:center;">No events found.</td></tr>'}</tbody>
-            </table>
-        `));
+            res.send(renderAdminPage('Manage Events', `
+                <div style="text-align:right; margin-bottom:20px;"><a href="/admin/events/add" class="btn btn-primary">+ Add Event</a></div>
+                <table>
+                    <thead><tr><th>Event</th><th>Date Text</th><th>Price</th><th>Church</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead>
+                    <tbody>${rows.length > 0 ? rows : '<tr><td colspan="7" style="text-align:center;">No events found.</td></tr>'}</tbody>
+                </table>
+            `));
+        } catch (e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
     app.get('/admin/events/add', async (req, res) => {
@@ -291,25 +309,27 @@ module.exports = function(app, { prisma }) {
                     <input type="date" name="expiryDate" required>
                 </div>
                 <button class="btn btn-primary">Create Event</button>
-                <a href="/admin/events" class="btn" style="background:#ddd; color:#333; margin-left:10px;">Cancel</a>
             </form>
         `));
     });
 
     app.post('/admin/events/add', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
-        await prisma.event.create({ 
-            data: { 
-                name: req.body.name, date: req.body.date, price: parseFloat(req.body.price), 
-                churchCode: req.body.churchCode, status: req.body.status, 
-                expiryDate: new Date(req.body.expiryDate) 
-            } 
-        });
-        res.redirect('/admin/events');
+        try {
+            await prisma.event.create({ 
+                data: { 
+                    name: req.body.name, 
+                    date: req.body.date, 
+                    price: parseFloat(req.body.price), 
+                    churchCode: req.body.churchCode, 
+                    status: req.body.status, 
+                    expiryDate: safeDate(req.body.expiryDate)
+                } 
+            });
+            res.redirect('/admin/events');
+        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
     app.get('/admin/events/edit/:id', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
         const e = await prisma.event.findUnique({ where: { id: parseInt(req.params.id) } });
         const exp = e.expiryDate ? e.expiryDate.toISOString().split('T')[0] : '';
         
@@ -335,38 +355,41 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/events/update', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
-        await prisma.event.update({ 
-            where: { id: parseInt(req.body.id) }, 
-            data: { 
-                name: req.body.name, date: req.body.date, 
-                status: req.body.status, expiryDate: new Date(req.body.expiryDate) 
-            } 
-        });
-        res.redirect('/admin/events');
+        try {
+            await prisma.event.update({ 
+                where: { id: parseInt(req.body.id) }, 
+                data: { 
+                    name: req.body.name, date: req.body.date, 
+                    status: req.body.status, expiryDate: safeDate(req.body.expiryDate) 
+                } 
+            });
+            res.redirect('/admin/events');
+        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
     // ============================================================
-    // 3. ADS (Global or Specific)
+    // 3. ADS
     // ============================================================
     app.get('/admin/ads', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
-        const ads = await prisma.ad.findMany({ orderBy: { id: 'desc' } });
-        
-        const rows = ads.map(a => `
-            <tr>
-                <td>${a.text}</td>
-                <td>${a.target}</td>
-                <td><span class="tag ${a.status==='Active'?'tag-active':'tag-inactive'}">${a.status}</span></td>
-                <td>${new Date(a.expiryDate).toLocaleDateString()}</td>
-                <td style="text-align:right;"><a href="/admin/ads/edit/${a.id}" class="btn btn-edit">Edit</a></td>
-            </tr>
-        `).join('');
+        try {
+            const ads = await prisma.ad.findMany({ orderBy: { id: 'desc' } });
+            
+            const rows = ads.map(a => `
+                <tr>
+                    <td>${a.text}</td>
+                    <td>${a.target}</td>
+                    <td><span class="tag ${a.status==='Active'?'tag-active':'tag-inactive'}">${a.status}</span></td>
+                    <td>${new Date(a.expiryDate).toLocaleDateString()}</td>
+                    <td style="text-align:right;"><a href="/admin/ads/edit/${a.id}" class="btn btn-edit">Edit</a></td>
+                </tr>
+            `).join('');
 
-        res.send(renderAdminPage('Manage Ads', `
-            <div style="text-align:right; margin-bottom:20px;"><a href="/admin/ads/add" class="btn btn-primary">+ New Ad</a></div>
-            <table><thead><tr><th>Text</th><th>Target</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table>
-        `));
+            res.send(renderAdminPage('Manage Ads', `
+                <div style="text-align:right; margin-bottom:20px;"><a href="/admin/ads/add" class="btn btn-primary">+ New Ad</a></div>
+                <table><thead><tr><th>Text</th><th>Target</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table>
+            `));
+        } catch (e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
     app.get('/admin/ads/add', (req, res) => {
@@ -383,13 +406,15 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/ads/add', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
-        await prisma.ad.create({ data: { text: req.body.text, target: req.body.target, status: req.body.status, expiryDate: new Date(req.body.expiryDate) } });
-        res.redirect('/admin/ads');
+        try {
+            await prisma.ad.create({ 
+                data: { text: req.body.text, target: req.body.target, status: req.body.status, expiryDate: safeDate(req.body.expiryDate) } 
+            });
+            res.redirect('/admin/ads');
+        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
     app.get('/admin/ads/edit/:id', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
         const ad = await prisma.ad.findUnique({ where: { id: parseInt(req.params.id) } });
         const exp = ad.expiryDate.toISOString().split('T')[0];
         
@@ -405,9 +430,10 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/ads/update', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
-        await prisma.ad.update({ where: { id: parseInt(req.body.id) }, data: { text: req.body.text, status: req.body.status, expiryDate: new Date(req.body.expiryDate) } });
-        res.redirect('/admin/ads');
+        try {
+            await prisma.ad.update({ where: { id: parseInt(req.body.id) }, data: { text: req.body.text, status: req.body.status, expiryDate: safeDate(req.body.expiryDate) } });
+            res.redirect('/admin/ads');
+        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
     // ============================================================
@@ -415,25 +441,25 @@ module.exports = function(app, { prisma }) {
     // ============================================================
     app.get('/admin/news', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
-        const news = await prisma.news.findMany({ orderBy: { id: 'desc' } });
-        
-        const rows = news.map(n => `
-            <tr>
-                <td>${n.headline}</td>
-                <td><span class="tag ${n.status==='Active'?'tag-active':'tag-inactive'}">${n.status}</span></td>
-                <td>${new Date(n.expiryDate).toLocaleDateString()}</td>
-                <td style="text-align:right;"><a href="/admin/news/edit/${n.id}" class="btn btn-edit">Edit</a></td>
-            </tr>
-        `).join('');
+        try {
+            const news = await prisma.news.findMany({ orderBy: { id: 'desc' } });
+            const rows = news.map(n => `
+                <tr>
+                    <td>${n.headline}</td>
+                    <td><span class="tag ${n.status==='Active'?'tag-active':'tag-inactive'}">${n.status}</span></td>
+                    <td>${new Date(n.expiryDate).toLocaleDateString()}</td>
+                    <td style="text-align:right;"><a href="/admin/news/edit/${n.id}" class="btn btn-edit">Edit</a></td>
+                </tr>
+            `).join('');
 
-        res.send(renderAdminPage('Manage News', `
-            <div style="text-align:right; margin-bottom:20px;"><a href="/admin/news/add" class="btn btn-primary">+ Add News</a></div>
-            <table><thead><tr><th>Headline</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table>
-        `));
+            res.send(renderAdminPage('Manage News', `
+                <div style="text-align:right; margin-bottom:20px;"><a href="/admin/news/add" class="btn btn-primary">+ Add News</a></div>
+                <table><thead><tr><th>Headline</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table>
+            `));
+        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
     app.get('/admin/news/add', (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
         res.send(renderAdminPage('Add News', `
             <form method="POST" class="card-form">
                 <div class="form-group"><label>Headline</label><input name="headline" required></div>
@@ -446,13 +472,15 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/news/add', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
-        await prisma.news.create({ data: { headline: req.body.headline, body: req.body.body, status: req.body.status, expiryDate: new Date(req.body.expiryDate) } });
-        res.redirect('/admin/news');
+        try {
+            await prisma.news.create({ 
+                data: { headline: req.body.headline, body: req.body.body, status: req.body.status, expiryDate: safeDate(req.body.expiryDate) } 
+            });
+            res.redirect('/admin/news');
+        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
     app.get('/admin/news/edit/:id', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
         const n = await prisma.news.findUnique({ where: { id: parseInt(req.params.id) } });
         const exp = n.expiryDate.toISOString().split('T')[0];
         
@@ -469,9 +497,10 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/news/update', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
-        await prisma.news.update({ where: { id: parseInt(req.body.id) }, data: { headline: req.body.headline, body: req.body.body, status: req.body.status, expiryDate: new Date(req.body.expiryDate) } });
-        res.redirect('/admin/news');
+        try {
+            await prisma.news.update({ where: { id: parseInt(req.body.id) }, data: { headline: req.body.headline, body: req.body.body, status: req.body.status, expiryDate: safeDate(req.body.expiryDate) } });
+            res.redirect('/admin/news');
+        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
     // ============================================================
@@ -480,22 +509,25 @@ module.exports = function(app, { prisma }) {
     app.get('/admin/users', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         const q = req.query.q || '';
-        const members = await prisma.member.findMany({ 
-            where: { OR: [{ phone: { contains: q } }, { churchCode: { contains: q, mode: 'insensitive' } }] }, 
-            take: 50, 
-            orderBy: { id: 'desc' } 
-        });
+        
+        try {
+            const members = await prisma.member.findMany({ 
+                where: { OR: [{ phone: { contains: q } }, { churchCode: { contains: q, mode: 'insensitive' } }] }, 
+                take: 50, 
+                orderBy: { id: 'desc' } 
+            });
 
-        const rows = members.map(m => `<tr><td>${m.phone}</td><td><span class="tag">${m.churchCode}</span></td></tr>`).join('');
-        res.send(renderAdminPage('Manage Users', `
-            <form action="/admin/users" class="search-bar">
-                <input name="q" value="${q}" placeholder="Search Phone or Church Code..." style="padding:10px; width:300px; border:1px solid #ddd; border-radius:4px;">
-                <button class="btn btn-primary">Search</button>
-            </form>
-            <table>
-                <thead><tr><th>Phone</th><th>Church</th></tr></thead>
-                <tbody>${rows.length > 0 ? rows : '<tr><td colspan="2" style="text-align:center;">No users found.</td></tr>'}</tbody>
-            </table>
-        `));
+            const rows = members.map(m => `<tr><td>${m.phone}</td><td><span class="tag">${m.churchCode}</span></td></tr>`).join('');
+            res.send(renderAdminPage('Manage Users', `
+                <form action="/admin/users" class="search-bar">
+                    <input name="q" value="${q}" placeholder="Search Phone or Church Code..." style="padding:10px; width:300px; border:1px solid #ddd; border-radius:4px;">
+                    <button class="btn btn-primary">Search</button>
+                </form>
+                <table>
+                    <thead><tr><th>Phone</th><th>Church</th></tr></thead>
+                    <tbody>${rows.length > 0 ? rows : '<tr><td colspan="2" style="text-align:center;">No users found.</td></tr>'}</tbody>
+                </table>
+            `));
+        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 };
