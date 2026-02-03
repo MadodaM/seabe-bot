@@ -28,6 +28,7 @@ model Member {
   phone      String   @unique // WhatsApp Number
   churchCode String
   church     Church   @relation(fields: [churchCode], references: [code])
+  email      String?
   createdAt  DateTime @default(now())
 }
 

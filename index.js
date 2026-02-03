@@ -13,10 +13,11 @@ const sgMail = require('@sendgrid/mail');
 const cron = require('node-cron');
 const crypto = require('crypto'); // Used to verify Paystack Webhooks
 const axios = require('axios'); 
+
 const multer = require('multer'); 
 const { MessagingResponse } = require('twilio').twiml;
 const { PrismaClient } = require('@prisma/client');
-const { createPaymentLink, createSubscriptionLink } = require('./services/paystack');
+const { createPaymentLink, createSubscriptionLink, getTransactionHistory } = require('./services/paystack');
 
 // --- CONFIGURATION ---
 const prisma = new PrismaClient();
@@ -273,12 +274,12 @@ app.post('/whatsapp', async (req, res) => {
             const churchCode = userSession[cleanPhone].churchCode;
             const churchName = userSession[cleanPhone].churchName;
             
-            // MAIN MENU
-            if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
-                userSession[cleanPhone].step = 'MENU';
-                const adText = await getAdSuffix(churchCode);
-                reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner 🔁\n*6.* Ministry News 📰` + adText;
-            }
+            // --- REPLACEMENT FOR MAIN MENU ---
+if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
+    userSession[cleanPhone].step = 'MENU';
+    const adText = await getAdSuffix(churchCode);
+    reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner 🔁\n*6.* Ministry News 📰\n*7.* My Profile 👤\n*8.* My History 📜` + adText;
+}
             // NEWS
             else if (incomingMsg === '6' && userSession[cleanPhone]?.step === 'MENU') {
                 const news = await prisma.news.findMany({ 
@@ -322,7 +323,50 @@ app.post('/whatsapp', async (req, res) => {
                     reply = "⚠️ Invalid selection.";
                 }
             }
-            // MONEY ENTRY PROMPT
+            
+			// ------------------------------------------
+// NEW: OPTION 8 - MY HISTORY
+// ------------------------------------------
+else if (incomingMsg === '8' && userSession[cleanPhone]?.step === 'MENU') {
+    // 1. Get user from DB to check if they have a real email
+    const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
+    
+    // Fallback to the default system email if they haven't updated their profile
+    const userEmail = member?.email || `${cleanPhone}@seabe.io`; 
+    
+    reply = await getTransactionHistory(userEmail);
+    userSession[cleanPhone].step = 'MENU'; // Keep them in the menu
+}
+
+// ------------------------------------------
+// NEW: OPTION 7 - MY PROFILE (Start)
+// ------------------------------------------
+else if (incomingMsg === '7' && userSession[cleanPhone]?.step === 'MENU') {
+    userSession[cleanPhone].step = 'UPDATE_EMAIL';
+    reply = "👤 *Update Profile*\n\nPlease reply with your new *Email Address* (e.g., john@gmail.com) so we can send your tax receipts:";
+}
+
+// ------------------------------------------
+// NEW: CAPTURE EMAIL (Profile Continuation)
+// ------------------------------------------
+else if (userSession[cleanPhone]?.step === 'UPDATE_EMAIL') {
+    const newEmail = incomingMsg.toLowerCase();
+    
+    if (!newEmail.includes('@')) {
+        reply = "⚠️ That doesn't look like a valid email. Please try again:";
+    } else {
+        // Save to Prisma Database
+        await prisma.member.update({
+            where: { phone: cleanPhone },
+            data: { email: newEmail }
+        });
+        
+        reply = `✅ Success! Your email is now: *${newEmail}*\n\nReply *8* to see your giving history.`;
+        userSession[cleanPhone].step = 'MENU'; // Reset state
+    }
+}
+			
+			// MONEY ENTRY PROMPT
             else if (['1', '2', '5'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'MENU') {
                 userSession[cleanPhone].step = 'PAY'; 
                 userSession[cleanPhone].choice = incomingMsg;
@@ -333,6 +377,10 @@ app.post('/whatsapp', async (req, res) => {
                 delete userSession[cleanPhone]; 
                 reply = "🔄 Church unlinked. Reply *Hi* to select a new church.";
             }
+			
+			
+			
+			
             // PAYMENT LINK GENERATION
             else if (userSession[cleanPhone]?.step === 'PAY') {
                 let amount = incomingMsg.replace(/\D/g,''); 
@@ -353,8 +401,13 @@ app.post('/whatsapp', async (req, res) => {
 
                 const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
                 const finalSubaccount = userSession[cleanPhone].subaccount;
-                const customerEmail = `${cleanPhone}@seabe.io`;
-                
+                // 🔴 FIX: Use real email if it exists, otherwise use fallback
+const memberInfo = await prisma.member.findUnique({ where: { phone: cleanPhone } });
+const customerEmail = memberInfo?.email || `${cleanPhone}@seabe.io`;
+
+const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
+const finalSubaccount = userSession[cleanPhone].subaccount;
+				                
                 // Fetch Link from Paystack
                 const link = (type === 'RECURRING') 
                     ? await createSubscriptionLink(amount, ref, customerEmail, finalSubaccount) 

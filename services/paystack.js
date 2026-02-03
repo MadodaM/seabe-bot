@@ -131,3 +131,34 @@ async function verifyPayment(reference) {
 }
 
 module.exports = { createPaymentLink, createSubscriptionLink, verifyPayment };
+
+// ==========================================
+// 7. FETCH USER GIVING HISTORY
+// ==========================================
+async function getTransactionHistory(email) {
+    try {
+        // Fetch last 5 transactions for this specific email
+        const response = await paystackApi.get(`/transaction?email=${email}&perPage=5&status=success`);
+        const transactions = response.data.data;
+
+        if (transactions.length === 0) return "You have no recent giving history.";
+
+        // Format the history into a neat WhatsApp message
+        let historyMessage = "📜 *Your Last 5 Contributions:*\n\n";
+        transactions.forEach((tx, index) => {
+            const date = new Date(tx.paid_at).toLocaleDateString('en-ZA');
+            const amount = (tx.amount / 100).toFixed(2); // Convert cents to Rands
+            const type = tx.metadata?.custom_fields?.[0]?.value || "Donation";
+            
+            historyMessage += `${index + 1}. *R${amount}* - ${type} (${date})\n`;
+        });
+
+        return historyMessage;
+    } catch (error) {
+        console.error("❌ Error fetching history:", error.message);
+        return "⚠️ Sorry, we couldn't fetch your history right now. Please try again later.";
+    }
+}
+
+// Update your module.exports at the bottom to include this new function:
+module.exports = { createPaymentLink, createSubscriptionLink, verifyPayment, getTransactionHistory };
