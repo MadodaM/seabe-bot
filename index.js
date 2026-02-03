@@ -149,30 +149,38 @@ async function getAdSuffix(churchCode) {
 }
 
 // ==========================================
-// 🛡️ WEBHOOK: PAYSTACK LISTENER (FIXED)
+// 🛡️ WEBHOOK: PAYSTACK LISTENER (RAW DATA FIX)
 // ==========================================
-app.post('/webhook/paystack', async (req, res) => {
-    const hash = crypto.createHmac('sha512', PAYSTACK_SECRET).update(JSON.stringify(req.body)).digest('hex');
-    if (hash !== req.headers['x-paystack-signature']) return res.sendStatus(400);
 
-    res.sendStatus(200);
-    const event = req.body;
+// 1. We must read the RAW data from Paystack, not the translated JSON.
+app.post('/webhook/paystack', express.raw({ type: 'application/json' }), async (req, res) => {
+    try {
+        // 2. Verify Security using the RAW buffer
+        const hash = crypto.createHmac('sha512', PAYSTACK_SECRET).update(req.body).digest('hex');
+        if (hash !== req.headers['x-paystack-signature']) {
+            return res.status(400).send("Security Check Failed");
+        }
 
-    if (event.event === 'charge.success') {
-        const ref = event.data.reference;
-        const amount = event.data.amount / 100; 
+        // 3. Acknowledge Receipt
+        res.sendStatus(200);
 
-        try {
+        // 4. Now we can translate it to JSON to read it
+        const event = JSON.parse(req.body.toString());
+
+        // 5. Process Successful Payment
+        if (event.event === 'charge.success') {
+            const ref = event.data.reference;
+            const amount = event.data.amount / 100;
+
             const tx = await prisma.transaction.findUnique({ where: { reference: ref } });
             
             if (tx && tx.status !== 'SUCCESS') {
                 await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'SUCCESS' } });
                 const church = await prisma.church.findUnique({ where: { code: tx.churchCode } });
                 
-                // 1. Generate PDF (This takes a moment to write to the hard drive)
                 const pdfName = generatePDF(tx.type, amount, ref, new Date().toLocaleString(), tx.phone, church.name);
                 
-                // 2. WAIT 1.5 SECONDS FOR FILE TO SAVE
+                // Allow 1.5s for PDF to save
                 setTimeout(async () => {
                     if (client) {
                         const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
@@ -183,10 +191,10 @@ app.post('/webhook/paystack', async (req, res) => {
                             mediaUrl: [`https://${hostUrl}/public/receipts/${pdfName}`] 
                         });
                     }
-                }, 1500); // <-- This delay fixes the missing receipt
+                }, 1500);
             }
-        } catch (error) { console.error("Webhook Error:", error); }
-    }
+        }
+    } catch (error) { console.error("Webhook Error:", error); }
 });
 
 // ==========================================
