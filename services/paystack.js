@@ -1,103 +1,133 @@
-// services/paystack.js
 const axios = require('axios');
-require('dotenv').config();
 
-const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET;
-const PLATFORM_FEE_PERCENTAGE = 0.055; 
+// ==========================================
+// 1. PAYSTACK CONFIGURATION
+// ==========================================
+const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY; 
 
-// 1. STANDARD ONE-TIME PAYMENT
-async function createPaymentLink(amount, reference, email, subaccountCode) {
+const paystackApi = axios.create({
+    baseURL: 'https://api.paystack.co',
+    headers: {
+        Authorization: `Bearer ${PAYSTACK_SECRET}`,
+        'Content-Type': 'application/json'
+    }
+});
+
+// ==========================================
+// 2. SUBACCOUNT MAPPING
+// Paste your actual Paystack SUB_ codes here
+// ==========================================
+const SUBACCOUNTS = {
+    tithes: 'SUB_xxxxxxxxxxxxxxx',     
+    offerings: 'SUB_xxxxxxxxxxxxxxx',  
+    building: 'SUB_xxxxxxxxxxxxxxx'    
+};
+
+// ==========================================
+// 3. STANDARD PAYMENT LINK
+// ==========================================
+async function createPaymentLink(amount, ref, email, accountType = null, userPhone = null) {
     try {
-        const amountInCents = Math.round(parseFloat(amount) * 100);
-        let transactionCharge = 0;
-        let bearer = 'account'; 
-
-        if (subaccountCode) {
-            transactionCharge = Math.round(amountInCents * PLATFORM_FEE_PERCENTAGE);
-            bearer = 'subaccount'; 
-        }
-
         const payload = {
+            amount: amount * 100, 
             email: email,
-            amount: amountInCents,
-            reference: reference,
-            currency: 'ZAR',
-            channels: ['card', 'eft', 'qr', 'bank_transfer'],
-            callback_url: 'https://seabe-bot.onrender.com/payment-success'
+            reference: ref,
+            callback_url: 'https://seabe-test.onrender.com/payment-success',
+            
+            // 🔴 CRITICAL: Metadata links the payment to the WhatsApp number
+            metadata: {
+                whatsapp_number: userPhone,
+                custom_fields: [
+                    {
+                        display_name: "Payment Type",
+                        variable_name: "payment_type",
+                        value: accountType || "General Donation"
+                    }
+                ]
+            }
         };
 
-        if (subaccountCode) {
-            payload.subaccount = subaccountCode;
-            payload.transaction_charge = transactionCharge; 
-            payload.bearer = 'subaccount'; 
+        // Route to subaccount if specified
+        if (accountType && SUBACCOUNTS[accountType]) {
+            payload.subaccount = SUBACCOUNTS[accountType];
         }
 
-        const response = await axios.post(
-            'https://api.paystack.co/transaction/initialize',
-            payload,
-            { headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`, 'Content-Type': 'application/json' } }
-        );
-
+        const response = await paystackApi.post('/transaction/initialize', payload);
         return response.data.data.authorization_url;
     } catch (error) {
-        console.error("❌ Paystack Error:", error.response ? error.response.data : error.message);
+        console.error("❌ Paystack Error:", error.response?.data || error.message);
+        return null; 
+    }
+}
+
+// ==========================================
+// 4. MONTHLY SUBSCRIPTION LINK
+// ==========================================
+async function createSubscriptionLink(amount, ref, email, accountType = null, userPhone = null) {
+    try {
+        let planCode = await getOrCreatePlan(amount);
+
+        const payload = {
+            amount: amount * 100, 
+            email: email,
+            reference: ref,
+            plan: planCode,
+            callback_url: 'https://seabe-test.onrender.com/payment-success',
+
+            // 🔴 CRITICAL: Metadata for PDF Receipts
+            metadata: {
+                whatsapp_number: userPhone,
+                custom_fields: [
+                    {
+                        display_name: "Payment Type",
+                        variable_name: "payment_type",
+                        value: accountType || "Monthly Tithes"
+                    }
+                ]
+            }
+        };
+
+        // Route to subaccount
+        if (accountType && SUBACCOUNTS[accountType]) {
+            payload.subaccount = SUBACCOUNTS[accountType];
+        }
+
+        const response = await paystackApi.post('/transaction/initialize', payload);
+        return response.data.data.authorization_url;
+    } catch (error) {
+        console.error("❌ Paystack Sub Error:", error.response?.data || error.message);
         return null;
     }
 }
 
-// 2. 👇 NEW: RECURRING SUBSCRIPTION
-async function createSubscriptionLink(amount, reference, email, subaccountCode) {
+// ==========================================
+// 5. PLAN GENERATOR (HELPER)
+// ==========================================
+async function getOrCreatePlan(amount) {
+    const planName = `Seabe Monthly - R${amount}`;
     try {
-        const amountInCents = Math.round(parseFloat(amount) * 100);
-        
-        // A. First, create a "Plan" on the fly for this amount
-        // Note: In production, you might want to reuse plans to avoid clutter, 
-        // but creating one-off plans is easier for custom donation amounts.
-        const planResponse = await axios.post(
-            'https://api.paystack.co/plan',
-            {
-                name: `Monthly Tithe R${amount}`,
-                amount: amountInCents,
-                interval: 'monthly',
-                currency: 'ZAR'
-            },
-            { headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` } }
-        );
-
-        const planCode = planResponse.data.data.plan_code;
-
-        // B. Initialize transaction with this Plan Code
-        // This tells Paystack: "Charge this user now, and then auto-charge this Plan monthly"
-        let transactionCharge = 0;
-        
-        const payload = {
-            email: email,
-            amount: amountInCents, // Initial charge
-            reference: reference,
-            plan: planCode, // 👈 THE MAGIC KEY
-            channels: ['card'], // Recurring usually only works well with Cards
-            callback_url: 'https://seabe-bot.onrender.com/payment-success'
-        };
-
-        if (subaccountCode) {
-            transactionCharge = Math.round(amountInCents * PLATFORM_FEE_PERCENTAGE);
-            payload.subaccount = subaccountCode;
-            payload.transaction_charge = transactionCharge;
-            payload.bearer = 'subaccount';
-        }
-
-        const response = await axios.post(
-            'https://api.paystack.co/transaction/initialize',
-            payload,
-            { headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` } }
-        );
-
-        return response.data.data.authorization_url;
-
-    } catch (error) {
-        console.error("❌ Subscription Error:", error.response ? error.response.data : error.message);
+        const res = await paystackApi.post('/plan', {
+            name: planName,
+            amount: amount * 100,
+            interval: 'monthly'
+        });
+        return res.data.data.plan_code;
+    } catch (e) {
         return null;
     }
 }
 
-module.exports = { createPaymentLink, createSubscriptionLink };
+// ==========================================
+// 6. WEBHOOK VERIFIER (FOR PDF GENERATION)
+// ==========================================
+async function verifyPayment(reference) {
+    try {
+        const response = await paystackApi.get(`/transaction/verify/${reference}`);
+        return response.data.data;
+    } catch (error) {
+        console.error("❌ Paystack Verification Error:", error.message);
+        return null;
+    }
+}
+
+module.exports = { createPaymentLink, createSubscriptionLink, verifyPayment };
