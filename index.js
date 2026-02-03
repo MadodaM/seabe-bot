@@ -39,7 +39,13 @@ const app = express();
 const upload = multer({ dest: 'uploads/' }); 
 
 app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
+
+// 🔴 FIX: Save the RAW body in a special variable (req.rawBody) before translating it
+app.use(bodyParser.json({
+    verify: (req, res, buf) => {
+        req.rawBody = buf; 
+    }
+}));
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
 // --- MEMORY ---
@@ -149,25 +155,24 @@ async function getAdSuffix(churchCode) {
 }
 
 // ==========================================
-// 🛡️ WEBHOOK: PAYSTACK LISTENER (RAW DATA FIX)
+// 🛡️ WEBHOOK: PAYSTACK LISTENER (FINAL FIX)
 // ==========================================
 
-// 1. We must read the RAW data from Paystack, not the translated JSON.
-app.post('/webhook/paystack', express.raw({ type: 'application/json' }), async (req, res) => {
+app.post('/webhook/paystack', async (req, res) => {
     try {
-        // 2. Verify Security using the RAW buffer
-        const hash = crypto.createHmac('sha512', PAYSTACK_SECRET).update(req.body).digest('hex');
+        // 1. Verify Security using the RAW BUFFER we saved earlier
+        const hash = crypto.createHmac('sha512', PAYSTACK_SECRET).update(req.rawBody).digest('hex');
+        
         if (hash !== req.headers['x-paystack-signature']) {
             return res.status(400).send("Security Check Failed");
         }
 
-        // 3. Acknowledge Receipt
+        // 2. Acknowledge Receipt
         res.sendStatus(200);
 
-        // 4. Now we can translate it to JSON to read it
-        const event = JSON.parse(req.body.toString());
+        // 3. Process the event (req.body is already translated for us)
+        const event = req.body;
 
-        // 5. Process Successful Payment
         if (event.event === 'charge.success') {
             const ref = event.data.reference;
             const amount = event.data.amount / 100;
