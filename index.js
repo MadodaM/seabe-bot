@@ -149,54 +149,43 @@ async function getAdSuffix(churchCode) {
 }
 
 // ==========================================
-// 🛡️ WEBHOOK: PAYSTACK LISTENER
+// 🛡️ WEBHOOK: PAYSTACK LISTENER (FIXED)
 // ==========================================
 app.post('/webhook/paystack', async (req, res) => {
-    // 1. Verify the request actually came from Paystack using crypto
     const hash = crypto.createHmac('sha512', PAYSTACK_SECRET).update(JSON.stringify(req.body)).digest('hex');
-    if (hash !== req.headers['x-paystack-signature']) {
-        return res.sendStatus(400); // Unauthorized
-    }
+    if (hash !== req.headers['x-paystack-signature']) return res.sendStatus(400);
 
-    // 2. Acknowledge Receipt (Paystack requires a 200 OK immediately)
     res.sendStatus(200);
-
     const event = req.body;
 
-    // 3. Process Successful Charges
     if (event.event === 'charge.success') {
         const ref = event.data.reference;
-        const amount = event.data.amount / 100; // Convert cents to Rands
+        const amount = event.data.amount / 100; 
 
         try {
-            // Find the pending transaction in our DB
             const tx = await prisma.transaction.findUnique({ where: { reference: ref } });
             
             if (tx && tx.status !== 'SUCCESS') {
-                // A. Mark as SUCCESS in DB
-                await prisma.transaction.update({ 
-                    where: { id: tx.id }, 
-                    data: { status: 'SUCCESS' } 
-                });
-
-                // B. Get Church Info
+                await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'SUCCESS' } });
                 const church = await prisma.church.findUnique({ where: { code: tx.churchCode } });
                 
-                // C. Generate PDF Receipt
+                // 1. Generate PDF (This takes a moment to write to the hard drive)
                 const pdfName = generatePDF(tx.type, amount, ref, new Date().toLocaleString(), tx.phone, church.name);
                 
-                // D. Send WhatsApp Receipt via Twilio
-                if (client) {
-                    const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
-                    await client.messages.create({ 
-                        from: 'whatsapp:+14155238886', 
-                        to: `whatsapp:${tx.phone}`, 
-                        body: `🎉 Payment Confirmed! Thank you for your R${amount} contribution to ${church.name}.`, 
-                        mediaUrl: [`https://${hostUrl}/public/receipts/${pdfName}`] 
-                    });
-                }
+                // 2. WAIT 1.5 SECONDS FOR FILE TO SAVE
+                setTimeout(async () => {
+                    if (client) {
+                        const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
+                        await client.messages.create({ 
+                            from: 'whatsapp:+14155238886', 
+                            to: `whatsapp:${tx.phone}`, 
+                            body: `🎉 Payment Confirmed! Thank you for your R${amount} contribution to ${church.name}.`, 
+                            mediaUrl: [`https://${hostUrl}/public/receipts/${pdfName}`] 
+                        });
+                    }
+                }, 1500); // <-- This delay fixes the missing receipt
             }
-        } catch (error) { console.error("Webhook Processing Error:", error); }
+        } catch (error) { console.error("Webhook Error:", error); }
     }
 });
 
