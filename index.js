@@ -333,11 +333,16 @@ app.post('/whatsapp', async (req, res) => {
                 userSession[cleanPhone].choice = incomingMsg;
                 reply = incomingMsg === '5' ? "Enter Monthly Amount (e.g. R500):" : "Enter Amount (e.g. R100):";
             }
-            // SWITCH CHURCH
-            else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
-                delete userSession[cleanPhone]; 
-                reply = "🔄 Church unlinked. Reply *Hi* to select a new church.";
-            }
+            // SWITCH CHURCH (FIXED)
+else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
+    // 🔴 FIX: Delete the user from the database so Auto-Login doesn't trap them
+    await prisma.member.delete({ where: { phone: cleanPhone } });
+    
+    // Clear the temporary session
+    delete userSession[cleanPhone]; 
+    
+    reply = "🔄 Church unlinked successfully!\n\nReply *Hi* to see the list of churches again.";
+}
             // PAYMENT LINK GENERATION
             else if (userSession[cleanPhone]?.step === 'PAY') {
                 let amount = incomingMsg.replace(/\D/g,''); 
