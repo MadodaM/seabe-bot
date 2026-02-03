@@ -32,7 +32,7 @@ async function createPaymentLink(amount, ref, email, accountType = null, userPho
             amount: amount * 100, 
             email: email,
             reference: ref,
-            callback_url: 'https://seabe-test.onrender.com/payment-success',
+            callback_url: 'https://seabe-bot.onrender.com/payment-success',
             
             // 🔴 CRITICAL: Metadata links the payment to the WhatsApp number
             metadata: {
@@ -72,7 +72,7 @@ async function createSubscriptionLink(amount, ref, email, accountType = null, us
             email: email,
             reference: ref,
             plan: planCode,
-            callback_url: 'https://seabe-test.onrender.com/payment-success',
+            callback_url: 'https://seabe-bot.onrender.com/payment-success',
 
             // 🔴 CRITICAL: Metadata for PDF Receipts
             metadata: {
