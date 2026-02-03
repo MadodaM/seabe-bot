@@ -38,6 +38,7 @@ model Transaction {
   amount     Float
   type       String   // TITHE, OFFERING, EVENT
   phone      String
+  status     String   @default("PENDING") // 🔴 NEW: PENDING / SUCCESS / FAILED
   churchCode String
   church     Church   @relation(fields: [churchCode], references: [code])
   date       DateTime @default(now())
