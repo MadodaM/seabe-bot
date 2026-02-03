@@ -384,7 +384,34 @@ app.post('/whatsapp', async (req, res) => {
 });
 
 // --- SUCCESS FALLBACK ---
-app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1>"));
+// --- SUCCESS REDIRECT PAGE ---
+app.get('/payment-success', (req, res) => {
+    res.send(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Payment Successful | Seabe</title>
+            <style>
+                body { font-family: 'Segoe UI', sans-serif; background: #f4f7f6; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+                .card { background: white; padding: 40px; border-radius: 15px; width: 100%; max-width: 350px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); text-align: center; }
+                .icon { font-size: 60px; color: #0a4d3c; margin-bottom: 10px; }
+                h2 { color: #0a4d3c; margin: 0; }
+                p { color: #666; margin-top: 10px; font-size: 14px; }
+                .btn { display: inline-block; margin-top: 20px; padding: 12px 24px; background: #D4AF37; color: #0a4d3c; text-decoration: none; font-weight: bold; border-radius: 6px; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <div class="icon">✅</div>
+                <h2>Payment Successful!</h2>
+                <p>Thank you for your contribution. You can now close this window and return to WhatsApp for your receipt.</p>
+                <a href="https://wa.me/" class="btn">Close Window</a>
+            </div>
+        </body>
+        </html>
+    `);
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ Seabe Engine v3.1 running on ${PORT}`));
