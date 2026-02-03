@@ -381,26 +381,56 @@ else if (userSession[cleanPhone]?.step === 'UPDATE_EMAIL') {
 			
 			
 			
-            // PAYMENT LINK GENERATION
-            else if (userSession[cleanPhone]?.step === 'PAY') {
-                let amount = incomingMsg.replace(/\D/g,''); 
-                let type = ''; 
-                
-                if (userSession[cleanPhone].choice === '1') type = 'OFFERING';
-                else if (userSession[cleanPhone].choice === '5') type = 'RECURRING';
-                else if (userSession[cleanPhone].choice === 'EVENT') { 
-                    type = 'TICKET'; 
-                    const evt = userSession[cleanPhone].selectedEvent; 
-                    amount = evt.price; 
-                    if (!['yes', 'y', 'ok'].some(w => incomingMsg.includes(w))) { 
-                        twiml.message("❌ Event Ticket Cancelled."); 
-                        res.type('text/xml').send(twiml.toString()); 
-                        return; 
-                    } 
-                } else type = 'TITHE'; 
+           // --- PAYMENT LINK GENERATION ---
+else if (userSession[cleanPhone]?.step === 'PAY') {
+    let amount = incomingMsg.replace(/\D/g,''); 
+    let type = ''; 
+    
+    if (userSession[cleanPhone].choice === '1') type = 'OFFERING';
+    else if (userSession[cleanPhone].choice === '5') type = 'RECURRING';
+    else if (userSession[cleanPhone].choice === 'EVENT') { 
+        type = 'TICKET'; 
+        const evt = userSession[cleanPhone].selectedEvent; 
+        amount = evt.price; 
+        if (!['yes', 'y', 'ok'].some(w => incomingMsg.includes(w))) { 
+            twiml.message("❌ Event Ticket Cancelled."); 
+            res.type('text/xml').send(twiml.toString()); 
+            return; 
+        } 
+    } else type = 'TITHE'; 
 
-                const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
-                const finalSubaccount = userSession[cleanPhone].subaccount;
+    // 🔴 THE FIX: Define these variables exactly once
+    const memberInfo = await prisma.member.findUnique({ where: { phone: cleanPhone } });
+    const customerEmail = memberInfo?.email || `${cleanPhone}@seabe.io`;
+
+    const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
+    const finalSubaccount = userSession[cleanPhone].subaccount;
+    
+    // Fetch Link from Paystack
+    const link = (type === 'RECURRING') 
+        ? await createSubscriptionLink(amount, ref, customerEmail, finalSubaccount) 
+        : await createPaymentLink(amount, ref, customerEmail, finalSubaccount);
+    
+    if (link) {
+        reply = `Tap to pay R${amount}:\n👉 ${link}`;
+        
+        // SAVE AS 'PENDING' IN DB
+        await prisma.transaction.create({ 
+            data: { 
+                churchCode, 
+                phone: cleanPhone, 
+                type, 
+                amount: parseFloat(amount), 
+                reference: ref, 
+                status: 'PENDING', 
+                date: new Date() 
+            } 
+        });
+    } else {
+        reply = "⚠️ Payment link error. Please try again later.";
+    }
+    userSession[cleanPhone].step = 'MENU';
+				
                 // 🔴 FIX: Use real email if it exists, otherwise use fallback
 const memberInfo = await prisma.member.findUnique({ where: { phone: cleanPhone } });
 const customerEmail = memberInfo?.email || `${cleanPhone}@seabe.io`;
