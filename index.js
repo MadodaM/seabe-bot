@@ -257,7 +257,7 @@ app.post('/whatsapp', async (req, res) => {
 
 				// ⬇️ ADD THIS LINE ⬇️
 				const hostUrl = process.env.HOST_URL || 'seabe-bot.onrender.com';
-				list += `\n----------------\n🔒 By using this service, you agree to our Privacy Policy:\nhttps://${hostUrl}/privacy`;
+				list += `\n----------------\n🔒 By using this service, you agree to our Privacy Policy:\n https://${hostUrl}/privacy`\n;
                 churches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
                 reply = list; 
                 userSession[cleanPhone].onboarding = true; 
