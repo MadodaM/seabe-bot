@@ -4,5 +4,5 @@
 		
 		
 		git add .
-git commit -m "Fix: Linked admin routes in index.js"
-git push origin test
+		git commit -m "Fix: Pass ChurchName to Paystack, fix Webhook syntax error, remove duplicate receipt"
+		git push origin test

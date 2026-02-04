@@ -17,7 +17,13 @@ const { MessagingResponse } = require('twilio').twiml;
 const { PrismaClient } = require('@prisma/client');
 
 // 🔴 Added getTransactionHistory to imports
-const { createPaymentLink, createSubscriptionLink, getTransactionHistory } = require('./services/paystack');
+const { 
+    createPaymentLink, 
+    createSubscriptionLink, 
+    getTransactionHistory,
+    listActiveSubscriptions, // Add this
+    cancelSubscription       // Add this
+} = require('./services/paystack');
 
 // --- CONFIGURATION ---
 const prisma = new PrismaClient();
@@ -281,8 +287,83 @@ app.post('/whatsapp', async (req, res) => {
             }
             // MY PROFILE (Option 7)
             else if (incomingMsg === '7' && userSession[cleanPhone]?.step === 'MENU') {
-                userSession[cleanPhone].step = 'UPDATE_EMAIL';
-                reply = "👤 *Update Profile*\n\nPlease reply with your new *Email Address* (e.g., john@gmail.com) so we can send your tax receipts:";
+                // =============================================
+            // OPTION 7: MY PROFILE & SUBSCRIPTIONS (UPDATED)
+            // =============================================
+            else if (incomingMsg === '7' && userSession[cleanPhone]?.step === 'MENU') {
+                userSession[cleanPhone].step = 'PROFILE_MENU';
+                reply = "👤 *My Profile*\n\n1. Update Email Address\n2. Manage Recurring Gifts (Cancel)\n\nReply with a number:";
+            }
+
+            // HANDLE PROFILE MENU SELECTION
+            else if (userSession[cleanPhone]?.step === 'PROFILE_MENU') {
+                if (incomingMsg === '1') {
+                    userSession[cleanPhone].step = 'UPDATE_EMAIL';
+                    reply = "📧 Please reply with your new *Email Address*:";
+                } 
+                else if (incomingMsg === '2') {
+                    reply = "⏳ Checking your active subscriptions...";
+                    
+                    // 1. Get Member Email
+                    const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
+                    const userEmail = member?.email || `${cleanPhone}@seabe.io`;
+
+                    // 2. Fetch from Paystack (New Service Function)
+                    // We need to import listActiveSubscriptions at the top of index.js first!
+                    const { listActiveSubscriptions } = require('./services/paystack'); 
+                    const subs = await listActiveSubscriptions(userEmail);
+
+                    if (subs.length === 0) {
+                        reply = "You have no active recurring gifts.";
+                        userSession[cleanPhone].step = 'MENU';
+                    } else {
+                        // 3. Display List
+                        let subList = "📋 *Your Active Subscriptions:*\n\n";
+                        subs.forEach((sub, index) => {
+                            const amount = (sub.amount / 100).toFixed(2);
+                            const name = sub.plan.name; // e.g., "Seabe Monthly - R500"
+                            subList += `*${index + 1}.* ${name} (R${amount})\n`;
+                        });
+                        subList += "\nReply with the number to *CANCEL* it, or '0' to go back.";
+                        
+                        // Store subs in session so we know which one they pick
+                        userSession[cleanPhone].activeSubs = subs;
+                        userSession[cleanPhone].step = 'CANCEL_SUB_SELECT';
+                        reply = subList;
+                    }
+                } 
+                else {
+                    reply = "⚠️ Invalid selection.";
+                }
+            }
+
+            // HANDLE CANCELLATION SELECTION
+            else if (userSession[cleanPhone]?.step === 'CANCEL_SUB_SELECT') {
+                if (incomingMsg === '0') {
+                    reply = "Returning to menu...";
+                    userSession[cleanPhone].step = 'MENU';
+                } else {
+                    const selection = parseInt(incomingMsg) - 1;
+                    const subs = userSession[cleanPhone].activeSubs;
+
+                    if (subs && subs[selection]) {
+                        const targetSub = subs[selection];
+                        
+                        // Call Paystack to Cancel
+                        const { cancelSubscription } = require('./services/paystack');
+                        const success = await cancelSubscription(targetSub.subscription_code, targetSub.email_token);
+
+                        if (success) {
+                            reply = `✅ Success! Your recurring gift of R${(targetSub.amount/100)} has been cancelled.`;
+                        } else {
+                            reply = "⚠️ Failed to cancel. Please contact support.";
+                        }
+                        userSession[cleanPhone].step = 'MENU';
+                    } else {
+                        reply = "⚠️ Invalid selection.";
+                    }
+                }
+            }
             }
             // CAPTURE EMAIL FOR PROFILE
             else if (userSession[cleanPhone]?.step === 'UPDATE_EMAIL') {

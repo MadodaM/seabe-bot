@@ -69,6 +69,7 @@ async function createSubscriptionLink(amount, ref, email, subaccount, userPhone,
     }
 }
 
+// 4. VERIFY PAYMENT
 async function verifyPayment(reference) {
     try {
         const response = await paystackApi.get(`/transaction/verify/${reference}`);
@@ -78,7 +79,7 @@ async function verifyPayment(reference) {
         return null;
     }
 }
-
+// 5. Transaction History
 async function getTransactionHistory(email) {
     try {
         const response = await paystackApi.get(`/transaction?email=${email}&perPage=5&status=success`);
@@ -100,9 +101,61 @@ async function getTransactionHistory(email) {
     }
 }
 
+
+// 6. HELPER: Get Customer ID from Email
+async function getCustomer(email) {
+    try {
+        const response = await paystackApi.get(`/customer/${email}`);
+        if (response.data && response.data.status) {
+            return response.data.data;
+        }
+        return null;
+    } catch (error) {
+        // Only log if it's a real error, not just "customer not found"
+        if (error.response?.status !== 404) console.error("Get Customer Error:", error.message);
+        return null;
+    }
+}
+
+// 7. LIST ACTIVE SUBSCRIPTIONS
+async function listActiveSubscriptions(email) {
+    try {
+        // First, find the customer ID
+        const customer = await getCustomer(email);
+        if (!customer) return [];
+
+        // Fetch subscriptions for this customer
+        const response = await paystackApi.get(`/subscription?customer=${customer.id}`);
+        const allSubs = response.data.data;
+
+        // Filter only the active ones
+        return allSubs.filter(sub => sub.status === 'active');
+    } catch (error) {
+        console.error("List Subs Error:", error.message);
+        return [];
+    }
+}
+
+// 8. CANCEL SUBSCRIPTION
+async function cancelSubscription(code, token) {
+    try {
+        const response = await paystackApi.post('/subscription/disable', {
+            code: code,
+            token: token // Paystack requires the email_token for security
+        });
+        return response.data.status; // Returns true if successful
+    } catch (error) {
+        console.error("Cancel Sub Error:", error.response?.data || error.message);
+        return false;
+    }
+}
+
+// 🔴 UPDATE EXPORTS
 module.exports = { 
     createPaymentLink, 
     createSubscriptionLink, 
     verifyPayment, 
-    getTransactionHistory 
+    getTransactionHistory,
+    listActiveSubscriptions, // New
+    cancelSubscription       // New
 };
