@@ -3,7 +3,6 @@ require('dotenv').config();
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
 
-// 1. PAYSTACK CONFIGURATION
 const paystackApi = axios.create({
     baseURL: 'https://api.paystack.co',
     headers: {
@@ -12,8 +11,8 @@ const paystackApi = axios.create({
     }
 });
 
-// 2. STANDARD PAYMENT LINK (Restored Metadata)
-async function createPaymentLink(amount, ref, email, subaccount, userPhone) {
+// 2. STANDARD PAYMENT LINK (Now accepts churchName)
+async function createPaymentLink(amount, ref, email, subaccount, userPhone, churchName) {
     try {
         const payload = {
             amount: amount * 100, 
@@ -21,16 +20,16 @@ async function createPaymentLink(amount, ref, email, subaccount, userPhone) {
             reference: ref,
             callback_url: `https://${process.env.HOST_URL}/payment-success`,
             
-            // ✅ RESTORED: This tells the Webhook who to message
+            // ✅ METADATA: Now stores the Church Name safely
             metadata: {
                 whatsapp_number: userPhone,
+                church_name: churchName || "Seabe Digital", 
                 custom_fields: [
                     { display_name: "Payment Type", variable_name: "payment_type", value: "Donation" }
                 ]
             }
         };
 
-        // Subaccount Logic
         if (subaccount && subaccount !== 'PENDING') {
             payload.subaccount = subaccount;
             payload.bearer = "subaccount"; 
@@ -44,15 +43,16 @@ async function createPaymentLink(amount, ref, email, subaccount, userPhone) {
     }
 }
 
-// 3. MONTHLY SUBSCRIPTION LINK (Restored Metadata)
-async function createSubscriptionLink(amount, ref, email, subaccount, userPhone) {
+// 3. SUBSCRIPTION LINK (Now accepts churchName)
+async function createSubscriptionLink(amount, ref, email, subaccount, userPhone, churchName) {
     try {
         const payload = {
             amount: amount * 100, 
             email: email,
             reference: ref,
             metadata: {
-                whatsapp_number: userPhone // ✅ Vital for Recurring Receipt
+                whatsapp_number: userPhone,
+                church_name: churchName || "Seabe Digital"
             }
         };
 
@@ -69,7 +69,6 @@ async function createSubscriptionLink(amount, ref, email, subaccount, userPhone)
     }
 }
 
-// 4. VERIFY PAYMENT
 async function verifyPayment(reference) {
     try {
         const response = await paystackApi.get(`/transaction/verify/${reference}`);
@@ -80,7 +79,6 @@ async function verifyPayment(reference) {
     }
 }
 
-// 5. FETCH USER HISTORY
 async function getTransactionHistory(email) {
     try {
         const response = await paystackApi.get(`/transaction?email=${email}&perPage=5&status=success`);

@@ -375,9 +375,9 @@ else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
                 const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
                 const finalSubaccount = userSession[cleanPhone].subaccount;
                 
-                const link = (type === 'RECURRING') 
-                    ? await createSubscriptionLink(amount, ref, customerEmail, finalSubaccount) 
-                    : await createPaymentLink(amount, ref, customerEmail, finalSubaccount);
+const link = (type === 'RECURRING') 
+                    ? await createSubscriptionLink(amount, ref, customerEmail, finalSubaccount, cleanPhone, churchName) 
+                    : await createPaymentLink(amount, ref, customerEmail, finalSubaccount, cleanPhone, churchName);
                 
                 if (link) {
                     reply = `Tap to pay R${amount}:\n👉 ${link}`;
