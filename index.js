@@ -406,54 +406,67 @@ else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
     }
 });
 
-// --- PAYMENT SUCCESS PAGE (FAILSAFE VERSION) ---
+// --- PAYMENT SUCCESS PAGE (FINAL FIX) ---
 app.get('/payment-success', (req, res) => {
-    try {
-        // 1. Get Environment Variable (Safe Default)
-        const rawNumber = process.env.TWILIO_PHONE_NUMBER || '';
-        
-        // 2. Clean the number (Strip 'whatsapp:' and '+')
-        const botNumber = rawNumber.replace('whatsapp:', '').replace('+', '');
-        
-        // 3. Send simple HTML (No external variables to crash it)
-        res.send(`
-            <html>
-                <head>
-                    <meta name="viewport" content="width=device-width, initial-scale=1">
-                    <style>
-                        body { font-family: sans-serif; text-align: center; padding: 40px; background: #f4f4f4; }
-                        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-                        h1 { color: #27ae60; }
-                        .btn { 
-                            display: inline-block; 
-                            background: #25D366; 
-                            color: white; 
-                            padding: 15px 30px; 
-                            text-decoration: none; 
-                            border-radius: 50px; 
-                            font-weight: bold; 
-                            margin-top: 20px;
-                            font-size: 18px;
-                        }
-                    </style>
-                </head>
-                <body>
-                    <div class="card">
-                        <h1>✅ Payment Successful!</h1>
-                        <p>Thank you for your generosity.</p>
-                        <p>Your PDF receipt is on its way to your chat.</p>
-                        
-                        <a href="https://wa.me/${botNumber}?text=Hi" class="btn">
-                            Back to WhatsApp
-                        </a>
-                    </div>
-                </body>
-            </html>
-        `);
-    } catch (error) {
-        console.error("Success Page Error:", error);
-        res.send("Payment Successful! You can close this window and return to WhatsApp.");
-    }
+    // 1. SAFE LOGIC: Get the number, handle missing variables safely
+    const rawNumber = process.env.TWILIO_PHONE_NUMBER || ''; 
+    // Strip 'whatsapp:' and '+' to make a clean link
+    const botNumber = rawNumber.replace('whatsapp:', '').replace('+', '');
+    
+    // 2. YOUR HTML (Clean & Crash-Free)
+    // We use res.send() to avoid any "Template/View" errors (like 'page undefined')
+    res.send(`
+        <html>
+            <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                    body { 
+                        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; 
+                        text-align: center; 
+                        padding: 40px; 
+                        background-color: #f0f2f5; 
+                    }
+                    .card { 
+                        background: white; 
+                        padding: 40px; 
+                        border-radius: 12px; 
+                        box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+                        max-width: 400px; 
+                        margin: 0 auto; 
+                    }
+                    h1 { color: #0C0C0C; margin-bottom: 10px; }
+                    p { color: #555; font-size: 16px; line-height: 1.5; }
+                    .check-icon { font-size: 50px; color: #25D366; margin-bottom: 20px; }
+                    .btn { 
+                        display: block; 
+                        background-color: #25D366; 
+                        color: white; 
+                        padding: 15px 20px; 
+                        text-decoration: none; 
+                        border-radius: 30px; 
+                        font-weight: bold; 
+                        margin-top: 30px;
+                        font-size: 16px;
+                        box-shadow: 0 4px 6px rgba(37, 211, 102, 0.2);
+                    }
+                    .btn:hover { background-color: #1da851; }
+                </style>
+            </head>
+            <body>
+                <div class="card">
+                    <div class="check-icon">✅</div>
+                    <h1>Payment Successful</h1>
+                    <p>Thank you! Your transaction has been completed securely.</p>
+                    <p>We have sent your receipt to your WhatsApp.</p>
+                    
+                    <a href="https://wa.me/${botNumber}?text=Hi" class="btn">
+                        Return to WhatsApp
+                    </a>
+                </div>
+            </body>
+        </html>
+    `);
+});
 });
 
 const PORT = process.env.PORT || 3000;
