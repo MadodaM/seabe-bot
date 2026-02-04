@@ -1,10 +1,9 @@
 const axios = require('axios');
+require('dotenv').config();
 
-// ==========================================
+const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
+
 // 1. PAYSTACK CONFIGURATION
-// ==========================================
-const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY; 
-
 const paystackApi = axios.create({
     baseURL: 'https://api.paystack.co',
     headers: {
@@ -13,43 +12,20 @@ const paystackApi = axios.create({
     }
 });
 
-// ==========================================
-// 2. SUBACCOUNT MAPPING
-// Paste your actual Paystack SUB_ codes here
-// ==========================================
-const SUBACCOUNTS = {
-    tithes: 'SUB_xxxxxxxxxxxxxxx',     
-    offerings: 'SUB_xxxxxxxxxxxxxxx',  
-    building: 'SUB_xxxxxxxxxxxxxxx'    
-};
-
-// ==========================================
-// 3. STANDARD PAYMENT LINK
-// ==========================================
-async function createPaymentLink(amount, ref, email, accountType = null, userPhone = null) {
+// 2. STANDARD PAYMENT LINK (Dynamic Subaccount)
+async function createPaymentLink(amount, ref, email, subaccount) {
     try {
         const payload = {
             amount: amount * 100, 
             email: email,
             reference: ref,
-            callback_url: 'https://seabe-bot.onrender.com/payment-success',
-            
-            // 🔴 CRITICAL: Metadata links the payment to the WhatsApp number
-            metadata: {
-                whatsapp_number: userPhone,
-                custom_fields: [
-                    {
-                        display_name: "Payment Type",
-                        variable_name: "payment_type",
-                        value: accountType || "General Donation"
-                    }
-                ]
-            }
+            callback_url: `https://${process.env.HOST_URL}/payment-success`,
         };
 
-        // Route to subaccount if specified
-        if (accountType && SUBACCOUNTS[accountType]) {
-            payload.subaccount = SUBACCOUNTS[accountType];
+        // 🔴 FIX: Use the dynamic subaccount passed from the Database
+        if (subaccount && subaccount !== 'PENDING') {
+            payload.subaccount = subaccount;
+            payload.bearer = "subaccount"; // Church pays fees
         }
 
         const response = await paystackApi.post('/transaction/initialize', payload);
@@ -60,36 +36,19 @@ async function createPaymentLink(amount, ref, email, accountType = null, userPho
     }
 }
 
-// ==========================================
-// 4. MONTHLY SUBSCRIPTION LINK
-// ==========================================
-async function createSubscriptionLink(amount, ref, email, accountType = null, userPhone = null) {
+// 3. MONTHLY SUBSCRIPTION LINK
+async function createSubscriptionLink(amount, ref, email, subaccount) {
     try {
-        let planCode = await getOrCreatePlan(amount);
-
+        // Simple subscription initialization
         const payload = {
             amount: amount * 100, 
             email: email,
-            reference: ref,
-            plan: planCode,
-            callback_url: 'https://seabe-bot.onrender.com/payment-success',
-
-            // 🔴 CRITICAL: Metadata for PDF Receipts
-            metadata: {
-                whatsapp_number: userPhone,
-                custom_fields: [
-                    {
-                        display_name: "Payment Type",
-                        variable_name: "payment_type",
-                        value: accountType || "Monthly Tithes"
-                    }
-                ]
-            }
+            reference: ref
         };
 
-        // Route to subaccount
-        if (accountType && SUBACCOUNTS[accountType]) {
-            payload.subaccount = SUBACCOUNTS[accountType];
+        if (subaccount && subaccount !== 'PENDING') {
+            payload.subaccount = subaccount;
+            payload.bearer = "subaccount";
         }
 
         const response = await paystackApi.post('/transaction/initialize', payload);
@@ -100,26 +59,7 @@ async function createSubscriptionLink(amount, ref, email, accountType = null, us
     }
 }
 
-// ==========================================
-// 5. PLAN GENERATOR (HELPER)
-// ==========================================
-async function getOrCreatePlan(amount) {
-    const planName = `Seabe Monthly - R${amount}`;
-    try {
-        const res = await paystackApi.post('/plan', {
-            name: planName,
-            amount: amount * 100,
-            interval: 'monthly'
-        });
-        return res.data.data.plan_code;
-    } catch (e) {
-        return null;
-    }
-}
-
-// ==========================================
-// 6. WEBHOOK VERIFIER (FOR PDF GENERATION)
-// ==========================================
+// 4. VERIFY PAYMENT (For Webhook)
 async function verifyPayment(reference) {
     try {
         const response = await paystackApi.get(`/transaction/verify/${reference}`);
@@ -130,25 +70,22 @@ async function verifyPayment(reference) {
     }
 }
 
-module.exports = { createPaymentLink, createSubscriptionLink, verifyPayment };
-subaccount
-// ==========================================
-// 7. FETCH USER GIVING HISTORY
-// ==========================================
+// 5. FETCH USER GIVING HISTORY (Fixed & Included)
 async function getTransactionHistory(email) {
     try {
         // Fetch last 5 transactions for this specific email
         const response = await paystackApi.get(`/transaction?email=${email}&perPage=5&status=success`);
         const transactions = response.data.data;
 
-        if (transactions.length === 0) return "You have no recent giving history.";
+        if (!transactions || transactions.length === 0) return "You have no recent giving history.";
 
         // Format the history into a neat WhatsApp message
         let historyMessage = "📜 *Your Last 5 Contributions:*\n\n";
         transactions.forEach((tx, index) => {
             const date = new Date(tx.paid_at).toLocaleDateString('en-ZA');
-            const amount = (tx.amount / 100).toFixed(2); // Convert cents to Rands
-            const type = tx.metadata?.custom_fields?.[0]?.value || "Donation";
+            const amount = (tx.amount / 100).toFixed(2);
+            // Default to 'Donation' if metadata is missing
+            const type = tx.metadata?.custom_fields?.[0]?.value || "Donation"; 
             
             historyMessage += `${index + 1}. *R${amount}* - ${type} (${date})\n`;
         });
@@ -156,9 +93,14 @@ async function getTransactionHistory(email) {
         return historyMessage;
     } catch (error) {
         console.error("❌ Error fetching history:", error.message);
-        return "⚠️ Sorry, we couldn't fetch your history right now. Please try again later.";
+        return "⚠️ Sorry, we couldn't fetch your history right now.";
     }
 }
 
-// Update your module.exports at the bottom to include this new function:
-module.exports = { createPaymentLink, createSubscriptionLink, verifyPayment, getTransactionHistory };
+// 6. SINGLE EXPORT (At the very bottom)
+module.exports = { 
+    createPaymentLink, 
+    createSubscriptionLink, 
+    verifyPayment, 
+    getTransactionHistory 
+};
