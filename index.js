@@ -207,7 +207,7 @@ app.post('/webhook/paystack', async (req, res) => {
 });
 
 // ==========================================
-// 🤖 WHATSAPP BOT LOGIC
+// 🤖 WHATSAPP BOT LOGIC (FULL REPAIR)
 // ==========================================
 app.post('/whatsapp', async (req, res) => {
     const twiml = new MessagingResponse();
@@ -218,6 +218,7 @@ app.post('/whatsapp', async (req, res) => {
         const cleanPhone = sender.replace('whatsapp:', '');
         let reply = "";
 
+        // --- 1. ADMIN REPORTS ---
         if (incomingMsg.startsWith('report ')) {
             const targetCode = incomingMsg.split(' ')[1].toUpperCase();
             reply = await emailReport(targetCode);
@@ -226,8 +227,10 @@ app.post('/whatsapp', async (req, res) => {
             return;
         }
 
+        // --- 2. SESSION & CHURCH IDENTIFICATION ---
         if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
         
+        // Auto-Login: Check if user is already a member
         if (!userSession[cleanPhone].churchCode) {
             const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
             if (member) {
@@ -240,6 +243,7 @@ app.post('/whatsapp', async (req, res) => {
             }
         }
 
+        // --- 3. ONBOARDING (IF NO CHURCH LINKED) ---
         if (!userSession[cleanPhone].churchCode) {
             if (['hi', 'hello', 'menu', 'start'].includes(incomingMsg) || !userSession[cleanPhone]?.onboarding) {
                 const churches = await prisma.church.findMany({ orderBy: { name: 'asc' } });
@@ -268,34 +272,33 @@ app.post('/whatsapp', async (req, res) => {
             }
         } 
         
+        // --- 4. MAIN MENU & FEATURES ---
         else {
             const churchCode = userSession[cleanPhone].churchCode;
             const churchName = userSession[cleanPhone].churchName;
             
-            // MAIN MENU (Updated with 7 & 8)
+            // MAIN MENU
             if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
                 userSession[cleanPhone].step = 'MENU';
                 const adText = await getAdSuffix(churchCode);
                 reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner 🔁\n*6.* Ministry News 📰\n*7.* My Profile 👤\n*8.* My History 📜` + adText;
             }
-            // MY HISTORY (Option 8)
+
+            // OPTION 8: HISTORY
             else if (incomingMsg === '8' && userSession[cleanPhone]?.step === 'MENU') {
                 const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
                 const userEmail = member?.email || `${cleanPhone}@seabe.io`; 
                 reply = await getTransactionHistory(userEmail);
                 userSession[cleanPhone].step = 'MENU';
             }
-            // MY PROFILE (Option 7)
-            else if (incomingMsg === '7' && userSession[cleanPhone]?.step === 'MENU') {
-                // =============================================
-            // OPTION 7: MY PROFILE & SUBSCRIPTIONS (UPDATED)
-            // =============================================
+
+            // OPTION 7: MY PROFILE (NEW: Update Email + Cancel Subs)
             else if (incomingMsg === '7' && userSession[cleanPhone]?.step === 'MENU') {
                 userSession[cleanPhone].step = 'PROFILE_MENU';
                 reply = "👤 *My Profile*\n\n1. Update Email Address\n2. Manage Recurring Gifts (Cancel)\n\nReply with a number:";
             }
-
-            // HANDLE PROFILE MENU SELECTION
+            
+            // OPTION 7 SUB-MENU: HANDLER
             else if (userSession[cleanPhone]?.step === 'PROFILE_MENU') {
                 if (incomingMsg === '1') {
                     userSession[cleanPhone].step = 'UPDATE_EMAIL';
@@ -303,41 +306,31 @@ app.post('/whatsapp', async (req, res) => {
                 } 
                 else if (incomingMsg === '2') {
                     reply = "⏳ Checking your active subscriptions...";
-                    
-                    // 1. Get Member Email
                     const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
                     const userEmail = member?.email || `${cleanPhone}@seabe.io`;
-
-                    // 2. Fetch from Paystack (New Service Function)
-                    // We need to import listActiveSubscriptions at the top of index.js first!
-                    const { listActiveSubscriptions } = require('./services/paystack'); 
                     const subs = await listActiveSubscriptions(userEmail);
 
                     if (subs.length === 0) {
                         reply = "You have no active recurring gifts.";
                         userSession[cleanPhone].step = 'MENU';
                     } else {
-                        // 3. Display List
                         let subList = "📋 *Your Active Subscriptions:*\n\n";
                         subs.forEach((sub, index) => {
                             const amount = (sub.amount / 100).toFixed(2);
-                            const name = sub.plan.name; // e.g., "Seabe Monthly - R500"
+                            const name = sub.plan.name;
                             subList += `*${index + 1}.* ${name} (R${amount})\n`;
                         });
                         subList += "\nReply with the number to *CANCEL* it, or '0' to go back.";
-                        
-                        // Store subs in session so we know which one they pick
                         userSession[cleanPhone].activeSubs = subs;
                         userSession[cleanPhone].step = 'CANCEL_SUB_SELECT';
                         reply = subList;
                     }
-                } 
-                else {
+                } else {
                     reply = "⚠️ Invalid selection.";
                 }
             }
 
-            // HANDLE CANCELLATION SELECTION
+            // OPTION 7: CANCEL SUB CONFIRMATION
             else if (userSession[cleanPhone]?.step === 'CANCEL_SUB_SELECT') {
                 if (incomingMsg === '0') {
                     reply = "Returning to menu...";
@@ -345,29 +338,22 @@ app.post('/whatsapp', async (req, res) => {
                 } else {
                     const selection = parseInt(incomingMsg) - 1;
                     const subs = userSession[cleanPhone].activeSubs;
-
                     if (subs && subs[selection]) {
                         const targetSub = subs[selection];
-                        
-                        // Call Paystack to Cancel
-                        const { cancelSubscription } = require('./services/paystack');
                         const success = await cancelSubscription(targetSub.subscription_code, targetSub.email_token);
-
-                        if (success) {
-                            reply = `✅ Success! Your recurring gift of R${(targetSub.amount/100)} has been cancelled.`;
-                        } else {
-                            reply = "⚠️ Failed to cancel. Please contact support.";
-                        }
+                        reply = success 
+                            ? `✅ Success! Your recurring gift of R${(targetSub.amount/100)} has been cancelled.` 
+                            : "⚠️ Failed to cancel. Please contact support.";
                         userSession[cleanPhone].step = 'MENU';
                     } else {
                         reply = "⚠️ Invalid selection.";
                     }
                 }
             }
-            }
-            // CAPTURE EMAIL FOR PROFILE
+
+            // OPTION 7: CAPTURE NEW EMAIL
             else if (userSession[cleanPhone]?.step === 'UPDATE_EMAIL') {
-                const newEmail = incomingMsg.toLowerCase();
+                const newEmail = incomingMsg; // Keep original case
                 if (!newEmail.includes('@')) {
                     reply = "⚠️ That doesn't look like a valid email. Please try again:";
                 } else {
@@ -376,7 +362,8 @@ app.post('/whatsapp', async (req, res) => {
                     userSession[cleanPhone].step = 'MENU'; 
                 }
             }
-            // NEWS (Option 6)
+
+            // OPTION 6: NEWS
             else if (incomingMsg === '6' && userSession[cleanPhone]?.step === 'MENU') {
                 const news = await prisma.news.findMany({ 
                     where: { status: 'Active', expiryDate: { gte: new Date() } }, 
@@ -386,7 +373,8 @@ app.post('/whatsapp', async (req, res) => {
                 reply = news.length === 0 ? "📰 No news updates." : "*Latest Ministry News:*\n\n" + news.map(n => `📌 *${n.headline}*\n${n.body || ''}\n\n`).join('');
                 userSession[cleanPhone].step = 'MENU';
             }
-            // EVENTS LIST (Option 3)
+
+            // OPTION 3: EVENTS
             else if (incomingMsg === '3' && userSession[cleanPhone]?.step === 'MENU') {
                 const events = await prisma.event.findMany({ 
                     where: { churchCode: churchCode, status: 'Active', expiryDate: { gte: new Date() } } 
@@ -415,23 +403,22 @@ app.post('/whatsapp', async (req, res) => {
                     reply = "⚠️ Invalid selection.";
                 }
             }
-            // MONEY ENTRY PROMPT
+
+            // OPTION 4: SWITCH CHURCH
+            else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
+                await prisma.member.deleteMany({ where: { phone: cleanPhone } }); // Safe Delete
+                delete userSession[cleanPhone]; 
+                reply = "🔄 Church unlinked successfully!\n\nReply *Hi* to see the list of churches again.";
+            }
+
+            // MONEY ENTRY (Options 1, 2, 5)
             else if (['1', '2', '5'].includes(incomingMsg) && userSession[cleanPhone]?.step === 'MENU') {
                 userSession[cleanPhone].step = 'PAY'; 
                 userSession[cleanPhone].choice = incomingMsg;
                 reply = incomingMsg === '5' ? "Enter Monthly Amount (e.g. R500):" : "Enter Amount (e.g. R100):";
             }
-            // SWITCH CHURCH (FIXED)
-else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
-    // 🔴 FIX: Delete the user from the database so Auto-Login doesn't trap them
-    await prisma.member.delete({ where: { phone: cleanPhone } });
-    
-    // Clear the temporary session
-    delete userSession[cleanPhone]; 
-    
-    reply = "🔄 Church unlinked successfully!\n\nReply *Hi* to see the list of churches again.";
-}
-            // PAYMENT LINK GENERATION
+
+            // --- 5. PAYMENT LINK GENERATION ---
             else if (userSession[cleanPhone]?.step === 'PAY') {
                 let amount = incomingMsg.replace(/\D/g,''); 
                 let type = ''; 
@@ -449,16 +436,17 @@ else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
                     } 
                 } else type = 'TITHE'; 
 
-                // 🔴 THE FINAL FIX: No Duplicate Declarations Here
+                // User Info
                 const memberInfo = await prisma.member.findUnique({ where: { phone: cleanPhone } });
                 const customerEmail = memberInfo?.email || `${cleanPhone}@seabe.io`;
-
                 const ref = `${churchCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
                 const finalSubaccount = userSession[cleanPhone].subaccount;
-                
-const link = (type === 'RECURRING') 
-                    ? await createSubscriptionLink(amount, ref, customerEmail, finalSubaccount, cleanPhone, churchName) 
-                    : await createPaymentLink(amount, ref, customerEmail, finalSubaccount, cleanPhone, churchName);
+                const targetChurchName = userSession[cleanPhone].churchName;
+
+                // Create Link
+                const link = (type === 'RECURRING') 
+                    ? await createSubscriptionLink(amount, ref, customerEmail, finalSubaccount, cleanPhone, targetChurchName) 
+                    : await createPaymentLink(amount, ref, customerEmail, finalSubaccount, cleanPhone, targetChurchName);
                 
                 if (link) {
                     reply = `Tap to pay R${amount}:\n👉 ${link}`;
@@ -472,6 +460,8 @@ const link = (type === 'RECURRING')
                 }
                 userSession[cleanPhone].step = 'MENU';
             } 
+            
+            // UNKNOWN INPUT
             else {
                 reply = "I didn't understand that. Reply *Hi* for the main menu.";
             }
