@@ -174,20 +174,27 @@ app.post('/webhook/paystack', async (req, res) => {
             if (tx && tx.status !== 'SUCCESS') {
                 await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'SUCCESS' } });
                 const church = await prisma.church.findUnique({ where: { code: tx.churchCode } });
-                
+                include: { church: true } // 🔴 FIX: Get church name for the PDF
                 const pdfName = generatePDF(tx.type, amount, ref, new Date().toLocaleString(), tx.phone, church.name);
                 
                 setTimeout(async () => {
                     if (client) {
                         const hostUrl = req.headers.host || 'seabe-bot.onrender.com';
                         await client.messages.create({ 
-                            from: 'whatsapp:+14155238886', 
+                            from: process.env.TWILIO_PHONE_NUMBER, // ✅ Dynamic Live Number 
                             to: `whatsapp:${tx.phone}`, 
                             body: `🎉 Payment Confirmed! Thank you for your R${amount} contribution to ${church.name}.`, 
                             mediaUrl: [`https://${hostUrl}/public/receipts/${pdfName}`] 
                         });
                     }
                 }, 1500);
+				// Send to WhatsApp
+        await client.messages.create({
+            from: process.env.TWILIO_PHONE_NUMBER, // ✅ Dynamic Live Number
+            to: `whatsapp:${tx.phone}`,
+            body: `✅ Payment Confirmed! Here is your receipt for ${tx.church.name}.`,
+            mediaUrl: [`https://${req.headers.host}/public/receipts/${pdfName}`]
+        });
             }
         }
     } catch (error) { console.error("Webhook Error:", error); }
