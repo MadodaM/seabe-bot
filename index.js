@@ -249,19 +249,25 @@ app.post('/whatsapp', async (req, res) => {
 
         // --- 3. ONBOARDING (IF NO CHURCH LINKED) ---
         if (!userSession[cleanPhone].churchCode) {
+            // --- 3. ONBOARDING (FIXED) ---
             if (['hi', 'hello', 'menu', 'start'].includes(incomingMsg) || !userSession[cleanPhone]?.onboarding) {
                 const churches = await prisma.church.findMany({ orderBy: { name: 'asc' } });
-                // Look for this block in your Onboarding section
-				let list = "Welcome to Seabe! 🇿🇦\nPlease select your church:\n";
-				churches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
+                
+                // 1. Start with the Welcome Header
+                let list = "Welcome to Seabe! 🇿🇦\nPlease select your church:\n";
+                
+                // 2. Add the Menu Items (The Churches)
+                churches.forEach((c, index) => { 
+                    list += `*${index + 1}.* ${c.name}\n`; 
+                });
 
-				// ⬇️ ADD THIS LINE ⬇️
-				const hostUrl = process.env.HOST_URL || 'seabe-bot.onrender.com';
-				list += `\n----------------\n🔒 By using this service, you agree to our Privacy Policy:\n https://${hostUrl}/privacy`\n;
-                churches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
+                // 3. Add Privacy Link AT THE END (with \n\n for spacing)
+                const hostUrl = process.env.HOST_URL || 'seabe-bot.onrender.com';
+                list += `\n----------------\n🔒 By using this service, you agree to our Privacy Policy:\nhttps://${hostUrl}/privacy`;
+
                 reply = list; 
                 userSession[cleanPhone].onboarding = true; 
-                userSession[cleanPhone].churchList = churches; 
+                userSession[cleanPhone].churchList = churches;
             } else {
                 const selection = parseInt(incomingMsg) - 1;
                 const churches = userSession[cleanPhone].churchList;
