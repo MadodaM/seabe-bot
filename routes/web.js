@@ -309,7 +309,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
         <p>For any questions regarding these Terms, please contact us:</p>
         <p>
             <strong>Email:</strong> madoda@seabe.co.za<br>
-            <strong>Website:</strong> www.seabe.co.za
+            <strong>Website:</strong> www.seabe.tech
         </p>
 
         <footer>
