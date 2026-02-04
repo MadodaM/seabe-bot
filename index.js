@@ -467,7 +467,6 @@ app.get('/payment-success', (req, res) => {
         </html>
     `);
 });
-});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ Seabe Engine v3.1 running on ${PORT}`));
