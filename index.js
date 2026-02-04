@@ -54,6 +54,10 @@ app.use(bodyParser.json({
     }
 }));
 app.use('/public', express.static(path.join(__dirname, 'public')));
+// --- PRIVACY POLICY ROUTE ---
+app.get('/privacy', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'privacy.html'));
+});
 
 // --- MEMORY ---
 let userSession = {}; 
@@ -247,7 +251,13 @@ app.post('/whatsapp', async (req, res) => {
         if (!userSession[cleanPhone].churchCode) {
             if (['hi', 'hello', 'menu', 'start'].includes(incomingMsg) || !userSession[cleanPhone]?.onboarding) {
                 const churches = await prisma.church.findMany({ orderBy: { name: 'asc' } });
-                let list = "Welcome to Seabe! 🇿🇦\nPlease select your church:\n";
+                // Look for this block in your Onboarding section
+				let list = "Welcome to Seabe! 🇿🇦\nPlease select your church:\n";
+				churches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
+
+				// ⬇️ ADD THIS LINE ⬇️
+				const hostUrl = process.env.HOST_URL || 'seabe-bot.onrender.com';
+				list += `\n----------------\n🔒 By using this service, you agree to our Privacy Policy:\nhttps://${hostUrl}/privacy`;
                 churches.forEach((c, index) => { list += `*${index + 1}.* ${c.name}\n`; });
                 reply = list; 
                 userSession[cleanPhone].onboarding = true; 
