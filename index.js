@@ -406,36 +406,54 @@ else if (incomingMsg === '4' && userSession[cleanPhone]?.step === 'MENU') {
     }
 });
 
-// --- SUCCESS REDIRECT PAGE ---
+// --- PAYMENT SUCCESS PAGE (FAILSAFE VERSION) ---
 app.get('/payment-success', (req, res) => {
-    const rawNumber = process.env.TWILIO_PHONE_NUMBER || '';
-    const botNumber = rawNumber.replace('whatsapp:', '').replace('+', '');
-    // END OF FIX
-		res.send(`
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>	
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Payment Successful | Seabe</title>
-            <style>
-                body { font-family: 'Segoe UI', sans-serif; background: #f4f7f6; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-                .card { background: white; padding: 40px; border-radius: 15px; width: 100%; max-width: 350px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); text-align: center; }
-                .icon { font-size: 60px; color: #0a4d3c; margin-bottom: 10px; }
-                h2 { color: #0a4d3c; margin: 0; }	
-                p { color: #666; margin-top: 10px; font-size: 14px; }
-                .btn { display: inline-block; margin-top: 20px; padding: 12px 24px; background: #D4AF37; color: #0a4d3c; text-decoration: none; font-weight: bold; border-radius: 6px; }
-            </style>
-        </head>
-        <body>
-            <div class="card">
-                <div class="icon">✅</div>
-                <h2>Payment Successful!</h2>
-                <p>Thank you for your contribution. You can now close this window and return to WhatsApp for your receipt.</p>
-                <a href="https://wa.me/${botNumber}?text=Hi">Back to WhatsApp</a>	
-            </div>
-        </body>
-        </html>
-    `);
+    try {
+        // 1. Get Environment Variable (Safe Default)
+        const rawNumber = process.env.TWILIO_PHONE_NUMBER || '';
+        
+        // 2. Clean the number (Strip 'whatsapp:' and '+')
+        const botNumber = rawNumber.replace('whatsapp:', '').replace('+', '');
+        
+        // 3. Send simple HTML (No external variables to crash it)
+        res.send(`
+            <html>
+                <head>
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <style>
+                        body { font-family: sans-serif; text-align: center; padding: 40px; background: #f4f4f4; }
+                        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+                        h1 { color: #27ae60; }
+                        .btn { 
+                            display: inline-block; 
+                            background: #25D366; 
+                            color: white; 
+                            padding: 15px 30px; 
+                            text-decoration: none; 
+                            border-radius: 50px; 
+                            font-weight: bold; 
+                            margin-top: 20px;
+                            font-size: 18px;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="card">
+                        <h1>✅ Payment Successful!</h1>
+                        <p>Thank you for your generosity.</p>
+                        <p>Your PDF receipt is on its way to your chat.</p>
+                        
+                        <a href="https://wa.me/${botNumber}?text=Hi" class="btn">
+                            Back to WhatsApp
+                        </a>
+                    </div>
+                </body>
+            </html>
+        `);
+    } catch (error) {
+        console.error("Success Page Error:", error);
+        res.send("Payment Successful! You can close this window and return to WhatsApp.");
+    }
 });
 
 const PORT = process.env.PORT || 3000;

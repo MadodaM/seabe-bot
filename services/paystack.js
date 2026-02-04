@@ -12,20 +12,28 @@ const paystackApi = axios.create({
     }
 });
 
-// 2. STANDARD PAYMENT LINK (Dynamic Subaccount)
-async function createPaymentLink(amount, ref, email, subaccount) {
+// 2. STANDARD PAYMENT LINK (Restored Metadata)
+async function createPaymentLink(amount, ref, email, subaccount, userPhone) {
     try {
         const payload = {
             amount: amount * 100, 
             email: email,
             reference: ref,
             callback_url: `https://${process.env.HOST_URL}/payment-success`,
+            
+            // ✅ RESTORED: This tells the Webhook who to message
+            metadata: {
+                whatsapp_number: userPhone,
+                custom_fields: [
+                    { display_name: "Payment Type", variable_name: "payment_type", value: "Donation" }
+                ]
+            }
         };
 
-        // 🔴 FIX: Use the dynamic subaccount passed from the Database
+        // Subaccount Logic
         if (subaccount && subaccount !== 'PENDING') {
             payload.subaccount = subaccount;
-            payload.bearer = "subaccount"; // Church pays fees
+            payload.bearer = "subaccount"; 
         }
 
         const response = await paystackApi.post('/transaction/initialize', payload);
@@ -36,14 +44,16 @@ async function createPaymentLink(amount, ref, email, subaccount) {
     }
 }
 
-// 3. MONTHLY SUBSCRIPTION LINK
-async function createSubscriptionLink(amount, ref, email, subaccount) {
+// 3. MONTHLY SUBSCRIPTION LINK (Restored Metadata)
+async function createSubscriptionLink(amount, ref, email, subaccount, userPhone) {
     try {
-        // Simple subscription initialization
         const payload = {
             amount: amount * 100, 
             email: email,
-            reference: ref
+            reference: ref,
+            metadata: {
+                whatsapp_number: userPhone // ✅ Vital for Recurring Receipt
+            }
         };
 
         if (subaccount && subaccount !== 'PENDING') {
@@ -59,7 +69,7 @@ async function createSubscriptionLink(amount, ref, email, subaccount) {
     }
 }
 
-// 4. VERIFY PAYMENT (For Webhook)
+// 4. VERIFY PAYMENT
 async function verifyPayment(reference) {
     try {
         const response = await paystackApi.get(`/transaction/verify/${reference}`);
@@ -70,26 +80,21 @@ async function verifyPayment(reference) {
     }
 }
 
-// 5. FETCH USER GIVING HISTORY (Fixed & Included)
+// 5. FETCH USER HISTORY
 async function getTransactionHistory(email) {
     try {
-        // Fetch last 5 transactions for this specific email
         const response = await paystackApi.get(`/transaction?email=${email}&perPage=5&status=success`);
         const transactions = response.data.data;
 
         if (!transactions || transactions.length === 0) return "You have no recent giving history.";
 
-        // Format the history into a neat WhatsApp message
         let historyMessage = "📜 *Your Last 5 Contributions:*\n\n";
         transactions.forEach((tx, index) => {
             const date = new Date(tx.paid_at).toLocaleDateString('en-ZA');
             const amount = (tx.amount / 100).toFixed(2);
-            // Default to 'Donation' if metadata is missing
             const type = tx.metadata?.custom_fields?.[0]?.value || "Donation"; 
-            
             historyMessage += `${index + 1}. *R${amount}* - ${type} (${date})\n`;
         });
-
         return historyMessage;
     } catch (error) {
         console.error("❌ Error fetching history:", error.message);
@@ -97,7 +102,6 @@ async function getTransactionHistory(email) {
     }
 }
 
-// 6. SINGLE EXPORT (At the very bottom)
 module.exports = { 
     createPaymentLink, 
     createSubscriptionLink, 
