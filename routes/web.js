@@ -117,7 +117,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                         <div><h4 style="color:var(--accent)">SEABE.</h4><p>Empowering the African Church.</p></div>
                         <div><h4>Platform</h4><a href="/register">Register</a><a href="/demo">Book Demo</a></div>
                         <div><h4>Legal</h4><a href="/terms">Terms of Service</a><a href="#">Privacy</a></div>
-                        <div><h4>Contact</h4><a href="mailto:hello@seabe.co.za">hello@seabe.co.za</a></div>
+                        <div><h4>Contact</h4><a href="mailto:madoda@seabe.co.za">madoda@seabe.co.za</a></div>
                     </div>
                 </footer>
             </body>
@@ -276,7 +276,46 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
 
     // 4. TERMS
     app.get('/terms', (req, res) => {
-        res.send(`<div style="font-family:sans-serif; max-width:800px; margin:auto; padding:50px; line-height:1.6;"><h1 style="color:#0a4d3c; border-bottom:2px solid #D4AF37;">Master Service Agreement</h1><p><strong>Last Updated: Feb 2026</strong></p><h3>1. Introduction</h3><p>By using Seabe Digital, you agree to these terms...</p><br><a href="/register" style="color:#0a4d3c;">&larr; Back</a></div>`);
+        res.send(`<div style="font-family:sans-serif; max-width:800px; margin:auto; padding:50px; line-height:1.6;"><h1 style="color:#0a4d3c; border-bottom:2px solid #D4AF37;">Master Service Agreement</h1><p><strong>Last Updated:</strong> January 30, 2026</p>
+
+        <p>Welcome to Seabe Digital ("Seabe," "we," "us," or "our"). By accessing or using our WhatsApp-based payment and management platform (the "Service"), you agree to be bound by these Terms of Service ("Terms").</p>
+
+        <h2>1. Description of Service</h2>
+        <p>Seabe provides a technology platform that facilitates donations, tithes, and event ticketing for churches and non-profit organizations via WhatsApp. Seabe is not a bank, and we do not hold funds. We act as a technical intermediary between the User (the "Member") and the Organization (the "Church").</p>
+
+        <h2>2. Payments & Processing</h2>
+        <p>All financial transactions are processed by <strong>Paystack Payments South Africa (Pty) Ltd</strong>, a registered Payment Service Provider. By making a payment, you agree to Paystack's terms and conditions. Seabe does not store your full card details.</p>
+
+        <h2>3. Transaction Fees</h2>
+        <p>A platform fee is applicable to transactions processed through the Service. This fee is deducted automatically before settlement is made to the Church's account. The fee structure is agreed upon between Seabe and the registered Church.</p>
+
+        <div class="refund-box">
+            <h2>4. Refund Policy</h2>
+            <p><strong>Donations & Tithes:</strong> As these are voluntary charitable contributions, they are generally non-refundable. However, if you made an error in the amount, please contact your Church Administrator immediately.</p>
+            <p><strong>Event Tickets:</strong> Refunds for event tickets are subject to the specific policy of the Church hosting the event. Seabe facilitates the transaction but does not control the refund decision.</p>
+            <p><strong>Disputes:</strong> If you believe a transaction was fraudulent, please contact us at <a href="mailto:madoda@seabe.co.za">madoda@seabe.co.za</a>.</p>
+        </div>
+
+        <h2>5. User Account Security</h2>
+        <p>You are responsible for maintaining the security of your WhatsApp account. Seabe is not liable for any loss or damage arising from unauthorized access to your WhatsApp account or phone.</p>
+
+        <h2>6. Acceptable Use</h2>
+        <p>You agree not to use the Service for any unlawful purpose, including money laundering or financing of terrorism. We reserve the right to terminate access for any user violating these terms.</p>
+
+        <h2>7. Limitation of Liability</h2>
+        <p>To the maximum extent permitted by law, Seabe Digital shall not be liable for any indirect, incidental, or consequential damages arising out of your use of the Service.</p>
+
+        <h2>8. Contact Us</h2>
+        <p>For any questions regarding these Terms, please contact us:</p>
+        <p>
+            <strong>Email:</strong> madoda@seabe.co.za<br>
+            <strong>Website:</strong> www.seabe.co.za
+        </p>
+
+        <footer>
+            &copy; 2026 Seabe Digital. All rights reserved.
+        </footer>
+    </div><br><a href="/register" style="color:#0a4d3c;">&larr; Back</a></div>`);
     });
 
     app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1>"));
