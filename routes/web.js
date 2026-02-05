@@ -116,7 +116,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                     <div class="container" style="display:grid; gap:40px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
                         <div><h4 style="color:var(--accent)">SEABE.</h4><p>Empowering the African Church.</p></div>
                         <div><h4>Platform</h4><a href="/register">Register</a><a href="/demo">Book Demo</a></div>
-                        <div><h4>Legal</h4><a href="/terms">Terms of Service</a><a href="#">Privacy</a></div>
+                        <div><h4>Legal</h4><a href="/terms">Terms of Service</a><a href="/Legal">Compliance</a></div>
                         <div><h4>Contact</h4><a href="mailto:madoda@seabe.co.za">madoda@seabe.co.za</a></div>
                     </div>
                 </footer>
