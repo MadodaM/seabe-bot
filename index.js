@@ -59,6 +59,11 @@ app.get('/privacy', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'privacy.html'));
 });
 
+// --- COMPLIANCE ROUTE ---
+app.get('/legal', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'legal.html'));
+});
+
 // --- MEMORY ---
 let userSession = {}; 
 

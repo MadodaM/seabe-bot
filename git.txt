@@ -1,8 +1,8 @@
 		git add .
-		git commit -m "upgrade to Posgres"
+		git commit -m "Fix: website update"
 		git push
 		
 		
 		git add .
-		git commit -m "Fix: Pass ChurchName to Paystack, fix Webhook syntax error, remove duplicate receipt"
+		git commit -m "Fix: website update"
 		git push origin test
