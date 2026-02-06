@@ -25,25 +25,25 @@ const {
     cancelSubscription       // Add this
 } = require('./services/paystack');
 
-// HELPER: Fetch a random active ad for a church
+// Helper Function to fetch Ads
 async function getFooterAd(churchId) {
-    // 1. Find all active ads that haven't expired
-    const ads = await prisma.ad.findMany({
-        where: {
-            churchId: churchId,
-            status: 'Active',
-            expiryDate: { gte: new Date() }
+    try {
+        const ad = await prisma.ad.findFirst({
+            where: { 
+                churchId: churchId,
+                status: 'Active' // Check casing: 'Active' vs 'active'
+            },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        if (ad) {
+            return `\n\n----------------\n💡 *SPONSORED:*\n${ad.body}\n----------------`;
         }
-    });
-
-    // 2. If no ads, return empty string
-    if (ads.length === 0) return "";
-
-    // 3. Pick one random ad
-    const randomAd = ads[Math.floor(Math.random() * ads.length)];
-    
-    // 4. Format it visually
-    return `\n\n------------------\n📢 *Community Corner*\n${randomAd.content}`;
+        return ""; // Return empty string if no ad
+    } catch (e) {
+        console.error("Ad Fetch Error:", e);
+        return "";
+    }
 }
 // --- CONFIGURATION ---
 const prisma = new PrismaClient();
@@ -279,7 +279,7 @@ app.post('/whatsapp', async (req, res) => {
                 const churches = await prisma.church.findMany({ orderBy: { name: 'asc' } });
                 
                 // 1. Start with the Welcome Header
-                let list = "Welcome to Seabe! 🇿🇦\nPlease select your church:\n";
+                let list = "Welcome to Seabe Pay! 🇿🇦\nPlease select your church:\n";
                 
                 // 2. Add the Menu Items (The Churches)
                 churches.forEach((c, index) => { 
@@ -319,11 +319,28 @@ app.post('/whatsapp', async (req, res) => {
             const churchName = userSession[cleanPhone].churchName;
             
             // MAIN MENU
-            if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
-                userSession[cleanPhone].step = 'MENU';
-                const adText = await getAdSuffix(churchCode);
-                reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner 🔁\n*6.* Ministry News 📰\n*7.* My Profile 👤\n*8.* My History 📜` + adText;
-            }
+if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
+    userSession[cleanPhone].step = 'MENU';
+    
+    // 1. Fetch the Ad
+    // (Ensure getFooterAd returns an empty string "" if no ad is found)
+    const adFooter = await getFooterAd(user.churchId);
+
+    // 2. Build the Message (Put adFooter INSIDE the backticks using ${...})
+    const reply = `👋 *Welcome to ${user.church.name}* 👋
+
+*1.* General Offering 🎁
+*2.* Pay Tithe 🏛️
+*3.* Events & Tickets 🎟️
+*4.* Switch Church 🔄
+*5.* Monthly Partner 🔁
+*6.* Ministry News 📰
+*7.* My Profile 👤
+*8.* My History 📜${adFooter}`; 
+
+    // 3. Send the message (Use 'reply', NOT 'menuMessage')
+    await client.sendMessage(from, reply);
+}
 
             // OPTION 8: HISTORY
             else if (incomingMsg === '8' && userSession[cleanPhone]?.step === 'MENU') {
