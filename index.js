@@ -318,16 +318,24 @@ app.post('/whatsapp', async (req, res) => {
             const churchCode = userSession[cleanPhone].churchCode;
             const churchName = userSession[cleanPhone].churchName;
             
-            // MAIN MENU
-if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
-    userSession[cleanPhone].step = 'MENU';
-    
-    // 1. Fetch the Ad
-    // (Ensure getFooterAd returns an empty string "" if no ad is found)
-    const adFooter = await getFooterAd(user.churchId);
+// MAIN MENU
+            if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
+                userSession[cleanPhone].step = 'MENU';
+                
+                // 1. We need the Church ID to find the Ad
+                // (We use the churchCode you already have in the variable above)
+                const activeChurch = await prisma.church.findUnique({
+                    where: { code: churchCode }
+                });
 
-    // 2. Build the Message (Put adFooter INSIDE the backticks using ${...})
-    const reply = `👋 *Welcome to ${user.church.name}* 👋
+                // 2. Fetch the Ad safely
+                let adFooter = "";
+                if (activeChurch) {
+                    adFooter = await getFooterAd(activeChurch.id);
+                }
+
+                // 3. Build the Reply (Fixed the syntax error here)
+                reply = `👋 *Welcome to ${churchName}* 👋
 
 *1.* General Offering 🎁
 *2.* Pay Tithe 🏛️
@@ -336,11 +344,15 @@ if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
 *5.* Monthly Partner 🔁
 *6.* Ministry News 📰
 *7.* My Profile 👤
-*8.* My History 📜${adFooter}`; 
+*8.* My History 📜${adFooter}`;
 
-    // 3. Send the message (Use 'reply', NOT 'menuMessage')
-    await client.sendMessage(from, reply);
-}
+                // 4. Send immediately (Keeps behavior consistent with your original code)
+                await client.sendMessage(from, reply);
+                
+                // Prevent double-sending at the bottom of the file
+                res.end(); 
+                return;
+            }
 
             // OPTION 8: HISTORY
             else if (incomingMsg === '8' && userSession[cleanPhone]?.step === 'MENU') {
