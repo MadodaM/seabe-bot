@@ -346,8 +346,8 @@ app.post('/whatsapp', async (req, res) => {
 *7.* My Profile 👤
 *8.* My History 📜${adFooter}`;
 
-                // 4. Send immediately (Keeps behavior consistent with your original code)
-                await client.sendMessage(from, reply);
+                // 4. Send immediately
+await client.sendMessage(sender, reply); // ⬅️ CHANGED 'from' to 'sender'
                 
                 // Prevent double-sending at the bottom of the file
                 res.end(); 
