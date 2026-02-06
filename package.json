@@ -6,7 +6,10 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node index.js",
-	"onboard": "node scripts/onboard.js"  
+	"onboard": "node scripts/onboard.js",
+	"add-event": "node scripts/add-event.js",
+	"update-news": "node scripts/update-news.js",
+	"add-ad": "node scripts/add-ad.js"	
   },
   "keywords": [],
   "author": "",

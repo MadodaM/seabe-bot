@@ -1,8 +1,8 @@
 		git add .
-		git commit -m "Fix: website update"
+		git commit -m "Fix: website update - compliance"
 		git push
 		
 		
 		git add .
-		git commit -m "Fix: website update"
+		git commit -m "Fix: website update - compliance"
 		git push origin test

@@ -25,6 +25,26 @@ const {
     cancelSubscription       // Add this
 } = require('./services/paystack');
 
+// HELPER: Fetch a random active ad for a church
+async function getFooterAd(churchId) {
+    // 1. Find all active ads that haven't expired
+    const ads = await prisma.ad.findMany({
+        where: {
+            churchId: churchId,
+            status: 'Active',
+            expiryDate: { gte: new Date() }
+        }
+    });
+
+    // 2. If no ads, return empty string
+    if (ads.length === 0) return "";
+
+    // 3. Pick one random ad
+    const randomAd = ads[Math.floor(Math.random() * ads.length)];
+    
+    // 4. Format it visually
+    return `\n\n------------------\n📢 *Community Corner*\n${randomAd.content}`;
+}
 // --- CONFIGURATION ---
 const prisma = new PrismaClient();
 const ACCOUNT_SID = process.env.TWILIO_SID; 

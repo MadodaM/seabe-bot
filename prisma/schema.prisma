@@ -21,6 +21,8 @@ model Church {
   transactions   Transaction[]
   events         Event[]
   createdAt      DateTime @default(now())
+  news        	News[]   // ⬅️ Add this line so the Church knows about its News
+  ads          Ad[]     // ⬅️ Add this line
 }
 
 model Member {
@@ -57,16 +59,6 @@ model Event {
   church     Church    @relation(fields: [churchCode], references: [code])
 }
 
-// --- 4. ADS & NEWS (New) ---
-model Ad {
-  id         Int      @id @default(autoincrement())
-  text       String
-  target     String   @default("Global") // "Global" or ChurchCode
-  status     String   @default("Active")
-  expiryDate DateTime 
-  createdAt  DateTime @default(now())
-}
-
 model News {
   id         Int      @id @default(autoincrement())
   headline   String
@@ -75,4 +67,17 @@ model News {
   status     String   @default("Active")
   expiryDate DateTime 
   createdAt  DateTime @default(now())
+  churchId    Int
+  church      Church   @relation(fields: [churchId], references: [id])
+}
+
+model Ad {
+  id          Int      @id @default(autoincrement())
+  content     String   // e.g. "🔧 Plumber: Call John 082..."
+  status      String   @default("Active")
+  expiryDate  DateTime?
+  createdAt   DateTime @default(now())
+
+  churchId    Int
+  church      Church   @relation(fields: [churchId], references: [id])
 }
