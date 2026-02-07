@@ -367,9 +367,9 @@ module.exports = function(app, { prisma }) {
         } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
-    // ============================================================
-    // 3. ADS (UPDATED FOR NEW SCHEMA)
-    // ============================================================
+// ============================================================
+// 3. ADS (With View Counter)
+// ============================================================
     app.get('/admin/ads', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         try {
@@ -380,6 +380,11 @@ module.exports = function(app, { prisma }) {
                 <tr>
                     <td>${a.content}</td>
                     <td>${a.church ? a.church.name : 'Unknown Church'}</td>
+                    
+                    <td style="font-weight:bold; color:#0a4d3c; font-size:1.1em;">
+                        👁️ ${a.views || 0}
+                    </td>
+
                     <td><span class="tag ${a.status==='Active'?'tag-active':'tag-inactive'}">${a.status}</span></td>
                     <td>${new Date(a.expiryDate).toLocaleDateString()}</td>
                     <td style="text-align:right;"><a href="/admin/ads/edit/${a.id}" class="btn btn-edit">Edit</a></td>
@@ -388,7 +393,18 @@ module.exports = function(app, { prisma }) {
 
             res.send(renderAdminPage('Manage Ads', `
                 <div style="text-align:right; margin-bottom:20px;"><a href="/admin/ads/add" class="btn btn-primary">+ New Ad</a></div>
-                <table><thead><tr><th>Ad Content</th><th>Church</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Ad Content</th>
+                            <th>Church</th>
+                            <th>Views</th> <th>Status</th>
+                            <th>Expires</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
             `));
         } catch (e) { res.send(renderAdminPage('Error', '', e.message)); }
     });

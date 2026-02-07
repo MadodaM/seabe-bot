@@ -159,15 +159,23 @@ async function getAdSuffix(churchId) {
     try {
         const ad = await prisma.ad.findFirst({ 
             where: { 
-                churchId: churchId,           // MATCHES: Your new 'churchId' column
-                status: 'Active',             // MATCHES: Your 'status' column
-                expiryDate: { gte: new Date() } // MATCHES: Your 'expiryDate'
+                churchId: churchId,           
+                status: 'Active',             
+                expiryDate: { gte: new Date() } 
             },
-            orderBy: { createdAt: 'desc' }    // Shows the newest ad first
+            orderBy: { createdAt: 'desc' }    
         });
 
-        // MATCHES: Your 'content' column (Old code used 'text')
-        if (ad) return `\n\n----------------\n💡 *SPONSORED:*\n${ad.content}\n----------------`;
+        if (ad) {
+            // 👇 NEW: Count the view in the background (Fire & Forget)
+            prisma.ad.update({
+                where: { id: ad.id },
+                data: { views: { increment: 1 } }
+            }).catch(e => console.error("Failed to count ad view:", e));
+
+            // Return the ad text
+            return `\n\n----------------\n💡 *SPONSORED:*\n${ad.content}\n----------------`;
+        }
         
         return "";
     } catch (e) { 
