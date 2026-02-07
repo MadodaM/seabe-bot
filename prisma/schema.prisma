@@ -1,5 +1,3 @@
-// prisma/schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -9,54 +7,61 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// --- 1. CHURCHES & MEMBERS ---
 model Church {
-  id             Int      @id @default(autoincrement())
+  id             Int           @id @default(autoincrement())
   name           String
-  code           String   @unique // e.g. "GRACE123"
+  code           String        @unique
   email          String?
-  subaccountCode String   @default("PENDING") // Paystack Subaccount
+  subaccountCode String        @default("PENDING")
   tosAcceptedAt  DateTime?
-  members        Member[]
-  transactions   Transaction[]
+  createdAt      DateTime      @default(now())
+  Ad             Ad[]
   events         Event[]
-  createdAt      DateTime @default(now())
-  news        	News[]   // ⬅️ Add this line so the Church knows about its News
-  ads          Ad[]     // ⬅️ Add this line
+  members        Member[]
+  News           News[]
+  transactions   Transaction[]
 }
 
 model Member {
   id         Int      @id @default(autoincrement())
-  phone      String   @unique // WhatsApp Number
+  phone      String   @unique
   churchCode String
-  church     Church   @relation(fields: [churchCode], references: [code])
   email      String?
   createdAt  DateTime @default(now())
+  church     Church   @relation(fields: [churchCode], references: [code])
 }
 
-// --- 2. TRANSACTIONS ---
 model Transaction {
   id         Int      @id @default(autoincrement())
   reference  String   @unique
   amount     Float
-  type       String   // TITHE, OFFERING, EVENT
+  type       String
   phone      String
-  status     String   @default("PENDING") // 🔴 NEW: PENDING / SUCCESS / FAILED
+  status     String   @default("PENDING")
   churchCode String
-  church     Church   @relation(fields: [churchCode], references: [code])
   date       DateTime @default(now())
+  church     Church   @relation(fields: [churchCode], references: [code])
 }
 
-// --- 3. EVENTS (Updated with Expiry) ---
 model Event {
   id         Int       @id @default(autoincrement())
   name       String
-  date       String    // Display text e.g. "Friday 7pm"
+  date       String
   price      Float
-  status     String    @default("Active") // Active / Inactive
-  expiryDate DateTime? // Auto-hide after this date
+  status     String    @default("Active")
+  expiryDate DateTime?
   churchCode String
   church     Church    @relation(fields: [churchCode], references: [code])
+}
+
+model Ad {
+  id         Int       @id @default(autoincrement())
+  status     String    @default("Active")
+  expiryDate DateTime?
+  createdAt  DateTime  @default(now())
+  churchId   Int
+  content    String
+  Church     Church    @relation(fields: [churchId], references: [id])
 }
 
 model News {
@@ -65,19 +70,8 @@ model News {
   body       String?
   target     String   @default("Global")
   status     String   @default("Active")
-  expiryDate DateTime 
+  expiryDate DateTime
   createdAt  DateTime @default(now())
-  churchId    Int
-  church      Church   @relation(fields: [churchId], references: [id])
-}
-
-model Ad {
-  id          Int      @id @default(autoincrement())
-  content     String   // e.g. "🔧 Plumber: Call John 082..."
-  status      String   @default("Active")
-  expiryDate  DateTime?
-  createdAt   DateTime @default(now())
-
-  churchId    Int
-  church      Church   @relation(fields: [churchId], references: [id])
+  churchId   Int
+  Church     Church   @relation(fields: [churchId], references: [id])
 }

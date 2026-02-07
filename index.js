@@ -25,26 +25,6 @@ const {
     cancelSubscription       // Add this
 } = require('./services/paystack');
 
-// Helper Function to fetch Ads
-async function getFooterAd(churchId) {
-    try {
-        const ad = await prisma.ad.findFirst({
-            where: { 
-                churchId: churchId,
-                status: 'Active' // Check casing: 'Active' vs 'active'
-            },
-            orderBy: { createdAt: 'desc' }
-        });
-
-        if (ad) {
-            return `\n\n----------------\n💡 *SPONSORED:*\n${ad.body}\n----------------`;
-        }
-        return ""; // Return empty string if no ad
-    } catch (e) {
-        console.error("Ad Fetch Error:", e);
-        return "";
-    }
-}
 // --- CONFIGURATION ---
 const prisma = new PrismaClient();
 const ACCOUNT_SID = process.env.TWILIO_SID; 
@@ -174,19 +154,26 @@ function generatePDF(type, amount, ref, date, phone, churchName) {
     return filename;
 }
 
-// --- DYNAMIC AD ENGINE ---
-async function getAdSuffix(churchCode) {
+// --- NEW DYNAMIC AD ENGINE ---
+async function getAdSuffix(churchId) {
     try {
         const ad = await prisma.ad.findFirst({ 
             where: { 
-                status: 'Active', 
-                expiryDate: { gte: new Date() }, 
-                OR: [{ target: 'Global' }, { target: churchCode }] 
-            } 
+                churchId: churchId,           // MATCHES: Your new 'churchId' column
+                status: 'Active',             // MATCHES: Your 'status' column
+                expiryDate: { gte: new Date() } // MATCHES: Your 'expiryDate'
+            },
+            orderBy: { createdAt: 'desc' }    // Shows the newest ad first
         });
-        if (ad) return `\n\n----------------\n💡 *Did you know?*\n${ad.text}`;
+
+        // MATCHES: Your 'content' column (Old code used 'text')
+        if (ad) return `\n\n----------------\n💡 *SPONSORED:*\n${ad.content}\n----------------`;
+        
         return "";
-    } catch (e) { return ""; }
+    } catch (e) { 
+        console.log("Ad Error:", e);
+        return ""; 
+    }
 }
 
 // ==========================================
@@ -279,7 +266,7 @@ app.post('/whatsapp', async (req, res) => {
                 const churches = await prisma.church.findMany({ orderBy: { name: 'asc' } });
                 
                 // 1. Start with the Welcome Header
-                let list = "Welcome to Seabe Pay! 🇿🇦\nPlease select your church:\n";
+                let list = "Welcome to Seabe! 🇿🇦\nPlease select your church:\n";
                 
                 // 2. Add the Menu Items (The Churches)
                 churches.forEach((c, index) => { 
@@ -318,42 +305,16 @@ app.post('/whatsapp', async (req, res) => {
             const churchCode = userSession[cleanPhone].churchCode;
             const churchName = userSession[cleanPhone].churchName;
             
-// MAIN MENU
+            // MAIN MENU
             if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
-                userSession[cleanPhone].step = 'MENU';
-                
-                // 1. We need the Church ID to find the Ad
-                // (We use the churchCode you already have in the variable above)
-                const activeChurch = await prisma.church.findUnique({
-                    where: { code: churchCode }
-                });
-
-                // 2. Fetch the Ad safely
-                let adFooter = "";
-                if (activeChurch) {
-                    adFooter = await getFooterAd(activeChurch.id);
-                }
-
-                // 3. Build the Reply (Fixed the syntax error here)
-                reply = `👋 *Welcome to ${churchName}* 👋
-
-*1.* General Offering 🎁
-*2.* Pay Tithe 🏛️
-*3.* Events & Tickets 🎟️
-*4.* Switch Church 🔄
-*5.* Monthly Partner 🔁
-*6.* Ministry News 📰
-*7.* My Profile 👤
-*8.* My History 📜${adFooter}`;
-
-                // 4. Send immediately
-await client.sendMessage(sender, reply); // ⬅️ CHANGED 'from' to 'sender'
-                
-                // Prevent double-sending at the bottom of the file
-                res.end(); 
-                return;
-            }
-
+				userSession[cleanPhone].step = 'MENU';
+    
+				// 👇 UPDATED LINE: We now pass the user's churchId (Number), not the code (String)
+				// Make sure 'user' is the variable holding your Prisma Member result
+				const adText = await getAdSuffix(user.churchId); 
+    
+				reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner 🔁\n*6.* Ministry News 📰\n*7.* My Profile 👤\n*8.* My History 📜` + adText;
+}
             // OPTION 8: HISTORY
             else if (incomingMsg === '8' && userSession[cleanPhone]?.step === 'MENU') {
                 const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
