@@ -308,7 +308,12 @@ app.post('/whatsapp', async (req, res) => {
             // MAIN MENU
             if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
 				userSession[cleanPhone].step = 'MENU';
-    
+				const member = await prisma.member.findUnique({
+				where: { phone: cleanPhone }, // Use your phone variable (might be 'from' or 'cleanPhone')
+				include: { church: true }     // We need the church info
+				});
+
+if (!member) return; // Safety: Stop if user not foun
 				// 👇 UPDATED LINE: We now pass the user's churchId (Number), not the code (String)
 				// Make sure 'user' is the variable holding your Prisma Member result
 				// ✅ CORRECT (If your variable is named 'member')
