@@ -20,6 +20,8 @@ model Church {
   members        Member[]
   News           News[]
   transactions   Transaction[]
+  
+  
 }
 
 model Member {
@@ -55,23 +57,27 @@ model Event {
 }
 
 model Ad {
-  id         Int       @id @default(autoincrement())
-  status     String    @default("Active")
-  expiryDate DateTime?
-  createdAt  DateTime  @default(now())
-  churchId   Int
-  content    String
-  Church     Church    @relation(fields: [churchId], references: [id])
+  id          Int      @id @default(autoincrement())
+  status      String   @default("Active")
+  expiryDate  DateTime?
+  createdAt   DateTime @default(now())
+  churchId    Int
+  content     String
+  
+  // 👇 CHANGE 'Church' TO 'church' (lowercase c)
+  church      Church   @relation(fields: [churchId], references: [id])
 }
 
 model News {
-  id         Int      @id @default(autoincrement())
-  headline   String
-  body       String?
-  target     String   @default("Global")
-  status     String   @default("Active")
-  expiryDate DateTime
-  createdAt  DateTime @default(now())
-  churchId   Int
-  Church     Church   @relation(fields: [churchId], references: [id])
+  id          Int      @id @default(autoincrement())
+  headline    String
+  body        String?
+  target      String   @default("Global")
+  status      String   @default("Active")
+  expiryDate  DateTime
+  createdAt   DateTime @default(now())
+  churchId    Int
+
+  // 👇 CHANGE 'Church' TO 'church' (lowercase c)
+  church      Church   @relation(fields: [churchId], references: [id])
 }
