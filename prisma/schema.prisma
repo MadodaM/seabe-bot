@@ -64,7 +64,9 @@ model Ad {
   churchId    Int
   content     String
   
-  // 👇 CHANGE 'Church' TO 'church' (lowercase c)
+  // 👇 ADD THIS LINE
+  views       Int      @default(0)
+
   church      Church   @relation(fields: [churchId], references: [id])
 }
 
