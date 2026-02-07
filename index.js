@@ -311,7 +311,8 @@ app.post('/whatsapp', async (req, res) => {
     
 				// 👇 UPDATED LINE: We now pass the user's churchId (Number), not the code (String)
 				// Make sure 'user' is the variable holding your Prisma Member result
-				const adText = await getAdSuffix(user.churchId); 
+				// ✅ CORRECT (If your variable is named 'member')
+				const adText = await getAdSuffix(member.churchId);
     
 				reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner 🔁\n*6.* Ministry News 📰\n*7.* My Profile 👤\n*8.* My History 📜` + adText;
 }
