@@ -508,20 +508,22 @@ module.exports = function(app, { prisma }) {
         `));
     });
 
-    app.post('/admin/news/add', async (req, res) => {
-        try {
-            await prisma.news.create({ 
-                data: { 
-                    title: req.body.title, // Updated to standard 'title' (or check if your DB uses 'headline')
-                    body: req.body.body, 
-                    churchId: parseInt(req.body.churchId), // Link to church
-                    status: req.body.status, 
-                    expiryDate: safeDate(req.body.expiryDate) 
-                } 
-            });
-            res.redirect('/admin/news');
-        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
-    });
+app.post('/admin/news/add', async (req, res) => {
+    try {
+        await prisma.news.create({ 
+            data: { 
+                // 👇 CHANGE 'title' TO 'headline'
+                headline: req.body.title, 
+                
+                body: req.body.body, 
+                churchId: parseInt(req.body.churchId), 
+                status: req.body.status, 
+                expiryDate: safeDate(req.body.expiryDate) 
+            } 
+        });
+        res.redirect('/admin/news');
+    } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
+});
 
     app.get('/admin/news/edit/:id', async (req, res) => {
         const n = await prisma.news.findUnique({ where: { id: parseInt(req.params.id) } });
@@ -539,20 +541,22 @@ module.exports = function(app, { prisma }) {
         `));
     });
 
-    app.post('/admin/news/update', async (req, res) => {
-        try {
-            await prisma.news.update({ 
-                where: { id: parseInt(req.body.id) }, 
-                data: { 
-                    title: req.body.title, 
-                    body: req.body.body, 
-                    status: req.body.status, 
-                    expiryDate: safeDate(req.body.expiryDate) 
-                } 
-            });
-            res.redirect('/admin/news');
-        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
-    });
+  app.post('/admin/news/update', async (req, res) => {
+    try {
+        await prisma.news.update({ 
+            where: { id: parseInt(req.body.id) }, 
+            data: { 
+                // 👇 CHANGE 'title' TO 'headline'
+                headline: req.body.title, 
+                
+                body: req.body.body, 
+                status: req.body.status, 
+                expiryDate: safeDate(req.body.expiryDate) 
+            } 
+        });
+        res.redirect('/admin/news');
+    } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
+});
 
     // ============================================================
     // 5. USERS (Search)
