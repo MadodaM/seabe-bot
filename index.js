@@ -154,19 +154,26 @@ function generatePDF(type, amount, ref, date, phone, churchName) {
     return filename;
 }
 
-// --- DYNAMIC AD ENGINE ---
-async function getAdSuffix(churchCode) {
+// --- NEW DYNAMIC AD ENGINE ---
+async function getAdSuffix(churchId) {
     try {
         const ad = await prisma.ad.findFirst({ 
             where: { 
-                status: 'Active', 
-                expiryDate: { gte: new Date() }, 
-                OR: [{ target: 'Global' }, { target: churchCode }] 
-            } 
+                churchId: churchId,           // MATCHES: Your new 'churchId' column
+                status: 'Active',             // MATCHES: Your 'status' column
+                expiryDate: { gte: new Date() } // MATCHES: Your 'expiryDate'
+            },
+            orderBy: { createdAt: 'desc' }    // Shows the newest ad first
         });
-        if (ad) return `\n\n----------------\n💡 *Did you know?*\n${ad.text}`;
+
+        // MATCHES: Your 'content' column (Old code used 'text')
+        if (ad) return `\n\n----------------\n💡 *SPONSORED:*\n${ad.content}\n----------------`;
+        
         return "";
-    } catch (e) { return ""; }
+    } catch (e) { 
+        console.log("Ad Error:", e);
+        return ""; 
+    }
 }
 
 // ==========================================
@@ -300,11 +307,14 @@ app.post('/whatsapp', async (req, res) => {
             
             // MAIN MENU
             if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
-                userSession[cleanPhone].step = 'MENU';
-                const adText = await getAdSuffix(churchCode);
-                reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner 🔁\n*6.* Ministry News 📰\n*7.* My Profile 👤\n*8.* My History 📜` + adText;
-            }
-
+				userSession[cleanPhone].step = 'MENU';
+    
+				// 👇 UPDATED LINE: We now pass the user's churchId (Number), not the code (String)
+				// Make sure 'user' is the variable holding your Prisma Member result
+				const adText = await getAdSuffix(user.churchId); 
+    
+				reply = `Welcome to *${churchName}* 👋\n\n*1.* General Offering 🎁\n*2.* Pay Tithe 🏛️\n*3.* Events & Tickets 🎟️\n*4.* Switch Church 🔄\n*5.* Monthly Partner 🔁\n*6.* Ministry News 📰\n*7.* My Profile 👤\n*8.* My History 📜` + adText;
+}
             // OPTION 8: HISTORY
             else if (incomingMsg === '8' && userSession[cleanPhone]?.step === 'MENU') {
                 const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
