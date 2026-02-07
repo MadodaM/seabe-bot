@@ -1,5 +1,5 @@
 // routes/admin.js
-// VERSION: 3.0 (Master Version: Robust, Readable, Fully Featured)
+// VERSION: 3.1 (Updated for Ad Engine & Database Relations)
 require('dotenv').config();
 
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
@@ -134,7 +134,7 @@ module.exports = function(app, { prisma }) {
         try {
             const counts = {
                 churches: await prisma.church.count(),
-                events: await prisma.event.count().catch(() => 0), // Safe check
+                events: await prisma.event.count().catch(() => 0),
                 ads: await prisma.ad.count().catch(() => 0)
             };
 
@@ -272,7 +272,7 @@ module.exports = function(app, { prisma }) {
                     <td>${e.name}</td>
                     <td>${e.date}</td>
                     <td>R${e.price}</td>
-                    <td>${e.church.name}</td>
+                    <td>${e.church ? e.church.name : 'Unknown'}</td>
                     <td><span class="tag ${e.status === 'Active' ? 'tag-active' : 'tag-inactive'}">${e.status}</span></td>
                     <td>${e.expiryDate ? new Date(e.expiryDate).toLocaleDateString() : '-'}</td>
                     <td style="text-align:right;"><a href="/admin/events/edit/${e.id}" class="btn btn-edit">Edit</a></td>
@@ -333,201 +333,4 @@ module.exports = function(app, { prisma }) {
         const e = await prisma.event.findUnique({ where: { id: parseInt(req.params.id) } });
         const exp = e.expiryDate ? e.expiryDate.toISOString().split('T')[0] : '';
         
-        res.send(renderAdminPage('Edit Event', `
-            <form action="/admin/events/update" method="POST" class="card-form">
-                <input type="hidden" name="id" value="${e.id}">
-                <div class="form-group"><label>Event Name</label><input name="name" value="${e.name}"></div>
-                <div class="form-group"><label>Display Date</label><input name="date" value="${e.date}"></div>
-                <div class="form-group">
-                    <label>Status</label>
-                    <select name="status">
-                        <option ${e.status==='Active'?'selected':''}>Active</option>
-                        <option ${e.status==='Inactive'?'selected':''}>Inactive</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Expiry Date</label>
-                    <input type="date" name="expiryDate" value="${exp}">
-                </div>
-                <button class="btn btn-primary">Update Event</button>
-            </form>
-        `));
-    });
-
-    app.post('/admin/events/update', async (req, res) => {
-        try {
-            await prisma.event.update({ 
-                where: { id: parseInt(req.body.id) }, 
-                data: { 
-                    name: req.body.name, date: req.body.date, 
-                    status: req.body.status, expiryDate: safeDate(req.body.expiryDate) 
-                } 
-            });
-            res.redirect('/admin/events');
-        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
-    });
-
-    // ============================================================
-    // 3. ADS
-    // ============================================================
-    app.get('/admin/ads', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
-        try {
-            const ads = await prisma.ad.findMany({ orderBy: { id: 'desc' } });
-            
-            const rows = ads.map(a => `
-                <tr>
-                    <td>${a.text}</td>
-                    <td>${a.target}</td>
-                    <td><span class="tag ${a.status==='Active'?'tag-active':'tag-inactive'}">${a.status}</span></td>
-                    <td>${new Date(a.expiryDate).toLocaleDateString()}</td>
-                    <td style="text-align:right;"><a href="/admin/ads/edit/${a.id}" class="btn btn-edit">Edit</a></td>
-                </tr>
-            `).join('');
-
-            res.send(renderAdminPage('Manage Ads', `
-                <div style="text-align:right; margin-bottom:20px;"><a href="/admin/ads/add" class="btn btn-primary">+ New Ad</a></div>
-                <table><thead><tr><th>Text</th><th>Target</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table>
-            `));
-        } catch (e) { res.send(renderAdminPage('Error', '', e.message)); }
-    });
-
-    app.get('/admin/ads/add', (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
-        res.send(renderAdminPage('New Ad', `
-            <form method="POST" class="card-form">
-                <div class="form-group"><label>Ad Text</label><textarea name="text" rows="3" required></textarea></div>
-                <div class="form-group"><label>Target (Church Code or 'Global')</label><input name="target" value="Global"></div>
-                <div class="form-group"><label>Status</label><select name="status"><option>Active</option><option>Inactive</option></select></div>
-                <div class="form-group"><label>Expiry</label><input type="date" name="expiryDate" required></div>
-                <button class="btn btn-primary">Save Ad</button>
-            </form>
-        `));
-    });
-
-    app.post('/admin/ads/add', async (req, res) => {
-        try {
-            await prisma.ad.create({ 
-                data: { text: req.body.text, target: req.body.target, status: req.body.status, expiryDate: safeDate(req.body.expiryDate) } 
-            });
-            res.redirect('/admin/ads');
-        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
-    });
-
-    app.get('/admin/ads/edit/:id', async (req, res) => {
-        const ad = await prisma.ad.findUnique({ where: { id: parseInt(req.params.id) } });
-        const exp = ad.expiryDate.toISOString().split('T')[0];
-        
-        res.send(renderAdminPage('Edit Ad', `
-            <form action="/admin/ads/update" method="POST" class="card-form">
-                <input type="hidden" name="id" value="${ad.id}">
-                <div class="form-group"><label>Text</label><textarea name="text" rows="3">${ad.text}</textarea></div>
-                <div class="form-group"><label>Status</label><select name="status"><option ${ad.status==='Active'?'selected':''}>Active</option><option ${ad.status==='Inactive'?'selected':''}>Inactive</option></select></div>
-                <div class="form-group"><label>Expiry</label><input type="date" name="expiryDate" value="${exp}"></div>
-                <button class="btn btn-primary">Update Ad</button>
-            </form>
-        `));
-    });
-
-    app.post('/admin/ads/update', async (req, res) => {
-        try {
-            await prisma.ad.update({ where: { id: parseInt(req.body.id) }, data: { text: req.body.text, status: req.body.status, expiryDate: safeDate(req.body.expiryDate) } });
-            res.redirect('/admin/ads');
-        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
-    });
-
-    // ============================================================
-    // 4. NEWS
-    // ============================================================
-    app.get('/admin/news', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
-        try {
-            const news = await prisma.news.findMany({ orderBy: { id: 'desc' } });
-            const rows = news.map(n => `
-                <tr>
-                    <td>${n.headline}</td>
-                    <td><span class="tag ${n.status==='Active'?'tag-active':'tag-inactive'}">${n.status}</span></td>
-                    <td>${new Date(n.expiryDate).toLocaleDateString()}</td>
-                    <td style="text-align:right;"><a href="/admin/news/edit/${n.id}" class="btn btn-edit">Edit</a></td>
-                </tr>
-            `).join('');
-
-            res.send(renderAdminPage('Manage News', `
-                <div style="text-align:right; margin-bottom:20px;"><a href="/admin/news/add" class="btn btn-primary">+ Add News</a></div>
-                <table><thead><tr><th>Headline</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table>
-            `));
-        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
-    });
-
-    app.get('/admin/news/add', (req, res) => {
-        res.send(renderAdminPage('Add News', `
-            <form method="POST" class="card-form">
-                <div class="form-group"><label>Headline</label><input name="headline" required></div>
-                <div class="form-group"><label>Body</label><textarea name="body" rows="4"></textarea></div>
-                <div class="form-group"><label>Status</label><select name="status"><option>Active</option><option>Inactive</option></select></div>
-                <div class="form-group"><label>Expiry</label><input type="date" name="expiryDate" required></div>
-                <button class="btn btn-primary">Publish News</button>
-            </form>
-        `));
-    });
-
-    app.post('/admin/news/add', async (req, res) => {
-        try {
-            await prisma.news.create({ 
-                data: { headline: req.body.headline, body: req.body.body, status: req.body.status, expiryDate: safeDate(req.body.expiryDate) } 
-            });
-            res.redirect('/admin/news');
-        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
-    });
-
-    app.get('/admin/news/edit/:id', async (req, res) => {
-        const n = await prisma.news.findUnique({ where: { id: parseInt(req.params.id) } });
-        const exp = n.expiryDate.toISOString().split('T')[0];
-        
-        res.send(renderAdminPage('Edit News', `
-            <form action="/admin/news/update" method="POST" class="card-form">
-                <input type="hidden" name="id" value="${n.id}">
-                <div class="form-group"><label>Headline</label><input name="headline" value="${n.headline}"></div>
-                <div class="form-group"><label>Body</label><textarea name="body" rows="4">${n.body}</textarea></div>
-                <div class="form-group"><label>Status</label><select name="status"><option ${n.status==='Active'?'selected':''}>Active</option><option ${n.status==='Inactive'?'selected':''}>Inactive</option></select></div>
-                <div class="form-group"><label>Expiry</label><input type="date" name="expiryDate" value="${exp}"></div>
-                <button class="btn btn-primary">Update News</button>
-            </form>
-        `));
-    });
-
-    app.post('/admin/news/update', async (req, res) => {
-        try {
-            await prisma.news.update({ where: { id: parseInt(req.body.id) }, data: { headline: req.body.headline, body: req.body.body, status: req.body.status, expiryDate: safeDate(req.body.expiryDate) } });
-            res.redirect('/admin/news');
-        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
-    });
-
-    // ============================================================
-    // 5. USERS (Search)
-    // ============================================================
-    app.get('/admin/users', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
-        const q = req.query.q || '';
-        
-        try {
-            const members = await prisma.member.findMany({ 
-                where: { OR: [{ phone: { contains: q } }, { churchCode: { contains: q, mode: 'insensitive' } }] }, 
-                take: 50, 
-                orderBy: { id: 'desc' } 
-            });
-
-            const rows = members.map(m => `<tr><td>${m.phone}</td><td><span class="tag">${m.churchCode}</span></td></tr>`).join('');
-            res.send(renderAdminPage('Manage Users', `
-                <form action="/admin/users" class="search-bar">
-                    <input name="q" value="${q}" placeholder="Search Phone or Church Code..." style="padding:10px; width:300px; border:1px solid #ddd; border-radius:4px;">
-                    <button class="btn btn-primary">Search</button>
-                </form>
-                <table>
-                    <thead><tr><th>Phone</th><th>Church</th></tr></thead>
-                    <tbody>${rows.length > 0 ? rows : '<tr><td colspan="2" style="text-align:center;">No users found.</td></tr>'}</tbody>
-                </table>
-            `));
-        } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
-    });
-};
+        res.send(renderAdmin
