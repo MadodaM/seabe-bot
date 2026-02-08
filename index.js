@@ -192,7 +192,10 @@ app.post('/whatsapp', async (req, res) => {
             if (session.step !== 'JOIN_SELECT') {
                  // PERFORM SEARCH
                  const results = await prisma.church.findMany({
-                     where: { name: { contains: incomingMsg, mode: 'insensitive' }, status: 'Active' },
+                     where: { 
+                         name: { contains: incomingMsg, mode: 'insensitive' }
+                         // We removed 'status' because it doesn't exist on the Church table
+                     },
                      take: 5
                  });
 
