@@ -21,16 +21,54 @@ model Church {
   News           News[]
   transactions   Transaction[]
   
+// --- BACK RELATIONS ---
+  members        Member[] @relation("ChurchLink")
+  societyMembers Member[] @relation("SocietyLink")
+}
   
 }
 
 model Member {
-  id         Int      @id @default(autoincrement())
-  phone      String   @unique
-  churchCode String
-  email      String?
-  createdAt  DateTime @default(now())
-  church     Church   @relation(fields: [churchCode], references: [code])
+  id           Int      @id @default(autoincrement())
+  
+  // --- USER IDENTITY ---
+  firstName    String
+  lastName     String
+  phone        String   @unique
+  email        String?
+  createdAt    DateTime @default(now())
+  
+  // --- LINK 1: THE CHURCH (Tithe/Offering) ---
+  churchCode   String?
+  church       Church?  @relation("ChurchLink", fields: [churchCode], references: [code])
+  
+  // --- LINK 2: THE SOCIETY (Policy/Dependents) ---
+  societyCode  String?
+  society      Church?  @relation("SocietyLink", fields: [societyCode], references: [code])
+
+  // --- SOCIETY DATA ---
+  status       String   @default("ACTIVE")
+  policyNumber String?      
+  joinedAt     DateTime @default(now())
+  
+  dependents   Dependent[]
+}
+
+// 👇 RESTORE THIS FULL MODEL AT THE BOTTOM
+model Dependent {
+  id          Int      @id @default(autoincrement())
+  firstName   String
+  lastName    String
+  relation    String
+  dateOfBirth DateTime?
+  memberId    Int
+  member      Member   @relation(fields: [memberId], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+enum OrgType {
+  CHURCH
+  BURIAL_SOCIETY
 }
 
 model Transaction {
