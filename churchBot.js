@@ -1,5 +1,5 @@
 // ==========================================
-// churchBot.js - Church Logic Handler
+// churchBot.js - Church Logic Handler (Fixed)
 // ==========================================
 const { 
     createPaymentLink, 
@@ -44,7 +44,7 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
                     `5. News 📰\n` +
                     `6. Profile 👤\n` +
                     `7. History 📜\n` +
-                    `8. Go to Society 🛡️\n\n` + // Navigation Option
+                    `8. Go to Society 🛡️\n\n` + 
                     `Reply with a number:${adText}`;
         }
 
@@ -90,7 +90,6 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
             // PROFILE
             else if (incomingMsg === '6') {
                 session.step = 'PROFILE_MENU';
-                // 👇 Added Option 3
                 reply = "👤 *My Profile*\n\n1. Update Email\n2. Manage Recurring Gifts\n3. Switch Church (Unlink)\n\nReply with a number:";
             }
 
@@ -105,7 +104,7 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
             // SWITCH TO SOCIETY
             else if (incomingMsg === '8') {
                  reply = "🔄 Switching to Burial Society mode...\nReply *Society* to continue.";
-                 delete session.mode; // Reset mode so router catches 'Society' next time
+                 delete session.mode; 
             }
 
             else {
@@ -177,6 +176,13 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
                      session.step = 'CANCEL_SUB_SELECT';
                      reply = subList;
                  }
+            } 
+            // OPTION 3: SWITCH CHURCH (UNLINK)
+            else if (incomingMsg === '3') {
+                await prisma.member.update({ where: { phone: cleanPhone }, data: { churchCode: null } });
+                delete session.mode; 
+                delete session.orgCode;
+                reply = "🔄 You have left this church.\n\nReply *Hi* to search for a new one.";
             }
         }
 
@@ -209,31 +215,12 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
         }
 
         // SEND REPLY
-		// 👇 OPTION 3: SWITCH CHURCH (The Fix)
-        else if (incomingMsg === '3') {
-                // ⚠️ CRITICAL: Do NOT delete the member! 
-                // Only set churchCode to null so they keep their Burial Society policy.
-                await prisma.member.update({
-                    where: { phone: cleanPhone },
-                    data: { churchCode: null } 
-                });
-
-                // Clear the session lock so the Router knows to run search next time
-                delete session.mode; 
-                delete session.orgCode;
-
-                reply = "🔄 You have left this church.\n\nReply *Hi* to search for a new one.";
-                // The router (index.js) will pick up the next message as a fresh search
-            }
-		
         if (reply) {
             twiml.message(reply);
             res.type('text/xml').send(twiml.toString());
         }
-		
-		}
 
-    } catch (e) {
+    } catch (e) {  // 👈 THIS WAS MISSING
         console.error("Church Bot Error:", e);
         res.sendStatus(500);
     }
