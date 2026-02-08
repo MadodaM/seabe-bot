@@ -267,56 +267,24 @@ app.post('/whatsapp', async (req, res) => {
 
 // --- SUCCESS PAGE ---
 app.get('/payment-success', (req, res) => {
-    <html>
+    // We send the HTML as a STRING inside backticks (`)
+    res.send(`
+        <html>
             <head>
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <style>
-                    body { 
-                        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; 
-                        text-align: center; 
-                        padding: 40px; 
-                        background-color: #f0f2f5; 
-                    }
-                    .card { 
-                        background: white; 
-                        padding: 40px; 
-                        border-radius: 12px; 
-                        box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
-                        max-width: 400px; 
-                        margin: 0 auto; 
-                    }
-                    h1 { color: #0C0C0C; margin-bottom: 10px; }
-                    p { color: #555; font-size: 16px; line-height: 1.5; }
-                    .check-icon { font-size: 50px; color: #25D366; margin-bottom: 20px; }
-                    .btn { 
-                        display: block; 
-                        background-color: #25D366; 
-                        color: white; 
-                        padding: 15px 20px; 
-                        text-decoration: none; 
-                        border-radius: 30px; 
-                        font-weight: bold; 
-                        margin-top: 30px;
-                        font-size: 16px;
-                        box-shadow: 0 4px 6px rgba(37, 211, 102, 0.2);
-                    }
-                    .btn:hover { background-color: #1da851; }
+                    body { font-family: sans-serif; text-align: center; padding: 50px; }
+                    .btn { background: #25D366; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; }
                 </style>
             </head>
             <body>
-                <div class="card">
-                    <div class="check-icon">✅</div>
-                    <h1>Payment Successful</h1>
-                    <p>Thank you! Your transaction has been completed securely.</p>
-                    <p>We have sent your receipt to your WhatsApp.</p>
-                    
-                    <a href="https://wa.me/${botNumber}?text=Hi" class="btn">
-                        Return to WhatsApp
-                    </a>
-                </div>
+                <h1>✅ Payment Successful</h1>
+                <p>Thank you! Your transaction is complete.</p>
+                <br>
+                <a href="https://wa.me/${process.env.TWILIO_PHONE_NUMBER ? process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '') : ''}?text=Hi" class="btn">Return to WhatsApp</a>
             </body>
         </html>
-    res.send('<h1>Payment Successful</h1><p>You can return to WhatsApp.</p>'); 
+    `);
 });
 
 const PORT = process.env.PORT || 3000;
