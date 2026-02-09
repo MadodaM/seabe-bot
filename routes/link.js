@@ -1,158 +1,121 @@
-// routes/link.js
-const axios = require('axios');
-
-module.exports = (app, { prisma }) => {
-
-    // ==========================================
-    // 1. THE LANDING PAGE (GET)
-    // URL: https://your-app.onrender.com/link/AFM
-    // ==========================================
-    app.get('/link/:code', async (req, res) => {
+// 1. THE PUBLIC LANDING PAGE
+    router.get('/link/:code', async (req, res) => {
         try {
-            const orgCode = req.params.code.toUpperCase();
-
-            // 1. Find the Organization
+            const { code } = req.params;
+            
+            // Fetch Organization details
             const org = await prisma.church.findUnique({
-                where: { code: orgCode }
+                where: { code: code.toUpperCase() },
+                include: { events: { where: { status: 'Active' } } }
             });
 
-            if (!org) {
-                return res.status(404).send("<h1>🚫 Organization Not Found</h1><p>Please check the code and try again.</p>");
+            if (!org) return res.status(404).send("Organization not found.");
+
+            // --- 💡 DYNAMIC PAYMENT OPTIONS LOGIC ---
+            let optionsHtml = '';
+            let amountPlaceholder = 'e.g. 100';
+            let amountLabel = 'Amount (ZAR)';
+
+            if (org.type === 'BURIAL_SOCIETY') {
+                // 🛡️ SCENARIO A: BURIAL SOCIETY
+                // We show "Premium" and "Joining Fee"
+                // We also pre-fill the placeholder with their subscription fee if it exists
+                const fee = org.subscriptionFee || 150;
+                amountPlaceholder = `e.g. ${fee}`;
+                amountLabel = 'Payment Amount';
+
+                optionsHtml = `
+                    <option value="PREM">Monthly Premium (R${fee}) 🛡️</option>
+                    <option value="JOIN_FEE">Joining Fee 📝</option>
+                    <option value="ARREARS">Arrears / Late Payment ⚠️</option>
+                    <option value="DONATION">General Donation 🤝</option>
+                `;
+            } else {
+                // ⛪ SCENARIO B: CHURCH
+                // We show "Tithe" and "Offering"
+                optionsHtml = `
+                    <option value="OFFERING" selected>General Offering 🎁</option>
+                    <option value="TITHE">Tithe (10%) 🏛️</option>
+                    <option value="THANKSGIVING">Thanksgiving 🙏</option>
+                    <option value="BUILDING">Building Fund 🧱</option>
+                    <option value="SEED">Seed Faith 🌱</option>
+                `;
             }
 
-            // 2. Determine Labels (Church vs Society)
-            const isSociety = org.type === 'BURIAL_SOCIETY';
-            const bgColor = isSociety ? '#1e293b' : '#3b82f6'; // Dark Blue for Society, Bright Blue for Church
-            const typeLabel = isSociety ? 'Payment Type (e.g., Premium)' : 'Offering Type (e.g., Tithe)';
-            
-            // 3. Render the HTML Page (Server-Side)
-            const html = `
+            // --- COMMON: ADD EVENTS FOR EVERYONE ---
+            // If they have concert tickets, add them to the bottom of the list
+            if (org.events.length > 0) {
+                optionsHtml += `<optgroup label="Events">`;
+                org.events.forEach(e => {
+                    optionsHtml += `<option value="EVENT_${e.id}">${e.name} (R${e.price}) 🎟️</option>`;
+                });
+                optionsHtml += `</optgroup>`;
+            }
+
+            // --- RENDER HTML ---
+            res.send(`
             <!DOCTYPE html>
-            <html>
+            <html lang="en">
             <head>
-                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <title>Pay ${org.name}</title>
                 <style>
-                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f3f4f6; display: flex; justify-content: center; padding: 20px; }
-                    .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); width: 100%; max-width: 400px; }
-                    .header { text-align: center; margin-bottom: 20px; }
-                    .badge { background: ${bgColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; text-transform: uppercase; }
-                    h2 { margin: 10px 0 5px; color: #111827; }
-                    p { color: #6b7280; font-size: 14px; margin: 0; }
-                    label { display: block; margin-top: 15px; font-size: 14px; font-weight: 600; color: #374151; }
-                    input, select { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #d1d5db; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
-                    button { width: 100%; background: ${bgColor}; color: white; padding: 12px; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 25px; transition: opacity 0.2s; }
-                    button:hover { opacity: 0.9; }
-                    .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #9ca3af; }
+                    /* Minimal CSS reset for brevity */
+                    body { font-family: sans-serif; background: #f4f6f8; padding: 20px; display: flex; justify-content: center; }
+                    .card { background: white; width: 100%; max-width: 400px; padding: 30px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+                    .input-group { margin-bottom: 15px; text-align: left; }
+                    label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #555; }
+                    input, select { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
+                    .btn { width: 100%; padding: 15px; background: #000; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
                 </style>
             </head>
             <body>
                 <div class="card">
-                    <div class="header">
-                        <span class="badge">${isSociety ? '🛡️ Burial Society' : '⛪ Church'}</span>
-                        <h2>${org.name}</h2>
-                        <p>Secure Payment Portal</p>
+                    <div style="text-align: center; font-size: 40px; margin-bottom: 10px;">
+                        ${org.type === 'BURIAL_SOCIETY' ? '🛡️' : '⛪'}
                     </div>
+                    <h2 style="text-align: center; margin-top: 0;">${org.name}</h2>
+                    <p style="text-align: center; color: #666; font-size: 14px;">Secure Payment Portal</p>
 
-                    <form action="/link/process" method="POST">
-                        <input type="hidden" name="orgCode" value="${org.code}">
+                    <form action="/link/${code}/process" method="POST">
                         
-                        <label>Your Phone Number</label>
-                        <input type="tel" name="phone" placeholder="e.g. 0831234567" required>
+                        <div class="input-group">
+                            <label>${amountLabel}</label>
+                            <input type="number" name="amount" placeholder="${amountPlaceholder}" required>
+                        </div>
 
-                        <label>Amount (ZAR)</label>
-                        <input type="number" name="amount" placeholder="e.g. 100" min="10" required>
+                        <div class="input-group">
+                            <label>Payment For</label>
+                            <select name="type">
+                                ${optionsHtml}
+                            </select>
+                        </div>
 
-                        <label>${typeLabel}</label>
-                        <select name="type">
-                            <option value="Offering">Offering</option>
-                            <option value="Tithe">Tithe</option>
-                            <option value="Donation">Donation</option>
-                            <option value="Premium">Premium</option>
-                            <option value="Joining Fee">Joining Fee</option>
-                        </select>
+                        <div class="input-group">
+                            <label>Your Name</label>
+                            <input type="text" name="name" placeholder="Full Name" required>
+                        </div>
+                        
+                        <div class="input-group">
+                            <label>Contact Info</label>
+                            <input type="email" name="email" placeholder="Email Address" required>
+                            <input type="tel" name="phone" placeholder="WhatsApp Number" required>
+                        </div>
 
-                        <button type="submit">🔒 Pay Now</button>
+                        <button type="submit" class="btn">Proceed to Pay</button>
                     </form>
-
-                    <div class="footer">
-                        Powered by <strong>Seabe Pay</strong>
+                    
+                    <div style="text-align: center; margin-top: 20px; font-size: 11px; color: #999;">
+                        🔒 Secured by Paystack via Seabe
                     </div>
                 </div>
             </body>
             </html>
-            `;
-
-            res.send(html);
+            `);
 
         } catch (e) {
             console.error(e);
-            res.status(500).send("Server Error");
+            res.status(500).send("System Error");
         }
     });
-
-    // ==========================================
-    // 2. PROCESS THE PAYMENT (POST)
-    // ==========================================
-    app.post('/link/process', async (req, res) => {
-        try {
-            const { orgCode, phone, amount, type } = req.body;
-            
-            // 1. Fetch Org for Subaccount
-            const org = await prisma.church.findUnique({ where: { code: orgCode } });
-            if (!org) return res.status(404).send("Organization not found");
-
-            // 2. Format Phone
-            let cleanPhone = phone.replace(/\s/g, '');
-            if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
-
-            // 3. Create Paystack Reference
-            const reference = `WEB-${orgCode}-${Date.now()}`; // Unique Web Ref
-
-            // 4. Record 'PENDING' Transaction in DB
-            await prisma.transaction.create({
-                data: {
-                    amount: parseFloat(amount),
-                    type: type,
-                    reference: reference,
-                    status: 'PENDING',
-                    churchCode: orgCode,
-                    phone: cleanPhone,
-                    method: 'WEB_LINK' // Tracks that this came from the website, not WhatsApp
-                }
-            });
-
-            // 5. Initialize Paystack
-            const payload = {
-                amount: parseFloat(amount) * 100, // Cents
-                email: `${cleanPhone}@seabe.io`, // Dummy email for Paystack requirements
-                reference: reference,
-                currency: 'ZAR',
-                callback_url: `https://${req.get('host')}/payment-success`, // Redirect here after pay
-                metadata: {
-                    phone: cleanPhone,
-                    source: 'web_portal',
-                    org: org.name
-                }
-            };
-
-            // Add Subaccount (Split Payment) if it exists
-            if (org.subaccountCode) {
-                payload.subaccount = org.subaccountCode;
-                payload.transaction_charge = 250; // Seabe Fee (R2.50)
-                payload.bearer = 'subaccount'; // Org pays the fee
-            }
-
-            const response = await axios.post('https://api.paystack.co/transaction/initialize', payload, {
-                headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
-            });
-
-            // 6. Redirect User to Paystack Checkout
-            res.redirect(response.data.data.authorization_url);
-
-        } catch (e) {
-            console.error("Link Payment Error:", e.response?.data || e.message);
-            res.status(500).send("Could not initialize payment. Please try again.");
-        }
-    });
-};
