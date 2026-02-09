@@ -9,7 +9,7 @@ const {
     getTransactionHistory,
     listActiveSubscriptions,
     cancelSubscription
-} = require('./services/paystack'); // ✅ CORRECT (Stays in src folder)
+} = require('./services/paystack'); // ✅ CORRECT (Looks inside src)
 
 // --- HELPER: DYNAMIC ADS ---
 // Fetches sponsored text if available
