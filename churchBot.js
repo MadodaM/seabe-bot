@@ -13,10 +13,10 @@ const {
 
 // --- HELPER: DYNAMIC ADS ---
 // Fetches sponsored text if available
-async function getAdSuffix(churchId, prisma) {
+async function getAdSuffix(churchCode, prisma) {
     try {
         const ad = await prisma.ad.findFirst({ 
-            where: { churchId: churchId, status: 'Active', expiryDate: { gte: new Date() } },
+            where: { churchCode: churchCode, status: 'Active', expiryDate: { gte: new Date() } },
             orderBy: { createdAt: 'desc' }    
         });
 
@@ -102,7 +102,7 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
                 if (session.orgType === 'NON_PROFIT') {
                     // NPO: FETCH PROJECTS (Events marked as Donations)
                     const projects = await prisma.event.findMany({ 
-                        where: { churchId: session.orgCode, isDonation: true, status: 'Active' } 
+                        where: { churchCode: session.orgCode, isDonation: true, status: 'Active' } 
                     });
 
                     if (projects.length === 0) {
@@ -126,7 +126,7 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
             // --- OPTION 3: EVENTS (Tickets for Everyone) ---
             else if (incomingMsg === '3') {
                 const events = await prisma.event.findMany({ 
-                    where: { churchId: session.orgCode, status: 'Active', isDonation: false, date: { gte: new Date() } } 
+                    where: { churchCode: session.orgCode, status: 'Active', isDonation: false, date: { gte: new Date() } } 
                 });
                 
                 if (events.length === 0) { 
@@ -152,7 +152,7 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
             // --- OPTION 5: NEWS ---
             else if (incomingMsg === '5') {
                  const news = await prisma.news.findMany({ 
-                    where: { churchId: session.orgCode, status: 'Active' }, 
+                    where: { churchCode: session.orgCode, status: 'Active' }, 
                     orderBy: { createdAt: 'desc' }, 
                     take: 3 
                 });
