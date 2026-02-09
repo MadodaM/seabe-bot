@@ -211,6 +211,56 @@ app.post('/whatsapp', async (req, res) => {
             // If they typed "Hi" but have no church, we fall through to the Search/Join logic below...
         }
 
+// ------------------------------------------------
+        // 🛠️ ADMIN TRIGGER: MANUAL REPORT
+        // Usage: "Report AFM" or "Report KOP"
+        // ------------------------------------------------
+        if (incomingMsg.startsWith('report ')) {
+            // 1. Extract the Church Code (e.g., "AFM")
+            const targetCode = incomingMsg.split(' ')[1]?.toUpperCase();
+
+            if (!targetCode) {
+                twiml.message("⚠️ Please specify a code. Example: *Report AFM*");
+            } else {
+                // 2. Fetch the Transactions
+                const transactions = await prisma.transaction.findMany({
+                    where: { 
+                        churchCode: targetCode,
+                        status: 'SUCCESS' // Only paid items
+                    },
+                    orderBy: { date: 'desc' },
+                    take: 50 // Limit to last 50 for WhatsApp readability
+                });
+
+                if (transactions.length === 0) {
+                    twiml.message(`📉 No transactions found for *${targetCode}*.`);
+                } else {
+                    // 3. Generate CSV Format (Simple String)
+                    let csvContent = "Date,Name,Type,Amount,Ref\n";
+                    let total = 0;
+
+                    transactions.forEach(t => {
+                        const date = t.date.toISOString().split('T')[0];
+                        const amount = t.amount.toFixed(2);
+                        csvContent += `${date},${t.phone},${t.type},${amount},${t.reference}\n`;
+                        total += t.amount;
+                    });
+
+                    // 4. Send Summary
+                    const summary = `📊 *REPORT: ${targetCode}*\n` +
+                                    `Transactions: ${transactions.length}\n` +
+                                    `Total Raised: R${total.toFixed(2)}\n\n` +
+                                    `_Check your email for the full CSV file._`; 
+
+                    twiml.message(summary);
+                }
+            }
+            
+            res.type('text/xml').send(twiml.toString());
+            return; // Stop here so we don't trigger "Invalid Option"
+        }
+
+
         // ------------------------------------
         // PATH 3: ONBOARDING / SEARCH 🔍
         // ------------------------------------
