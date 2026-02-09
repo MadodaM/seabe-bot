@@ -297,7 +297,7 @@ app.post('/whatsapp', async (req, res) => {
                 session.orgCode = member.societyCode;
                 session.orgName = member.society.name;
                 session.subaccount = member.society.subaccountCode;
-                session.churchId = member.society.id; // For ID-based logic
+                session.churchCode = member.society.id; // For ID-based logic
 
                 return handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, twiml, res);
             } 
@@ -318,7 +318,7 @@ app.post('/whatsapp', async (req, res) => {
                 session.orgCode = member.churchCode;
                 session.orgName = member.church.name;
                 session.subaccount = member.church.subaccountCode;
-                session.churchId = member.church.id; // For ads
+                session.churchCode = member.church.id; // For ads
 
                 return handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twiml, res);
             } 
@@ -401,7 +401,7 @@ app.post('/whatsapp', async (req, res) => {
              session.orgCode = member.churchCode;
              session.orgName = member.church.name;
              session.subaccount = member.church.subaccountCode;
-             session.churchId = member.church.id;
+             session.churchCode = member.church.id;
              return handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twiml, res);
         } else {
              twiml.message("👋 Welcome! Reply *Hi* to start.");
