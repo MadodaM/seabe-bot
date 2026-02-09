@@ -4,7 +4,7 @@
 // ==========================================
 const express = require('express');
 const router = express.Router();
-const { createPaymentLink } = require('../services/paystack'); // We only need one-off links here usually
+const { createPaymentLink } = require('../services/paystack'); 
 
 module.exports = (app, { prisma }) => {
 
@@ -17,7 +17,6 @@ module.exports = (app, { prisma }) => {
             const { code } = req.params;
             
             // Fetch Organization details & Active Events/Projects
-            // We include events that are ACTIVE and haven't expired
             const org = await prisma.church.findUnique({
                 where: { code: code.toUpperCase() },
                 include: { 
@@ -78,7 +77,7 @@ module.exports = (app, { prisma }) => {
             }
 
             // --- ADD EVENTS & PROJECTS (The Mix) ---
-            if (org.events.length > 0) {
+            if (org.events && org.events.length > 0) {
                 optionsHtml += `<optgroup label="Campaigns & Events">`;
                 
                 org.events.forEach(e => {
@@ -97,7 +96,6 @@ module.exports = (app, { prisma }) => {
             }
 
             // --- RENDER HTML TEMPLATE ---
-            // We use a simple template string (no external EJS/Pug needed for speed)
             res.send(`
             <!DOCTYPE html>
             <html lang="en">
@@ -216,12 +214,9 @@ module.exports = (app, { prisma }) => {
             const cleanPhone = phone.replace(/\D/g, ''); 
             
             // Construct Reference
-            // Example: "WEB-AFM001-PROJECT_5-8334-17382"
-            // We use 'WEB' prefix so we know it came from the site, not the bot
             const ref = `WEB-${code}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
 
             // Call Paystack Service
-            // Note: subaccountCode ensures split payment happens if configured
             const link = await createPaymentLink(
                 parseFloat(amount), 
                 ref, 
@@ -233,14 +228,18 @@ module.exports = (app, { prisma }) => {
 
             if (link) {
                 // --- A. UPSERT MEMBER (Save the user) ---
-                // We intelligently link them based on Org Type
-                const updateData = (org.type === 'CHURCH') ? { churchCode: org.code } : 
-                                   (org.type === 'BURIAL_SOCIETY') ? { societyCode: org.code } : 
-                                   {}; // NPOs might not "own" the member yet
+                // 💡 FIX: We use 'churchCode' or 'societyCode' depending on type
+                const updateData = {};
+                if (org.type === 'CHURCH') {
+                    updateData.churchCode = org.code;
+                } else if (org.type === 'BURIAL_SOCIETY') {
+                    updateData.societyCode = org.code; // Assuming you have societyCode in schema
+                }
+                // For NPO, we might assume they use 'churchCode' field or skip linking for now
 
                 await prisma.member.upsert({
                     where: { phone: cleanPhone },
-                    update: { ...updateData, email: email }, // Update email if they changed it
+                    update: { ...updateData, email: email }, 
                     create: { 
                         phone: cleanPhone, 
                         firstName: name.split(' ')[0], 
@@ -252,12 +251,11 @@ module.exports = (app, { prisma }) => {
                 });
 
                 // --- B. LOG TRANSACTION (Pending) ---
-                // If type includes 'PROJECT_' or 'EVENT_', we keep it as is
                 await prisma.transaction.create({
                     data: {
-                        churchCode: org.code,
+                        churchCode: org.code, // We store the Org Code here regardless of type
                         phone: cleanPhone,
-                        type: type, // Stores 'OFFERING' or 'PROJECT_12'
+                        type: type, 
                         amount: parseFloat(amount),
                         reference: ref,
                         status: 'PENDING',
