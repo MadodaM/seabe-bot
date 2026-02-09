@@ -11,16 +11,43 @@ const paystackApi = axios.create({
     }
 });
 
-// 2. STANDARD PAYMENT LINK (Now accepts churchName)
+// ==========================================
+// 🛠️ HELPER: MONEY SANITIZER
+// ==========================================
+function sanitizeMoney(amount) {
+    // 1. Convert to String & Replace comma with dot (70,15 -> 70.15)
+    let cleanString = amount.toString().replace(/,/g, '.');
+    
+    // 2. Remove anything that isn't a number or dot (R70.15 -> 70.15)
+    cleanString = cleanString.replace(/[^\d.]/g, '');
+
+    // 3. Convert to Float
+    let numericAmount = parseFloat(cleanString);
+
+    // 4. Validate
+    if (isNaN(numericAmount) || numericAmount <= 0) {
+        console.error(`❌ Invalid Amount: ${amount}`);
+        return 0;
+    }
+
+    // 5. Convert to Cents (Integer)
+    return Math.round(numericAmount * 100);
+}
+
+// ==========================================
+// 1. STANDARD PAYMENT LINK
+// ==========================================
 async function createPaymentLink(amount, ref, email, subaccount, userPhone, churchName) {
     try {
+        // 🧹 Clean the money first!
+        const amountInCents = sanitizeMoney(amount);
+        if (amountInCents === 0) return null;
+
         const payload = {
-            amount: amount * 100, 
+            amount: amountInCents, 
             email: email,
             reference: ref,
             callback_url: `https://${process.env.HOST_URL}/payment-success`,
-            
-            // ✅ METADATA: Now stores the Church Name safely
             metadata: {
                 whatsapp_number: userPhone,
                 church_name: churchName || "Seabe Digital", 
@@ -38,16 +65,22 @@ async function createPaymentLink(amount, ref, email, subaccount, userPhone, chur
         const response = await paystackApi.post('/transaction/initialize', payload);
         return response.data.data.authorization_url;
     } catch (error) {
-        console.error("❌ Paystack Error:", error.response?.data || error.message);
+        console.error("❌ Paystack Link Error:", error.response?.data || error.message);
         return null; 
     }
 }
 
-// 3. SUBSCRIPTION LINK (Now accepts churchName)
+// ==========================================
+// 2. SUBSCRIPTION LINK
+// ==========================================
 async function createSubscriptionLink(amount, ref, email, subaccount, userPhone, churchName) {
     try {
+        // 🧹 Clean the money first!
+        const amountInCents = sanitizeMoney(amount);
+        if (amountInCents === 0) return null;
+
         const payload = {
-            amount: amount * 100, 
+            amount: amountInCents,
             email: email,
             reference: ref,
             metadata: {
@@ -69,7 +102,9 @@ async function createSubscriptionLink(amount, ref, email, subaccount, userPhone,
     }
 }
 
-// 4. VERIFY PAYMENT
+// ==========================================
+// 3. VERIFY PAYMENT
+// ==========================================
 async function verifyPayment(reference) {
     try {
         const response = await paystackApi.get(`/transaction/verify/${reference}`);
@@ -79,7 +114,10 @@ async function verifyPayment(reference) {
         return null;
     }
 }
-// 5. Transaction History
+
+// ==========================================
+// 4. TRANSACTION HISTORY
+// ==========================================
 async function getTransactionHistory(email) {
     try {
         const response = await paystackApi.get(`/transaction?email=${email}&perPage=5&status=success`);
@@ -101,8 +139,9 @@ async function getTransactionHistory(email) {
     }
 }
 
-
-// 6. HELPER: Get Customer ID from Email
+// ==========================================
+// 5. HELPER: Get Customer ID
+// ==========================================
 async function getCustomer(email) {
     try {
         const response = await paystackApi.get(`/customer/${email}`);
@@ -111,24 +150,22 @@ async function getCustomer(email) {
         }
         return null;
     } catch (error) {
-        // Only log if it's a real error, not just "customer not found"
         if (error.response?.status !== 404) console.error("Get Customer Error:", error.message);
         return null;
     }
 }
 
-// 7. LIST ACTIVE SUBSCRIPTIONS
+// ==========================================
+// 6. LIST ACTIVE SUBSCRIPTIONS
+// ==========================================
 async function listActiveSubscriptions(email) {
     try {
-        // First, find the customer ID
         const customer = await getCustomer(email);
         if (!customer) return [];
 
-        // Fetch subscriptions for this customer
         const response = await paystackApi.get(`/subscription?customer=${customer.id}`);
         const allSubs = response.data.data;
 
-        // Filter only the active ones
         return allSubs.filter(sub => sub.status === 'active');
     } catch (error) {
         console.error("List Subs Error:", error.message);
@@ -136,26 +173,27 @@ async function listActiveSubscriptions(email) {
     }
 }
 
-// 8. CANCEL SUBSCRIPTION
+// ==========================================
+// 7. CANCEL SUBSCRIPTION
+// ==========================================
 async function cancelSubscription(code, token) {
     try {
         const response = await paystackApi.post('/subscription/disable', {
             code: code,
-            token: token // Paystack requires the email_token for security
+            token: token 
         });
-        return response.data.status; // Returns true if successful
+        return response.data.status; 
     } catch (error) {
         console.error("Cancel Sub Error:", error.response?.data || error.message);
         return false;
     }
 }
 
-// 🔴 UPDATE EXPORTS
 module.exports = { 
     createPaymentLink, 
     createSubscriptionLink, 
     verifyPayment, 
     getTransactionHistory,
-    listActiveSubscriptions, // New
-    cancelSubscription       // New
+    listActiveSubscriptions, 
+    cancelSubscription 
 };
