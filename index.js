@@ -173,44 +173,6 @@ app.post('/whatsapp', async (req, res) => {
             include: { church: true, society: true }
         });
 
-        // ------------------------------------
-        // PATH 1: SOCIETY MODE 🛡️
-        // ------------------------------------
-        if (incomingMsg === 'society' || session.mode === 'SOCIETY') {
-            if (member && member.societyCode) {
-                // Lock Session to Society
-                session.mode = 'SOCIETY';
-                session.orgCode = member.societyCode;
-                session.orgName = member.society.name;
-                session.subaccount = member.society.subaccountCode;
-                session.churchId = member.society.id; // For ID-based logic
-
-                return handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, twiml, res);
-            } 
-            else if (incomingMsg === 'society') {
-                twiml.message("⚠️ You are not linked to a Burial Society. Reply *Join* to find one.");
-                res.type('text/xml').send(twiml.toString());
-                return;
-            }
-        }
-
-        // ------------------------------------
-        // PATH 2: CHURCH MODE ⛪
-        // ------------------------------------
-        if (incomingMsg === 'hi' || session.mode === 'CHURCH') {
-            if (member && member.churchCode) {
-                // Lock Session to Church
-                session.mode = 'CHURCH';
-                session.orgCode = member.churchCode;
-                session.orgName = member.church.name;
-                session.subaccount = member.church.subaccountCode;
-                session.churchId = member.church.id; // For ads
-
-                return handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twiml, res);
-            } 
-            // If they typed "Hi" but have no church, we fall through to the Search/Join logic below...
-        }
-
 // ------------------------------------------------
         // 🛠️ ADMIN TRIGGER: SECURE EMAIL REPORT
         // Usage: "Report AFM" -> Sends CSV to admin@afm.com
@@ -285,6 +247,45 @@ app.post('/whatsapp', async (req, res) => {
             return; 
         }
 
+
+
+        // ------------------------------------
+        // PATH 1: SOCIETY MODE 🛡️
+        // ------------------------------------
+        if (incomingMsg === 'society' || session.mode === 'SOCIETY') {
+            if (member && member.societyCode) {
+                // Lock Session to Society
+                session.mode = 'SOCIETY';
+                session.orgCode = member.societyCode;
+                session.orgName = member.society.name;
+                session.subaccount = member.society.subaccountCode;
+                session.churchId = member.society.id; // For ID-based logic
+
+                return handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, twiml, res);
+            } 
+            else if (incomingMsg === 'society') {
+                twiml.message("⚠️ You are not linked to a Burial Society. Reply *Join* to find one.");
+                res.type('text/xml').send(twiml.toString());
+                return;
+            }
+        }
+
+        // ------------------------------------
+        // PATH 2: CHURCH MODE ⛪
+        // ------------------------------------
+        if (incomingMsg === 'hi' || session.mode === 'CHURCH') {
+            if (member && member.churchCode) {
+                // Lock Session to Church
+                session.mode = 'CHURCH';
+                session.orgCode = member.churchCode;
+                session.orgName = member.church.name;
+                session.subaccount = member.church.subaccountCode;
+                session.churchId = member.church.id; // For ads
+
+                return handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twiml, res);
+            } 
+            // If they typed "Hi" but have no church, we fall through to the Search/Join logic below...
+        }
 
         // ------------------------------------
         // PATH 3: ONBOARDING / SEARCH 🔍
