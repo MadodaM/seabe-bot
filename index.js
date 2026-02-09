@@ -89,37 +89,69 @@ cron.schedule('0 8 * * 1', async () => {
 // ==========================================
 // 🛡️ WEBHOOK: PAYSTACK
 // ==========================================
-app.post('/webhook/paystack', async (req, res) => {
+// --- PAYSTACK WEBHOOK (The "Receipt Engine") ---
+app.post('/paystack/webhook', async (req, res) => {
     try {
-        const hash = crypto.createHmac('sha512', PAYSTACK_SECRET).update(req.rawBody).digest('hex');
-        if (hash !== req.headers['x-paystack-signature']) return res.status(400).send("Security Check Failed");
+        // 1. Validate the event (Security Check)
+        const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+                           .update(JSON.stringify(req.body))
+                           .digest('hex');
 
-        res.sendStatus(200);
+        if (hash !== req.headers['x-paystack-signature']) {
+            return res.sendStatus(400); // Stop hackers
+        }
+
         const event = req.body;
 
+        // 2. Process Successful Payments
         if (event.event === 'charge.success') {
-            const ref = event.data.reference;
-            const amount = event.data.amount / 100;
-
-            const tx = await prisma.transaction.findUnique({ where: { reference: ref } });
+            const data = event.data;
+            const reference = data.reference;
             
-            if (tx && tx.status !== 'SUCCESS') {
-                await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'SUCCESS' } });
+            // A. FIND THE USER'S PHONE NUMBER
+            // We look in metadata first (Web Payments), then fallback to email lookup
+            let userPhone = data.metadata?.phone || data.metadata?.custom_fields?.find(f => f.variable_name === 'phone')?.value;
+
+            // B. UPDATE DATABASE
+            // We find the pending transaction by Reference and update it
+            const transaction = await prisma.transaction.update({
+                where: { reference: reference },
+                data: { status: 'SUCCESS' }
+            });
+
+            // If we couldn't find phone in metadata, use the one from the database transaction
+            if (!userPhone && transaction) {
+                userPhone = transaction.phone;
+            }
+
+            // C. GENERATE RECEIPT (PDF)
+            // We create a dynamic PDF URL using a free invoice generator API (or your own logic)
+            // This ensures WhatsApp always has a valid link to deliver.
+            const date = new Date().toISOString().split('T')[0];
+            const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=Seabe&to=${userPhone}&date=${date}&items[0][name]=Contribution&items[0][quantity]=1&items[0][unit_cost]=${data.amount / 100}`;
+
+            // D. SEND WHATSAPP RECEIPT
+            if (userPhone) {
+                // Ensure phone number has 'whatsapp:' prefix
+                const to = userPhone.startsWith('whatsapp:') ? userPhone : `whatsapp:${userPhone}`;
                 
-                const church = await prisma.church.findUnique({ where: { code: tx.churchCode } });
-                const pdfName = generatePDF(tx.type, amount, ref, new Date().toLocaleString(), tx.phone, church.name);
-                
-                if (client) {
-                    await client.messages.create({ 
-                        from: process.env.TWILIO_PHONE_NUMBER, 
-                        to: `whatsapp:${tx.phone}`, 
-                        body: `🎉 Payment Confirmed! Thank you for your R${amount} contribution to ${church.name}.`, 
-                        mediaUrl: [`https://${req.headers.host || 'seabe-bot.onrender.com'}/public/receipts/${pdfName}`] 
-                    });
-                }
+                await client.messages.create({
+                    from: process.env.TWILIO_PHONE_NUMBER,
+                    to: to,
+                    body: `✅ *Receipt: Payment Received*\n\nReference: ${reference}\nAmount: R${data.amount / 100}\n\nThank you for your contribution! 🙏\n\n_Reply *History* to see all payments._`,
+                    // 👇 This attaches the PDF
+                    mediaUrl: [ pdfUrl ] 
+                });
+                console.log(`✅ Receipt sent to ${userPhone}`);
             }
         }
-    } catch (error) { console.error("Webhook Error:", error); }
+
+        res.sendStatus(200); // Tell Paystack "We got it"
+
+    } catch (e) {
+        console.error("Webhook Error:", e);
+        res.sendStatus(500);
+    }
 });
 
 
@@ -291,4 +323,11 @@ app.get('/payment-success', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Seabe Engine v4.0 running on ${PORT}`));
+
+// Only start the server if we are NOT testing
+if (process.env.NODE_ENV !== 'test') {
+    app.listen(PORT, () => console.log(`✅ Seabe Engine running on ${PORT}`));
+}
+
+// Export the app for testing
+module.exports = app;
