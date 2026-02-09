@@ -9,7 +9,7 @@ const {
     getTransactionHistory,
     listActiveSubscriptions,
     cancelSubscription
-} = require('../services/paystack');
+} = require('./services/paystack');
 
 // --- HELPER: DYNAMIC ADS ---
 // Fetches sponsored text if available
