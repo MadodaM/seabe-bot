@@ -177,7 +177,7 @@ app.post('/whatsapp', async (req, res) => {
         // 🛠️ ADMIN TRIGGER: SECURE EMAIL REPORT
         // Usage: "Report AFM" -> Sends CSV to admin@afm.com
         // ------------------------------------------------
-        else if (incomingMsg.startsWith('report ')) {
+		if (incomingMsg.startsWith('report ')) {       // ✅ CORRECT
             const targetCode = incomingMsg.split(' ')[1]?.toUpperCase();
 
             if (!targetCode) {
