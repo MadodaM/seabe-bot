@@ -247,7 +247,44 @@ app.post('/whatsapp', async (req, res) => {
             return; 
         }
 
+// ------------------------------------------------
+        // 🛠️ ADMIN TRIGGER: MANUAL VERIFY
+        // Usage: "Verify REF123456789"
+        // ------------------------------------------------
+        if (incomingMsg.startsWith('verify ')) {
+            const reference = incomingMsg.split(' ')[1];
 
+            if (!reference) {
+                twiml.message("⚠️ Please specify a reference. Example: *Verify REF-123*");
+            } else {
+                try {
+                    // 1. Ask Paystack for the status
+                    const response = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
+                        headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
+                    });
+
+                    const status = response.data.data.status;
+                    const amount = response.data.data.amount / 100;
+
+                    if (status === 'success') {
+                        // 2. Update Database
+                        await prisma.transaction.update({
+                            where: { reference: reference },
+                            data: { status: 'SUCCESS' }
+                        });
+                        twiml.message(`✅ **Verified!**\nReference: ${reference}\nAmount: R${amount}\nStatus updated to *SUCCESS*.`);
+                    } else {
+                        twiml.message(`❌ **Payment Failed.**\nPaystack says this transaction is still: *${status}*.`);
+                    }
+                } catch (error) {
+                    console.error("Verify Error:", error);
+                    twiml.message("⚠️ Could not verify. Check the reference number.");
+                }
+            }
+            
+            res.type('text/xml').send(twiml.toString());
+            return;
+        }
 
         // ------------------------------------
         // PATH 1: SOCIETY MODE 🛡️
