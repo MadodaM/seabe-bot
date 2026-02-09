@@ -48,6 +48,7 @@ app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'leg
 require('./routes/web')(app, upload, { prisma });
 require('./routes/admin')(app, { prisma });
 require('./routes/link')(app, { prisma });
+require('./link')(app, { prisma });
 
 // --- MEMORY ---
 let userSession = {}; 

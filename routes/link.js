@@ -274,4 +274,6 @@ module.exports = (app, { prisma }) => {
             res.status(500).send("System Error Processing Payment.");
         }
     });
-};
+app.use('/', router); 
+
+}; // <--- End of module.exports
