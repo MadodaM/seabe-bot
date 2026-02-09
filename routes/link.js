@@ -1,4 +1,12 @@
-// 1. THE PUBLIC LANDING PAGE
+// routes/link.js - FULLY CORRECTED FILE
+
+const express = require('express');                 // Line 1: Import Express
+const router = express.Router();                    // Line 2: Create the Router (Fixes your error!)
+const { createPaymentLink } = require('../services/paystack'); // Line 3: Import Payment Logic
+
+module.exports = (app, { prisma }) => {
+
+    // 1. THE PUBLIC LANDING PAGE
     router.get('/link/:code', async (req, res) => {
         try {
             const { code } = req.params;
@@ -18,8 +26,6 @@
 
             if (org.type === 'BURIAL_SOCIETY') {
                 // 🛡️ SCENARIO A: BURIAL SOCIETY
-                // We show "Premium" and "Joining Fee"
-                // We also pre-fill the placeholder with their subscription fee if it exists
                 const fee = org.subscriptionFee || 150;
                 amountPlaceholder = `e.g. ${fee}`;
                 amountLabel = 'Payment Amount';
@@ -32,7 +38,6 @@
                 `;
             } else {
                 // ⛪ SCENARIO B: CHURCH
-                // We show "Tithe" and "Offering"
                 optionsHtml = `
                     <option value="OFFERING" selected>General Offering 🎁</option>
                     <option value="TITHE">Tithe (10%) 🏛️</option>
@@ -42,8 +47,7 @@
                 `;
             }
 
-            // --- COMMON: ADD EVENTS FOR EVERYONE ---
-            // If they have concert tickets, add them to the bottom of the list
+            // --- COMMON: ADD EVENTS ---
             if (org.events.length > 0) {
                 optionsHtml += `<optgroup label="Events">`;
                 org.events.forEach(e => {
@@ -61,13 +65,13 @@
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <title>Pay ${org.name}</title>
                 <style>
-                    /* Minimal CSS reset for brevity */
-                    body { font-family: sans-serif; background: #f4f6f8; padding: 20px; display: flex; justify-content: center; }
-                    .card { background: white; width: 100%; max-width: 400px; padding: 30px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; padding: 20px; display: flex; justify-content: center; min-height: 100vh; margin: 0; }
+                    .card { background: white; width: 100%; max-width: 400px; padding: 30px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); height: fit-content; }
                     .input-group { margin-bottom: 15px; text-align: left; }
-                    label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #555; }
-                    input, select { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
-                    .btn { width: 100%; padding: 15px; background: #000; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+                    label { display: block; font-weight: 600; margin-bottom: 5px; font-size: 12px; color: #555; text-transform: uppercase; }
+                    input, select { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font-size: 16px; }
+                    .btn { width: 100%; padding: 15px; background: #000; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 16px; margin-top: 10px; }
+                    .btn:hover { opacity: 0.9; }
                 </style>
             </head>
             <body>
@@ -75,11 +79,10 @@
                     <div style="text-align: center; font-size: 40px; margin-bottom: 10px;">
                         ${org.type === 'BURIAL_SOCIETY' ? '🛡️' : '⛪'}
                     </div>
-                    <h2 style="text-align: center; margin-top: 0;">${org.name}</h2>
-                    <p style="text-align: center; color: #666; font-size: 14px;">Secure Payment Portal</p>
+                    <h2 style="text-align: center; margin-top: 0; margin-bottom: 5px;">${org.name}</h2>
+                    <p style="text-align: center; color: #666; font-size: 14px; margin-bottom: 25px;">Secure Payment Portal</p>
 
                     <form action="/link/${code}/process" method="POST">
-                        
                         <div class="input-group">
                             <label>${amountLabel}</label>
                             <input type="number" name="amount" placeholder="${amountPlaceholder}" required>
@@ -119,3 +122,61 @@
             res.status(500).send("System Error");
         }
     });
+
+    // 2. PROCESS PAYMENT ROUTE
+    router.post('/link/:code/process', async (req, res) => {
+        try {
+            const { code } = req.params;
+            const { amount, type, name, email, phone } = req.body;
+            
+            const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
+            if (!org) return res.send("Error: Org not found.");
+
+            const cleanPhone = phone.replace(/\D/g, ''); 
+            const ref = `WEB-${code}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
+
+            // Call Paystack Service
+            const link = await createPaymentLink(amount, ref, email, org.subaccountCode, cleanPhone, org.name);
+
+            if (link) {
+                // Upsert Member (Create if new, update if exists)
+                await prisma.member.upsert({
+                    where: { phone: cleanPhone },
+                    update: { email: email, firstName: name.split(' ')[0], lastName: name.split(' ')[1] || '' }, 
+                    create: { 
+                        phone: cleanPhone, 
+                        firstName: name.split(' ')[0], 
+                        lastName: name.split(' ')[1] || 'Guest',
+                        email: email,
+                        // Auto-link to the organization
+                        ...(org.type === 'CHURCH' ? { churchCode: org.code } : { societyCode: org.code })
+                    }
+                });
+
+                // Record Transaction
+                await prisma.transaction.create({
+                    data: {
+                        churchCode: org.code,
+                        phone: cleanPhone,
+                        type: type,
+                        amount: parseFloat(amount),
+                        reference: ref,
+                        status: 'PENDING',
+                        date: new Date()
+                    }
+                });
+
+                res.redirect(link);
+            } else {
+                res.send("Error creating payment link.");
+            }
+
+        } catch (e) {
+            console.error("Web Payment Error:", e);
+            res.send("System Error Processing Payment");
+        }
+    });
+
+    // Mount the router
+    app.use('/', router);
+};
