@@ -70,6 +70,7 @@ model Church {
 enum OrgType {
   CHURCH
   BURIAL_SOCIETY
+  NON_PROFIT
 }
 
 // --- FINANCES & CONTENT ---
@@ -93,6 +94,7 @@ model Event {
   name        String
   date        DateTime
   price       Float
+  isDonation  Boolean  @default(false) // 👈 This powers the "Any Amount" logic
   description String?
   status      String   @default("Active")
   expiryDate  DateTime

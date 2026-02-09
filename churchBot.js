@@ -1,15 +1,18 @@
 // ==========================================
-// churchBot.js - Church Logic Handler (Fixed)
+// bots/churchBot.js - Omni-Channel Handler
+// Covers: Churches ⛪ AND Non-Profits 🤝
 // ==========================================
+
 const { 
     createPaymentLink, 
     createSubscriptionLink, 
     getTransactionHistory,
     listActiveSubscriptions,
     cancelSubscription
-} = require('./services/paystack');
+} = require('../services/paystack');
 
 // --- HELPER: DYNAMIC ADS ---
+// Fetches sponsored text if available
 async function getAdSuffix(churchId, prisma) {
     try {
         const ad = await prisma.ad.findFirst({ 
@@ -31,69 +34,139 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
     let reply = "";
 
     try {
-        // 1. MAIN MENU TRIGGER
-        if (['hi', 'menu', 'hello'].includes(incomingMsg)) {
-            session.step = 'CHURCH_MENU';
-            const adText = await getAdSuffix(session.churchId, prisma);
+        // ====================================================
+        // 1. MAIN MENU TRIGGER & NPO DETECTION
+        // ====================================================
+        const triggers = ['hi', 'menu', 'hello', 'npo', 'donate', 'help'];
+        
+        if (triggers.includes(incomingMsg)) {
             
-            reply = `⛪ *${session.orgName}*\n\n` +
-                    `1. Offering 🎁\n` +
-                    `2. Tithe 🏛️\n` +
-                    `3. Events 🎟️\n` +
-                    `4. Partner 🔁\n` +
-                    `5. News 📰\n` +
-                    `6. Profile 👤\n` +
-                    `7. History 📜\n` +
-                    `8. Go to Society 🛡️\n\n` + 
-                    `Reply with a number:${adText}`;
+            // 🅰️ SCENARIO: NON-PROFIT ORGANIZATION (NPO)
+            if (session.orgType === 'NON_PROFIT') {
+                session.step = 'CHURCH_MENU'; // Reuse the menu state
+                
+                reply = `🤝 *${session.orgName}* (NPO)\n` +
+                        `_Making a difference together_\n\n` +
+                        `1. Donate 💖\n` +
+                        `2. Support a Project 🏗️\n` +
+                        `3. Upcoming Events 📅\n` +
+                        `4. Monthly Pledge 🔁\n` +
+                        `5. News & Updates 📰\n` +
+                        `6. My Profile 👤\n` +
+                        `7. History 📜\n` + 
+                        `8. Go to Society 🛡️\n\n` +
+                        `Reply with a number:`;
+            
+            // 🅱️ TRAP: User typed "NPO" but is inside a CHURCH
+            } else if (['npo', 'donate'].includes(incomingMsg) && session.orgType === 'CHURCH') {
+                reply = `🚫 You are currently connected to *${session.orgName}*, which is a Church.\n\n` +
+                        `Reply *'Menu'* to see church options.`;
+
+            // ⛪ SCENARIO: STANDARD CHURCH
+            } else {
+                session.step = 'CHURCH_MENU';
+                const adText = await getAdSuffix(session.orgCode, prisma); // Use orgCode or ID depending on schema
+                
+                reply = `⛪ *${session.orgName}*\n\n` +
+                        `1. Offering 🎁\n` +
+                        `2. Tithe 🏛️\n` +
+                        `3. Events 🎟️\n` +
+                        `4. Partner 🔁\n` +
+                        `5. News 📰\n` +
+                        `6. Profile 👤\n` +
+                        `7. History 📜\n` +
+                        `8. Go to Society 🛡️\n\n` + 
+                        `Reply with a number:${adText}`;
+            }
         }
 
+        // ====================================================
         // 2. MENU SELECTION HANDLER
+        // ====================================================
         else if (session.step === 'CHURCH_MENU') {
             
-            // PAYMENTS (Offering, Tithe, Partner)
-            if (['1', '2', '4'].includes(incomingMsg)) {
-                session.choice = incomingMsg;
+            // --- OPTION 1: OFFERING (Church) OR DONATE (NPO) ---
+            if (incomingMsg === '1') {
                 session.step = 'CHURCH_PAY';
-                let label = incomingMsg === '1' ? 'Offering' : (incomingMsg === '2' ? 'Tithe' : 'Partnership');
-                reply = `💰 *${label}*\n\nPlease enter the amount (e.g. 100):`;
+                session.choice = '1';
+                
+                if (session.orgType === 'NON_PROFIT') {
+                    reply = `💖 *General Donation*\n\nHow much would you like to give today? (e.g. 100)`;
+                } else {
+                    reply = `🎁 *Offering*\n\nPlease enter the amount (e.g. 50):`;
+                }
             }
 
-            // EVENTS
+            // --- OPTION 2: TITHE (Church) OR PROJECTS (NPO) ---
+            else if (incomingMsg === '2') {
+                if (session.orgType === 'NON_PROFIT') {
+                    // NPO: FETCH PROJECTS (Events marked as Donations)
+                    const projects = await prisma.event.findMany({ 
+                        where: { churchId: session.orgCode, isDonation: true, status: 'Active' } 
+                    });
+
+                    if (projects.length === 0) {
+                        reply = "⚠️ No active projects found right now.";
+                        session.step = 'CHURCH_MENU';
+                    } else {
+                        let list = "🏗️ *Select a Project to Support:*\n\n"; 
+                        projects.forEach((p, index) => { list += `*${index + 1}.* ${p.name}\n`; });
+                        reply = list + "\nReply with the number."; 
+                        session.step = 'EVENT_SELECT'; 
+                        session.availableEvents = projects; 
+                    }
+                } else {
+                    // CHURCH: TITHE
+                    session.step = 'CHURCH_PAY';
+                    session.choice = '2';
+                    reply = `🏛️ *Tithe*\n\nPlease enter your tithe amount (e.g. 500):`;
+                }
+            }
+
+            // --- OPTION 3: EVENTS (Tickets for Everyone) ---
             else if (incomingMsg === '3') {
                 const events = await prisma.event.findMany({ 
-                    where: { churchCode: session.orgCode, status: 'Active', expiryDate: { gte: new Date() } } 
+                    where: { churchId: session.orgCode, status: 'Active', isDonation: false, date: { gte: new Date() } } 
                 });
+                
                 if (events.length === 0) { 
-                    reply = "⚠️ No active events found."; 
+                    reply = "⚠️ No upcoming ticketed events."; 
                     session.step = 'CHURCH_MENU'; 
                 } else {
-                    let list = "*Select an Event:*\n"; 
+                    let list = "🎟️ *Select an Event:*\n\n"; 
                     events.forEach((e, index) => { list += `*${index + 1}.* ${e.name} (R${e.price})\n`; });
-                    reply = list; 
+                    reply = list + "\nReply with the number."; 
                     session.step = 'EVENT_SELECT'; 
                     session.availableEvents = events; 
                 }
             }
 
-            // NEWS
+            // --- OPTION 4: PARTNER (Church) OR PLEDGE (NPO) ---
+            else if (incomingMsg === '4') {
+                session.step = 'CHURCH_PAY';
+                session.choice = '4';
+                const label = (session.orgType === 'NON_PROFIT') ? 'Monthly Pledge' : 'Partnership';
+                reply = `🔁 *${label}*\n\nEnter the monthly amount (e.g. 200):`;
+            }
+
+            // --- OPTION 5: NEWS ---
             else if (incomingMsg === '5') {
                  const news = await prisma.news.findMany({ 
-                    where: { status: 'Active', expiryDate: { gte: new Date() } }, 
+                    where: { churchId: session.orgCode, status: 'Active' }, 
                     orderBy: { createdAt: 'desc' }, 
                     take: 3 
                 });
-                reply = news.length === 0 ? "📰 No news updates." : "*Latest News:*\n\n" + news.map(n => `📌 *${n.headline}*\n${n.body || ''}\n\n`).join('');
+                reply = news.length === 0 ? "📰 No news updates." : "*Latest Updates:*\n\n" + news.map(n => `📌 *${n.headline}*\n${n.body || ''}\n\n`).join('');
                 session.step = 'CHURCH_MENU';
             }
 
-            // PROFILE
+            // --- OPTION 6: PROFILE ---
             else if (incomingMsg === '6') {
                 session.step = 'PROFILE_MENU';
-                reply = "👤 *My Profile*\n\n1. Update Email\n2. Manage Recurring Gifts\n3. Switch Church (Unlink)\n\nReply with a number:";
+                reply = "👤 *My Profile*\n\n1. Update Email\n2. Manage Recurring Gifts\n3. Switch Organization (Unlink)\n\nReply with a number:";
             }
 
-            // HISTORY
+            // --- OPTION 7: HISTORY ---
             else if (incomingMsg === '7') {
                  const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
                  const userEmail = member?.email || `${cleanPhone}@seabe.io`; 
@@ -101,10 +174,10 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
                  session.step = 'CHURCH_MENU';
             }
             
-            // SWITCH TO SOCIETY
+            // --- OPTION 8: SWITCH TO SOCIETY ---
             else if (incomingMsg === '8') {
                  reply = "🔄 Switching to Burial Society mode...\nReply *Society* to continue.";
-                 delete session.mode; 
+                 delete session.mode; // Reset mode so main router picks up "Society"
             }
 
             else {
@@ -112,52 +185,99 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
             }
         }
 
-        // 3. PAYMENT LOGIC
+        // ====================================================
+        // 3. PAYMENT PROCESSING (Amounts)
+        // ====================================================
         else if (session.step === 'CHURCH_PAY') {
-            let amount = incomingMsg.replace(/\D/g,''); 
+            let amount = incomingMsg.replace(/\D/g,''); // Remove non-digits
             let type = ''; 
             
-            if (session.choice === '1') type = 'OFFERING';
+            // 💡 FIX: CHECK IF THIS IS A SPECIFIC PROJECT FIRST
+            if (session.selectedEvent && session.selectedEvent.isDonation) {
+                // It's a specific fund (e.g. Building Fund)
+                // We use the Event ID in the type: "PROJECT-12"
+                type = `PROJECT-${session.selectedEvent.id}`;
+            }
+            // Standard Menu Choices
+            else if (session.choice === '1') type = (session.orgType === 'NON_PROFIT') ? 'DONATION' : 'OFFERING';
             else if (session.choice === '2') type = 'TITHE';
             else if (session.choice === '4') type = 'RECURRING';
+            else if (session.choice === 'EVENT') type = `TICKET-${session.selectedEvent.id}`; // Fixed Price Tickets
 
+            // Identify User
             const memberInfo = await prisma.member.findUnique({ where: { phone: cleanPhone } });
             const customerEmail = memberInfo?.email || `${cleanPhone}@seabe.io`;
+            
+            // Generate Unique Reference
+            // Result: "AFM001-PROJECT-5-8833-17234"
             const ref = `${session.orgCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
 
+            // Generate Link
             const link = (type === 'RECURRING') 
                 ? await createSubscriptionLink(amount, ref, customerEmail, session.subaccount, cleanPhone, session.orgName) 
                 : await createPaymentLink(amount, ref, customerEmail, session.subaccount, cleanPhone, session.orgName);
             
             if (link) {
+                // Clear the selected event so it doesn't stick for next time
+                delete session.selectedEvent;
+                
                 reply = `Tap to pay R${amount}:\n👉 ${link}`;
+                
+                // Log pending transaction
                 await prisma.transaction.create({ 
                     data: { churchCode: session.orgCode, phone: cleanPhone, type, amount: parseFloat(amount), reference: ref, status: 'PENDING', date: new Date() } 
                 });
             } else {
-                reply = "⚠️ Payment link error.";
+                reply = "⚠️ Payment link error. Please try again later.";
             }
             session.step = 'CHURCH_MENU';
         }
 
-        // 4. EVENT SELECTION
+        // ====================================================
+        // 4. EVENT & PROJECT SELECTION
+        // ====================================================
         else if (session.step === 'EVENT_SELECT') {
             const index = parseInt(incomingMsg) - 1;
             const events = session.availableEvents;
+            
             if (events && events[index]) { 
-                session.step = 'CHURCH_PAY'; 
-                session.choice = 'EVENT'; 
-                session.selectedEvent = events[index]; 
-                reply = `Confirm Ticket for *${events[index].name}* (R${events[index].price})?\nReply *Yes* to continue.`; 
+                const selected = events[index];
+                session.selectedEvent = selected;
+
+                if (selected.isDonation) {
+                    // Variable Amount (Project/Building Fund)
+                    session.step = 'CHURCH_PAY'; 
+                    // We cheat and set choice to '1' (Donation) but append Project Name in Ref later if needed
+                    session.choice = '1'; 
+                    reply = `🏗️ *${selected.name}*\n\nHow much would you like to contribute?`;
+                } else {
+                    // Fixed Price (Ticket)
+                    session.step = 'CHURCH_PAY'; 
+                    session.choice = 'EVENT'; 
+                    // For tickets, we usually just confirm. 
+                    // Simplified here to just generate link for 1 ticket:
+                    const memberInfo = await prisma.member.findUnique({ where: { phone: cleanPhone } });
+                    const email = memberInfo?.email || `${cleanPhone}@seabe.io`;
+                    const ref = `${session.orgCode}-EVENT-${selected.id}-${Date.now().toString().slice(-5)}`;
+                    
+                    const link = await createPaymentLink(selected.price, ref, email, session.subaccount, cleanPhone, session.orgName);
+                    reply = `Tap to buy ticket for ${selected.name} (R${selected.price}):\n👉 ${link}`;
+                    session.step = 'CHURCH_MENU';
+                }
+            } else {
+                reply = "Invalid selection.";
             }
         }
 
-        // 5. PROFILE SUB-MENUS
+        // ====================================================
+        // 5. PROFILE MANAGEMENT
+        // ====================================================
         else if (session.step === 'PROFILE_MENU') {
             if (incomingMsg === '1') {
                 session.step = 'UPDATE_EMAIL';
                 reply = "📧 Reply with your new *Email Address*:";
             } else if (incomingMsg === '2') {
+                 // Manage Subscriptions
                  const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
                  const userEmail = member?.email || `${cleanPhone}@seabe.io`;
                  const subs = await listActiveSubscriptions(userEmail);
@@ -177,12 +297,12 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
                      reply = subList;
                  }
             } 
-            // OPTION 3: SWITCH CHURCH (UNLINK)
             else if (incomingMsg === '3') {
+                // UNLINK ORGANIZATION
                 await prisma.member.update({ where: { phone: cleanPhone }, data: { churchCode: null } });
                 delete session.mode; 
                 delete session.orgCode;
-                reply = "🔄 You have left this church.\n\nReply *Hi* to search for a new one.";
+                reply = "🔄 You have unlinked from this organization.\n\nReply *Hi* to search for a new one.";
             }
         }
 
@@ -197,7 +317,6 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
             }
         }
         
-        // CANCEL SUB LOGIC
         else if (session.step === 'CANCEL_SUB_SELECT') {
              if (incomingMsg === '0') {
                  session.step = 'CHURCH_MENU';
@@ -220,7 +339,7 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
             res.type('text/xml').send(twiml.toString());
         }
 
-    } catch (e) {  // 👈 THIS WAS MISSING
+    } catch (e) { 
         console.error("Church Bot Error:", e);
         res.sendStatus(500);
     }

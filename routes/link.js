@@ -1,62 +1,103 @@
-// routes/link.js - FULLY CORRECTED FILE
-
-const express = require('express');                 // Line 1: Import Express
-const router = express.Router();                    // Line 2: Create the Router (Fixes your error!)
-const { createPaymentLink } = require('../services/paystack'); // Line 3: Import Payment Logic
+// ==========================================
+// SEABE LINK (The Public Web Portal)
+// Supports: Churches ⛪, Societies 🛡️, NPOs 🤝
+// ==========================================
+const express = require('express');
+const router = express.Router();
+const { createPaymentLink } = require('../services/paystack'); // We only need one-off links here usually
 
 module.exports = (app, { prisma }) => {
 
-    // 1. THE PUBLIC LANDING PAGE
+    // ==========================================
+    // 1. THE PUBLIC LANDING PAGE (GET)
+    // Example: seabe.io/link/AFM001
+    // ==========================================
     router.get('/link/:code', async (req, res) => {
         try {
             const { code } = req.params;
             
-            // Fetch Organization details
+            // Fetch Organization details & Active Events/Projects
+            // We include events that are ACTIVE and haven't expired
             const org = await prisma.church.findUnique({
                 where: { code: code.toUpperCase() },
-                include: { events: { where: { status: 'Active' } } }
+                include: { 
+                    events: { 
+                        where: { status: 'ACTIVE' } 
+                    } 
+                }
             });
 
-            if (!org) return res.status(404).send("Organization not found.");
+            if (!org) return res.status(404).send("<h3>Error: Organization not found.</h3>");
 
-            // --- 💡 DYNAMIC PAYMENT OPTIONS LOGIC ---
+            // --- 💡 DYNAMIC MENU BUILDER ---
             let optionsHtml = '';
-            let amountPlaceholder = 'e.g. 100';
-            let amountLabel = 'Amount (ZAR)';
+            let orgIcon = '⛪';
+            let orgLabel = 'Church';
+            let themeColor = '#000'; // Default Black
 
+            // 🛡️ SCENARIO A: BURIAL SOCIETY
             if (org.type === 'BURIAL_SOCIETY') {
-                // 🛡️ SCENARIO A: BURIAL SOCIETY
+                orgIcon = '🛡️';
+                orgLabel = 'Burial Society';
+                themeColor = '#2c3e50'; // Navy Blue
+                
                 const fee = org.subscriptionFee || 150;
-                amountPlaceholder = `e.g. ${fee}`;
-                amountLabel = 'Payment Amount';
-
+                
+                // Note: data-type="FIXED" locks the amount input. "VARIABLE" lets user type.
                 optionsHtml = `
-                    <option value="PREM">Monthly Premium (R${fee}) 🛡️</option>
-                    <option value="JOIN_FEE">Joining Fee 📝</option>
-                    <option value="ARREARS">Arrears / Late Payment ⚠️</option>
-                    <option value="DONATION">General Donation 🤝</option>
+                    <option value="PREM" data-type="FIXED" data-price="${fee}">Monthly Premium (R${fee}) 🛡️</option>
+                    <option value="JOIN_FEE" data-type="VARIABLE">Joining Fee 📝</option>
+                    <option value="ARREARS" data-type="VARIABLE">Arrears / Late Payment ⚠️</option>
+                    <option value="DONATION" data-type="VARIABLE">General Donation 🤝</option>
                 `;
-            } else {
-                // ⛪ SCENARIO B: CHURCH
+            } 
+            // 🤝 SCENARIO B: NON-PROFIT (NPO)
+            else if (org.type === 'NON_PROFIT') {
+                orgIcon = '🤝';
+                orgLabel = 'Non-Profit';
+                themeColor = '#27ae60'; // Green
+                
                 optionsHtml = `
-                    <option value="OFFERING" selected>General Offering 🎁</option>
-                    <option value="TITHE">Tithe (10%) 🏛️</option>
-                    <option value="THANKSGIVING">Thanksgiving 🙏</option>
-                    <option value="BUILDING">Building Fund 🧱</option>
-                    <option value="SEED">Seed Faith 🌱</option>
+                    <option value="DONATION" data-type="VARIABLE" selected>General Donation 💖</option>
+                    <option value="PLEDGE" data-type="VARIABLE">Monthly Pledge 🔁</option>
+                    <option value="SPONSORSHIP" data-type="VARIABLE">Sponsor a Child/Beneficiary 🧑‍🤝‍🧑</option>
+                `;
+            } 
+            // ⛪ SCENARIO C: CHURCH (Default)
+            else {
+                orgIcon = '⛪';
+                themeColor = '#8e44ad'; // Purple
+                
+                optionsHtml = `
+                    <option value="OFFERING" data-type="VARIABLE" selected>General Offering 🎁</option>
+                    <option value="TITHE" data-type="VARIABLE">Tithe (10%) 🏛️</option>
+                    <option value="THANKSGIVING" data-type="VARIABLE">Thanksgiving 🙏</option>
+                    <option value="SEED" data-type="VARIABLE">Seed Faith 🌱</option>
+                    <option value="BUILDING" data-type="VARIABLE">Building Fund 🧱</option>
                 `;
             }
 
-            // --- COMMON: ADD EVENTS ---
+            // --- ADD EVENTS & PROJECTS (The Mix) ---
             if (org.events.length > 0) {
-                optionsHtml += `<optgroup label="Events">`;
+                optionsHtml += `<optgroup label="Campaigns & Events">`;
+                
                 org.events.forEach(e => {
-                    optionsHtml += `<option value="EVENT_${e.id}">${e.name} (R${e.price}) 🎟️</option>`;
+                    if (e.isDonation) {
+                        // 🏗️ VARIABLE PROJECT (e.g. Building Fund) -> User types amount
+                        // We store the ID in the value: "PROJECT_5"
+                        optionsHtml += `<option value="PROJECT_${e.id}" data-type="VARIABLE">${e.name} (Any Amount) 🏗️</option>`;
+                    } else {
+                        // 🎟️ FIXED TICKET (e.g. Concert) -> Price is locked
+                        // We store the ID in the value: "EVENT_12"
+                        optionsHtml += `<option value="EVENT_${e.id}" data-type="FIXED" data-price="${e.price}">${e.name} (R${e.price}) 🎟️</option>`;
+                    }
                 });
+                
                 optionsHtml += `</optgroup>`;
             }
 
-            // --- RENDER HTML ---
+            // --- RENDER HTML TEMPLATE ---
+            // We use a simple template string (no external EJS/Pug needed for speed)
             res.send(`
             <!DOCTYPE html>
             <html lang="en">
@@ -65,100 +106,158 @@ module.exports = (app, { prisma }) => {
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <title>Pay ${org.name}</title>
                 <style>
-                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; padding: 20px; display: flex; justify-content: center; min-height: 100vh; margin: 0; }
-                    .card { background: white; width: 100%; max-width: 400px; padding: 30px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); height: fit-content; }
-                    .input-group { margin-bottom: 15px; text-align: left; }
-                    label { display: block; font-weight: 600; margin-bottom: 5px; font-size: 12px; color: #555; text-transform: uppercase; }
-                    input, select { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font-size: 16px; }
-                    .btn { width: 100%; padding: 15px; background: #000; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 16px; margin-top: 10px; }
-                    .btn:hover { opacity: 0.9; }
+                    :root { --primary: ${themeColor}; --bg: #f4f6f8; }
+                    body { font-family: -apple-system, system-ui, sans-serif; background: var(--bg); padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+                    .card { background: white; width: 100%; max-width: 400px; padding: 30px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
+                    .header { text-align: center; margin-bottom: 30px; }
+                    .logo { font-size: 50px; margin-bottom: 10px; display: inline-block; }
+                    h2 { margin: 0; color: #333; font-size: 22px; }
+                    .badge { background: #eee; padding: 4px 8px; border-radius: 4px; font-size: 12px; color: #666; display: inline-block; margin-top: 5px; }
+                    
+                    .input-group { margin-bottom: 20px; }
+                    label { display: block; font-size: 12px; font-weight: 700; color: #777; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+                    input, select { width: 100%; padding: 14px; border: 2px solid #eee; border-radius: 12px; font-size: 16px; box-sizing: border-box; transition: 0.3s; background: #fff; }
+                    input:focus, select:focus { border-color: var(--primary); outline: none; }
+                    
+                    .btn { width: 100%; padding: 16px; background: var(--primary); color: white; border: none; border-radius: 12px; font-weight: 700; font-size: 16px; cursor: pointer; margin-top: 10px; transition: 0.3s; }
+                    .btn:hover { opacity: 0.9; transform: translateY(-2px); }
+                    
+                    .secure-footer { text-align: center; margin-top: 25px; font-size: 11px; color: #aaa; display: flex; align-items: center; justify-content: center; gap: 5px; }
                 </style>
             </head>
             <body>
                 <div class="card">
-                    <div style="text-align: center; font-size: 40px; margin-bottom: 10px;">
-                        ${org.type === 'BURIAL_SOCIETY' ? '🛡️' : '⛪'}
+                    <div class="header">
+                        <div class="logo">${orgIcon}</div>
+                        <h2>${org.name}</h2>
+                        <span class="badge">${orgLabel}</span>
                     </div>
-                    <h2 style="text-align: center; margin-top: 0; margin-bottom: 5px;">${org.name}</h2>
-                    <p style="text-align: center; color: #666; font-size: 14px; margin-bottom: 25px;">Secure Payment Portal</p>
 
                     <form action="/link/${code}/process" method="POST">
+                        
                         <div class="input-group">
-                            <label>${amountLabel}</label>
-                            <input type="number" name="amount" placeholder="${amountPlaceholder}" required>
-                        </div>
-
-                        <div class="input-group">
-                            <label>Payment For</label>
-                            <select name="type">
+                            <label>I want to give to...</label>
+                            <select name="type" id="paymentType" onchange="updateAmountLogic()" required>
                                 ${optionsHtml}
                             </select>
                         </div>
 
                         <div class="input-group">
-                            <label>Your Name</label>
-                            <input type="text" name="name" placeholder="Full Name" required>
+                            <label>Amount (ZAR)</label>
+                            <input type="number" name="amount" id="amountInput" placeholder="e.g. 100" min="10" step="any" required>
                         </div>
-                        
+
                         <div class="input-group">
-                            <label>Contact Info</label>
-                            <input type="email" name="email" placeholder="Email Address" required>
+                            <label>Your Details</label>
+                            <input type="text" name="name" placeholder="Full Name" required style="margin-bottom: 10px;">
+                            <input type="email" name="email" placeholder="Email Address" required style="margin-bottom: 10px;">
                             <input type="tel" name="phone" placeholder="WhatsApp Number" required>
                         </div>
 
                         <button type="submit" class="btn">Proceed to Pay</button>
                     </form>
                     
-                    <div style="text-align: center; margin-top: 20px; font-size: 11px; color: #999;">
-                        🔒 Secured by Paystack via Seabe
+                    <div class="secure-footer">
+                        🔒 Secured by Paystack & Seabe
                     </div>
                 </div>
+
+                <script>
+                    function updateAmountLogic() {
+                        const select = document.getElementById('paymentType');
+                        const input = document.getElementById('amountInput');
+                        const option = select.options[select.selectedIndex];
+                        
+                        const type = option.getAttribute('data-type');
+                        const price = option.getAttribute('data-price');
+
+                        if (type === 'FIXED') {
+                            // Lock the amount for Tickets/Premiums
+                            input.value = price;
+                            input.readOnly = true;
+                            input.style.backgroundColor = "#f9f9f9";
+                            input.style.color = "#555";
+                        } else {
+                            // Unlock for Donations
+                            input.value = '';
+                            input.readOnly = false;
+                            input.style.backgroundColor = "white";
+                            input.style.color = "#000";
+                            input.placeholder = "Enter Amount (Min R10)";
+                            input.focus();
+                        }
+                    }
+                    // Run on load in case browser remembers selection
+                    updateAmountLogic();
+                </script>
             </body>
             </html>
             `);
 
         } catch (e) {
-            console.error(e);
-            res.status(500).send("System Error");
+            console.error("Link Page Error:", e);
+            res.status(500).send("System Error loading page.");
         }
     });
 
-    // 2. PROCESS PAYMENT ROUTE
+    // ==========================================
+    // 2. PROCESS THE PAYMENT (POST)
+    // ==========================================
     router.post('/link/:code/process', async (req, res) => {
         try {
             const { code } = req.params;
             const { amount, type, name, email, phone } = req.body;
             
+            // Validate Org
             const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
-            if (!org) return res.send("Error: Org not found.");
+            if (!org) return res.send("Error: Organization not found.");
 
+            // Clean Phone (Remove spaces, ensure format)
             const cleanPhone = phone.replace(/\D/g, ''); 
+            
+            // Construct Reference
+            // Example: "WEB-AFM001-PROJECT_5-8334-17382"
+            // We use 'WEB' prefix so we know it came from the site, not the bot
             const ref = `WEB-${code}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
 
             // Call Paystack Service
-            const link = await createPaymentLink(amount, ref, email, org.subaccountCode, cleanPhone, org.name);
+            // Note: subaccountCode ensures split payment happens if configured
+            const link = await createPaymentLink(
+                parseFloat(amount), 
+                ref, 
+                email, 
+                org.subaccountCode, 
+                cleanPhone, 
+                org.name
+            );
 
             if (link) {
-                // Upsert Member (Create if new, update if exists)
+                // --- A. UPSERT MEMBER (Save the user) ---
+                // We intelligently link them based on Org Type
+                const updateData = (org.type === 'CHURCH') ? { churchCode: org.code } : 
+                                   (org.type === 'BURIAL_SOCIETY') ? { societyCode: org.code } : 
+                                   {}; // NPOs might not "own" the member yet
+
                 await prisma.member.upsert({
                     where: { phone: cleanPhone },
-                    update: { email: email, firstName: name.split(' ')[0], lastName: name.split(' ')[1] || '' }, 
+                    update: { ...updateData, email: email }, // Update email if they changed it
                     create: { 
                         phone: cleanPhone, 
                         firstName: name.split(' ')[0], 
                         lastName: name.split(' ')[1] || 'Guest',
                         email: email,
-                        // Auto-link to the organization
-                        ...(org.type === 'CHURCH' ? { churchCode: org.code } : { societyCode: org.code })
+                        joinedAt: new Date(),
+                        ...updateData
                     }
                 });
 
-                // Record Transaction
+                // --- B. LOG TRANSACTION (Pending) ---
+                // If type includes 'PROJECT_' or 'EVENT_', we keep it as is
                 await prisma.transaction.create({
                     data: {
                         churchCode: org.code,
                         phone: cleanPhone,
-                        type: type,
+                        type: type, // Stores 'OFFERING' or 'PROJECT_12'
                         amount: parseFloat(amount),
                         reference: ref,
                         status: 'PENDING',
@@ -166,17 +265,15 @@ module.exports = (app, { prisma }) => {
                     }
                 });
 
+                // --- C. REDIRECT TO PAYSTACK ---
                 res.redirect(link);
             } else {
-                res.send("Error creating payment link.");
+                res.status(500).send("Error communicating with Payment Gateway.");
             }
 
         } catch (e) {
-            console.error("Web Payment Error:", e);
-            res.send("System Error Processing Payment");
+            console.error("Web Payment Processing Error:", e);
+            res.status(500).send("System Error Processing Payment.");
         }
     });
-
-    // Mount the router
-    app.use('/', router);
 };
