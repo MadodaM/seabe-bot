@@ -47,6 +47,7 @@ app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'p
 app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
 require('./routes/web')(app, upload, { prisma });
 require('./routes/admin')(app, { prisma });
+require('./routes/link')(app, { prisma });
 
 // --- MEMORY ---
 let userSession = {}; 
