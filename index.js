@@ -212,52 +212,77 @@ app.post('/whatsapp', async (req, res) => {
         }
 
 // ------------------------------------------------
-        // 🛠️ ADMIN TRIGGER: MANUAL REPORT
-        // Usage: "Report AFM" or "Report KOP"
+        // 🛠️ ADMIN TRIGGER: SECURE EMAIL REPORT
+        // Usage: "Report AFM" -> Sends CSV to admin@afm.com
         // ------------------------------------------------
-        if (incomingMsg.startsWith('report ')) {
-            // 1. Extract the Church Code (e.g., "AFM")
+        else if (incomingMsg.startsWith('report ')) {
             const targetCode = incomingMsg.split(' ')[1]?.toUpperCase();
 
             if (!targetCode) {
                 twiml.message("⚠️ Please specify a code. Example: *Report AFM*");
             } else {
-                // 2. Fetch the Transactions
-                const transactions = await prisma.transaction.findMany({
-                    where: { 
-                        churchCode: targetCode,
-                        status: 'SUCCESS' // Only paid items
-                    },
-                    orderBy: { date: 'desc' },
-                    take: 50 // Limit to last 50 for WhatsApp readability
+                // 1. Fetch Org Details AND Transactions together
+                const org = await prisma.church.findUnique({
+                    where: { code: targetCode },
+                    include: { 
+                        transactions: {
+                            where: { status: 'SUCCESS' },
+                            orderBy: { date: 'desc' },
+                            take: 100 // Last 100 transactions
+                        }
+                    }
                 });
 
-                if (transactions.length === 0) {
-                    twiml.message(`📉 No transactions found for *${targetCode}*.`);
+                if (!org) {
+                    twiml.message(`🚫 Organization *${targetCode}* not found.`);
+                } else if (org.transactions.length === 0) {
+                    twiml.message(`📉 No transactions found for *${org.name}*.`);
+                } else if (!org.email) {
+                    twiml.message(`⚠️ *${org.name}* has no email address configured in the database.`);
                 } else {
-                    // 3. Generate CSV Format (Simple String)
-                    let csvContent = "Date,Name,Type,Amount,Ref\n";
+                    // 2. Generate CSV Content (Hidden from WhatsApp)
+                    let csvContent = "Date,Phone,Type,Amount,Reference\n";
                     let total = 0;
 
-                    transactions.forEach(t => {
+                    org.transactions.forEach(t => {
                         const date = t.date.toISOString().split('T')[0];
                         const amount = t.amount.toFixed(2);
                         csvContent += `${date},${t.phone},${t.type},${amount},${t.reference}\n`;
                         total += t.amount;
                     });
+                    
+                    // Add Summary Row at bottom of CSV
+                    csvContent += `\nTOTAL,,,${total.toFixed(2)},`;
 
-                    // 4. Send Summary
-                    const summary = `📊 *REPORT: ${targetCode}*\n` +
-                                    `Transactions: ${transactions.length}\n` +
-                                    `Total Raised: R${total.toFixed(2)}\n\n` +
-                                    `_Check your email for the full CSV file._`; 
+                    // 3. Send Email via SendGrid
+                    const msg = {
+                        to: org.email, // 🔒 Sent ONLY to the registered admin email
+                        from: process.env.EMAIL_FROM || 'admin@seabe.io',
+                        subject: `📊 Monthly Report: ${org.name}`,
+                        text: `Attached is the latest transaction report for ${org.name}.\n\nTotal Processed: R${total.toFixed(2)}`,
+                        attachments: [
+                            {
+                                content: Buffer.from(csvContent).toString('base64'),
+                                filename: `Report_${targetCode}_${new Date().toISOString().split('T')[0]}.csv`,
+                                type: 'text/csv',
+                                disposition: 'attachment'
+                            }
+                        ]
+                    };
 
-                    twiml.message(summary);
+                    try {
+                        await sgMail.send(msg);
+                        // 4. Secure WhatsApp Reply
+                        twiml.message(`✅ Report for *${org.name}* has been emailed to *${org.email}*.`);
+                    } catch (error) {
+                        console.error("Email Error:", error);
+                        twiml.message("⚠️ Error sending email. Please check server logs.");
+                    }
                 }
             }
             
             res.type('text/xml').send(twiml.toString());
-            return; // Stop here so we don't trigger "Invalid Option"
+            return; 
         }
 
 
