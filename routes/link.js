@@ -3,8 +3,9 @@
 // Supports: Churches ⛪, Societies 🛡️, NPOs 🤝
 // ==========================================
 const express = require('express');
-const router = express.Router(); // 👈 This was missing!
-const { createPaymentLink } = require('../services/paystack'); 
+const router = express.Router();
+// 👇 IMPORT BOTH FUNCTIONS
+const { createPaymentLink, createSubscriptionLink } = require('../services/paystack'); 
 
 module.exports = (app, { prisma }) => {
 
@@ -90,6 +91,10 @@ module.exports = (app, { prisma }) => {
             }
 
             // --- RENDER HTML TEMPLATE ---
+            // (Same HTML as before, omitted for brevity but included in the file structure logic)
+            // Just paste the previous HTML block here if you need to regenerate the full file
+            // For now, I'll keep the logic clear.
+            
             res.send(`
             <!DOCTYPE html>
             <html lang="en">
@@ -105,21 +110,16 @@ module.exports = (app, { prisma }) => {
                     .logo { font-size: 50px; margin-bottom: 10px; display: inline-block; }
                     h2 { margin: 0; color: #333; font-size: 22px; }
                     .badge { background: #eee; padding: 4px 8px; border-radius: 4px; font-size: 12px; color: #666; display: inline-block; margin-top: 5px; }
-                    
                     .input-group { margin-bottom: 20px; }
                     label { display: block; font-size: 12px; font-weight: 700; color: #777; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
                     input, select { width: 100%; padding: 14px; border: 2px solid #eee; border-radius: 12px; font-size: 16px; box-sizing: border-box; transition: 0.3s; background: #fff; }
                     input:focus, select:focus { border-color: var(--primary); outline: none; }
-                    
-                    /* CHECKBOX STYLES */
                     .checkbox-wrapper { display: flex; align-items: flex-start; gap: 10px; background: #f9f9f9; padding: 15px; border-radius: 12px; border: 1px solid #eee; }
                     .checkbox-wrapper input { width: 20px; height: 20px; margin: 0; cursor: pointer; }
                     .checkbox-wrapper label { margin: 0; font-size: 13px; color: #555; text-transform: none; font-weight: 400; line-height: 1.4; cursor: pointer; }
                     .checkbox-wrapper a { color: var(--primary); text-decoration: none; font-weight: 600; }
-
                     .btn { width: 100%; padding: 16px; background: var(--primary); color: white; border: none; border-radius: 12px; font-weight: 700; font-size: 16px; cursor: not-allowed; margin-top: 10px; transition: 0.3s; opacity: 0.5; }
                     .btn:not([disabled]):hover { opacity: 0.9; transform: translateY(-2px); }
-                    
                     .secure-footer { text-align: center; margin-top: 25px; font-size: 11px; color: #aaa; line-height: 1.5; }
                 </style>
             </head>
@@ -130,28 +130,23 @@ module.exports = (app, { prisma }) => {
                         <h2>${org.name}</h2>
                         <span class="badge">${orgLabel}</span>
                     </div>
-
                     <form action="/link/${code}/process" method="POST">
-                        
                         <div class="input-group">
                             <label>I want to give to...</label>
                             <select name="type" id="paymentType" onchange="updateAmountLogic()" required>
                                 ${optionsHtml}
                             </select>
                         </div>
-
                         <div class="input-group">
                             <label>Amount (ZAR)</label>
                             <input type="number" name="amount" id="amountInput" placeholder="e.g. 100" min="10" step="any" required>
                         </div>
-
                         <div class="input-group">
                             <label>Your Details</label>
                             <input type="text" name="name" placeholder="Full Name" required style="margin-bottom: 10px;">
                             <input type="email" name="email" placeholder="Email Address" required style="margin-bottom: 10px;">
                             <input type="tel" name="phone" placeholder="WhatsApp Number" required>
                         </div>
-
                         <div class="input-group checkbox-wrapper">
                             <input type="checkbox" id="termsCheckbox" onchange="togglePayButton()">
                             <label for="termsCheckbox">
@@ -159,25 +154,17 @@ module.exports = (app, { prisma }) => {
                                 <br><span style="font-size:11px; color:#888;">(Refunds subject to Org policy)</span>
                             </label>
                         </div>
-
                         <button type="submit" class="btn" id="payButton" disabled>Proceed to Pay</button>
                     </form>
-                    
-                    <div class="secure-footer">
-                        🔒 Secured by Paystack & Seabe<br>
-                        Seabe Digital is a technology platform. We are not a bank or insurer.
-                    </div>
+                    <div class="secure-footer">🔒 Secured by Paystack & Seabe<br>Seabe Digital is a technology platform. We are not a bank or insurer.</div>
                 </div>
-
                 <script>
                     function updateAmountLogic() {
                         const select = document.getElementById('paymentType');
                         const input = document.getElementById('amountInput');
                         const option = select.options[select.selectedIndex];
-                        
                         const type = option.getAttribute('data-type');
                         const price = option.getAttribute('data-price');
-
                         if (type === 'FIXED') {
                             input.value = price;
                             input.readOnly = true;
@@ -192,11 +179,9 @@ module.exports = (app, { prisma }) => {
                             input.focus();
                         }
                     }
-                    
                     function togglePayButton() {
                         const checkbox = document.getElementById('termsCheckbox');
                         const btn = document.getElementById('payButton');
-                        
                         if (checkbox.checked) {
                             btn.disabled = false;
                             btn.style.opacity = '1';
@@ -207,7 +192,6 @@ module.exports = (app, { prisma }) => {
                             btn.style.cursor = 'not-allowed';
                         }
                     }
-                    
                     updateAmountLogic();
                     togglePayButton();
                 </script>
@@ -239,15 +223,21 @@ module.exports = (app, { prisma }) => {
             // Construct Reference
             const ref = `WEB-${code}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
 
-            // Call Paystack Service
-            const link = await createPaymentLink(
-                amount, // Note: sanitization happens inside the service now!
-                ref, 
-                email, 
-                org.subaccountCode, 
-                cleanPhone, 
-                org.name
-            );
+            let link = null;
+
+            // 🔀 LOGIC BRANCH: Subscription vs One-Time
+            // If the type is 'PREM' (Premium) or 'PLEDGE', we treat it as Recurring
+            if (type === 'PREM' || type === 'PLEDGE') {
+                console.log(`🔄 Processing Subscription for ${email}`);
+                link = await createSubscriptionLink(
+                    amount, ref, email, org.subaccountCode, cleanPhone, org.name
+                );
+            } else {
+                console.log(`💰 Processing One-Time Payment for ${email}`);
+                link = await createPaymentLink(
+                    amount, ref, email, org.subaccountCode, cleanPhone, org.name
+                );
+            }
 
             if (link) {
                 // UPSERT MEMBER
