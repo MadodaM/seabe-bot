@@ -43,6 +43,11 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
+// Dedicated ping route to keep Render awake
+app.get('/ping', (req, res) => {
+    res.status(200).send("Stay awake!");
+});
+
 // --- ROUTES ---
 // ==========================================
 // 1. STATIC LEGAL PAGES
@@ -179,7 +184,78 @@ app.post('/paystack/webhook', async (req, res) => {
 // 🚦 WHATSAPP TRAFFIC CONTROLLER (ROUTER)
 // ==========================================
 app.post('/whatsapp', async (req, res) => {
-    const twiml = new MessagingResponse();
+    app.post('/whatsapp', (req, res) => {
+    const incomingMsg = req.body.Body?.trim().toLowerCase();
+    const cleanPhone = req.body.From.replace('whatsapp:', '');
+
+    // 1. Respond to Twilio IMMEDIATELY to prevent the 15s timeout
+    res.type('text/xml').send('<Response></Response>');
+
+    // 2. Handle everything else in the background
+    (async () => {
+        try {
+            if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
+            const session = userSession[cleanPhone];
+
+            // Now we do the slow database work
+            const member = await prisma.member.findUnique({
+                where: { phone: cleanPhone },
+                include: { church: true, society: true }
+            });
+
+            // LOGIC GATE: Is it a new user or existing?
+            if (!member) {
+                await client.messages.create({
+                    from: process.env.TWILIO_PHONE_NUMBER,
+                    to: `whatsapp:${cleanPhone}`,
+                    body: "👋 Welcome! It looks like you aren't registered yet. Please reply with your *Church Code* to get started."
+                });
+                return;
+            }
+
+            // --- [START OF BOT BRAIN] ---
+
+// 1. Handle Global "Cancel" or "Reset"
+if (incomingMsg === 'exit' || incomingMsg === 'cancel') {
+    delete userSession[cleanPhone];
+    await sendMessage(cleanPhone, "🔄 Session cleared. Reply *Hi* to see the main menu.");
+    return;
+}
+
+// 2. Handle Burial Society Flows (If session exists)
+if (session.flow === 'SOCIETY_PAYMENT' || incomingMsg === 'society') {
+    return handleSocietyMessage(cleanPhone, incomingMsg, session, member);
+}
+
+// 3. Handle Church Flows (If session exists)
+if (session.flow === 'CHURCH_PAYMENT' || incomingMsg === 'pay') {
+    return handleChurchPayment(cleanPhone, incomingMsg, session, member);
+}
+
+// 4. Main Menu Logic (For registered members)
+if (incomingMsg === 'hi' || incomingMsg === 'menu') {
+    const menu = `👋 Hello, ${member.name}!\n\n` +
+                 `How can I help you today?\n` +
+                 `1️⃣ *Pay* (Tithe/Offering)\n` +
+                 `2️⃣ *Society* (Burial Fees)\n` +
+                 `3️⃣ *Balance* (Check Statements)\n` +
+                 `4️⃣ *Admin* (Reports)`;
+    await sendMessage(cleanPhone, menu);
+    return;
+}
+
+// 5. Default Fallback
+await sendMessage(cleanPhone, "🤔 I didn't quite catch that. Reply *Menu* to see available options.");
+
+// --- [END OF BOT BRAIN] ---
+            
+        } catch (error) {
+            console.error("⚠️ Background processing error:", error);
+        }
+    })();
+});
+	
+	const twiml = new MessagingResponse();
     const incomingMsg = req.body.Body.trim().toLowerCase();
     const cleanPhone = req.body.From.replace('whatsapp:', '');
 
@@ -513,3 +589,22 @@ if (process.env.NODE_ENV !== 'test') {
 
 // Export the app for testing
 module.exports = app;
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+    console.log(`✅ Seabe Engine running on ${PORT}`);
+});
+
+// --- ☀️ KEEP-WARM LOGIC START ---
+// This prevents Render from putting your app to sleep (Cold Start)
+const SELF_URL = `https://${process.env.HOST_URL}/payment-success`;
+
+setInterval(() => {
+    // Only ping if we actually have a HOST_URL set
+    if (process.env.HOST_URL) {
+        axios.get(SELF_URL)
+            .then(() => console.log("☀️ Server Keep-Warm Ping Sent"))
+            .catch((err) => console.log("⚠️ Keep-warm ping failed (this is usually okay):", err.message));
+    }
+}, 600000); // 10 minutes (600,000ms)
+// --- KEEP-WARM LOGIC END ---
