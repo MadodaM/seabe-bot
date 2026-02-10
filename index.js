@@ -436,7 +436,7 @@ app.post('/whatsapp', async (req, res) => {
 // Add 'async' here so we can wait for the Database/Paystack
 app.get('/payment-success', async (req, res) => {
     const { reference } = req.query;
-    console.log(`🔎 Success Page reached for Ref: ${reference}`);
+    console.log(`🔎 Verification Check: ${reference}`);
 
     if (reference) {
         try {
@@ -445,35 +445,56 @@ app.get('/payment-success', async (req, res) => {
             });
 
             if (resp.data.data.status === 'success') {
-                const transaction = await prisma.transaction.update({
-                    where: { reference: reference },
-                    data: { status: 'SUCCESS' }
+                const paystackData = resp.data.data;
+                const meta = paystackData.metadata || {};
+                const amount = paystackData.amount / 100; // Paystack is in cents
+                const phone = meta.whatsapp_number || meta.phone;
+
+                // 1. Try to find the transaction first
+                let transaction = await prisma.transaction.findUnique({
+                    where: { reference: reference }
                 });
 
-                // Check if Twilio is actually ready
-                if (!client) {
-                    console.error("❌ PDF ABORTED: Twilio client is not initialized.");
-                } else {
-                    const userPhone = transaction.phone;
-                    const date = new Date().toISOString().split('T')[0];
-                    // Using the official invoice-generator API
-                    const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=Seabe&to=${userPhone}&date=${date}&items[0][name]=Contribution&items[0][unit_cost]=${transaction.amount}`;
-
-                    await client.messages.create({
-                        from: process.env.TWILIO_PHONE_NUMBER,
-                        to: userPhone.startsWith('whatsapp:') ? userPhone : `whatsapp:${userPhone}`,
-                        body: `✅ *Payment Received*\nRef: ${reference}\nAmount: R${transaction.amount}\n\nThank you! 🙏`,
-                        mediaUrl: [ pdfUrl ] 
+                // 2. If not found by reference, find by Phone + Amount + Pending status
+                if (!transaction && phone) {
+                    transaction = await prisma.transaction.findFirst({
+                        where: {
+                            phone: phone.replace('whatsapp:', ''),
+                            amount: amount,
+                            status: 'PENDING'
+                        }
                     });
-                    console.log(`📑 PDF Invoice successfully sent to ${userPhone}`);
+                }
+
+                if (transaction) {
+                    // 3. Perform the update now that we've safely found it
+                    const updatedTx = await prisma.transaction.update({
+                        where: { id: transaction.id },
+                        data: { status: 'SUCCESS', reference: reference } // Update with the REAL reference
+                    });
+
+                    // 4. Send the PDF
+                    if (client) {
+                        const date = new Date().toISOString().split('T')[0];
+                        const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=Seabe&to=${phone}&date=${date}&items[0][name]=Contribution&items[0][unit_cost]=${amount}`;
+
+                        await client.messages.create({
+                            from: process.env.TWILIO_PHONE_NUMBER,
+                            to: phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`,
+                            body: `✅ *Payment Received*\nRef: ${reference}\nAmount: R${amount}\n\nThank you! 🙏`,
+                            mediaUrl: [ pdfUrl ]
+                        });
+                        console.log(`📑 Invoice sent to ${phone}`);
+                    }
+                } else {
+                    console.error(`❌ Could not find a matching PENDING transaction for ${reference}`);
                 }
             }
         } catch (e) {
             console.error("⚠️ PDF Logic Error:", e.message);
         }
     }
-
-    res.send(`<h1>✅ Payment Received</h1><p>You can now close this window.</p>`);
+    res.send(`<h1>✅ Payment Received</h1><p>Check WhatsApp for your receipt.</p>`);
 });
 
 const PORT = process.env.PORT || 3000;
