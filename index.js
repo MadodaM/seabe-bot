@@ -568,8 +568,7 @@ const receiptBody =
     `✅ *Status:* Confirmed & Recorded\n\n` +
     `_Thank you for your faithful contribution. This message serves as your proof of payment._`;
 
-// 1. Send the receipt in the background (so the user doesn't wait)
-    (async () => {
+(async () => {
         try {
             await client.messages.create({
                 from: process.env.TWILIO_PHONE_NUMBER,
@@ -580,11 +579,10 @@ const receiptBody =
         } catch (error) {
             console.error("❌ Receipt Delivery Error:", error.message);
         }
-    })(); 
+    })(); // 1. This closes the (async () => { ... }) block
 
-    // 2. Respond to the browser immediately
     res.send(`<h1>✅ Payment Received</h1><p>Check WhatsApp for your receipt.</p>`);
-});
+}); // 2. This closes the app.get or app.post block
 
 const PORT = process.env.PORT || 3000;
 
