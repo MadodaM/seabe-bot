@@ -1,152 +1,314 @@
 // ==========================================
-// CLIENT DASHBOARD (Live Mode 🟢)
+// CLIENT DASHBOARD (Organization Admin)
 // Route: /admin/:code
+// Features: Finance, Events, News, Ads
 // ==========================================
 const express = require('express');
 const router = express.Router();
 const { sendWhatsApp } = require('../services/whatsapp');
 
-// Helper: Generate 4-digit OTP
+// --- HELPERS ---
 const generateOTP = () => Math.floor(1000 + Math.random() * 9000).toString();
+const safeDate = (d) => d ? new Date(d) : new Date();
 
-// Helper: Standard Header with Favicon (Lock Icon 🔐)
-const getHead = (title) => `
+// Simple Cookie Parser
+const parseCookies = (req) => {
+    const list = {}, rc = req.headers.cookie;
+    rc && rc.split(';').forEach(c => { const p = c.split('='); list[p.shift().trim()] = decodeURI(p.join('=')); });
+    return list;
+};
+
+// UI Template
+const renderPage = (org, activeTab, content) => {
+    const navStyle = (tab) => `
+        padding: 10px 15px; 
+        text-decoration: none; 
+        color: ${activeTab === tab ? '#000' : '#888'}; 
+        border-bottom: ${activeTab === tab ? '3px solid #00d2d3' : 'none'};
+        font-weight: bold; font-size: 14px;
+    `;
+
+    return `
+    <!DOCTYPE html>
+    <html>
     <head>
-        <title>${title} | Secure Admin</title>
+        <title>${org.name} | Admin</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+        <link rel="icon" type="image/png" href="/favicon.png">
+        <style>
+            body { font-family: -apple-system, sans-serif; background: #f4f7f6; margin: 0; padding-bottom: 50px; }
+            .header { background: white; padding: 20px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+            .nav { background: white; padding: 0 20px; border-bottom: 1px solid #ddd; overflow-x: auto; white-space: nowrap; }
+            .container { padding: 20px; max-width: 800px; margin: 0 auto; }
+            .card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 20px; }
+            .btn { display: inline-block; padding: 12px 20px; background: #1e272e; color: white; text-decoration: none; border-radius: 8px; border: none; font-weight: bold; font-size: 14px; width: 100%; box-sizing: border-box; text-align: center; cursor: pointer; }
+            input, select, textarea { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; font-family: inherit; }
+            label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 12px; color: #555; text-transform: uppercase; }
+            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+            td { padding: 12px 0; border-bottom: 1px solid #eee; font-size: 14px; vertical-align: middle; }
+            .tag { padding: 3px 8px; border-radius: 4px; font-size: 10px; text-transform: uppercase; font-weight: bold; }
+            .active { background: #eefdf5; color: green; }
+        </style>
     </head>
-`;
+    <body>
+        <div class="header">
+            <div style="font-weight:bold; font-size:18px;">${org.name}</div>
+            <a href="/admin/${org.code}/logout" style="font-size:12px; color:red; text-decoration:none;">Logout</a>
+        </div>
+        <div class="nav">
+            <a href="/admin/${org.code}/dashboard" style="${navStyle('finance')}">💰 Finance</a>
+            <a href="/admin/${org.code}/events" style="${navStyle('events')}">📅 Events</a>
+            <a href="/admin/${org.code}/news" style="${navStyle('news')}">📰 News</a>
+            <a href="/admin/${org.code}/ads" style="${navStyle('ads')}">📢 Ads</a>
+        </div>
+        <div class="container">
+            ${content}
+        </div>
+    </body>
+    </html>
+    `;
+};
 
 module.exports = (app, { prisma }) => {
 
-    // 1. LOGIN PAGE
+    // --- MIDDLEWARE: CHECK SESSION ---
+    const checkSession = async (req, res, next) => {
+        const { code } = req.params;
+        const cookies = parseCookies(req);
+        const sessionToken = cookies[`session_${code}`];
+
+        if (!sessionToken || sessionToken !== 'active') {
+            return res.redirect(`/admin/${code}`);
+        }
+        
+        // Fetch Org to have it ready for all routes
+        req.org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
+        if (!req.org) return res.send("Org not found");
+        
+        next();
+    };
+
+    // ==========================================
+    // 1. LOGIN & AUTH
+    // ==========================================
     router.get('/admin/:code', async (req, res) => {
         const { code } = req.params;
-        
-        try {
-            // Find Org
-            const org = await prisma.church.findUnique({
-                where: { code: code.toUpperCase() }
-            });
+        const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
+        if (!org) return res.send("<h3>Organization not found.</h3>");
 
-            if (!org) return res.send("<h3>Error: Organization not found.</h3>");
+        // Generate OTP
+        const otp = generateOTP();
+        await prisma.church.update({
+            where: { code: code.toUpperCase() },
+            data: { otp: otp, otpExpires: new Date(Date.now() + 5 * 60000) }
+        });
 
-            // Generate OTP
-            const otp = generateOTP();
-            const expiry = new Date(Date.now() + 5 * 60000); // 5 mins
-
-            // Save to DB
-            await prisma.church.update({
-                where: { code: code.toUpperCase() },
-                data: { otp: otp, otpExpires: expiry }
-            });
-
-            // 🚀 SEND REAL WHATSAPP
-            if (org.adminPhone) {
-                console.log(`📨 Sending OTP to ${org.adminPhone}...`);
-                const message = `🔐 *${org.name} Admin*\n\nYour Login OTP is: *${otp}*\n\nValid for 5 minutes.`;
-                await sendWhatsApp(org.adminPhone, message);
-            } else {
-                console.log("⚠️ No Admin Phone Number set for this Org");
-            }
-
-            // Mask phone for UI
-            const masked = org.adminPhone ? org.adminPhone.slice(-4) : '....';
-
-            // Render Page
-            res.send(`
-                <!DOCTYPE html>
-                <html>
-                ${getHead('Login')}
-                <body style="font-family:sans-serif; display:flex; justify-content:center; align-items:center; height:100vh; background:#f4f4f4; margin:0;">
-                    <form action="/admin/${code}/verify" method="POST" style="background:white; padding:40px; border-radius:10px; text-align:center; width:300px; box-shadow:0 10px 25px rgba(0,0,0,0.1);">
-                        <h2>🔐 ${org.name}</h2>
-                        <p style="color:#666; font-size:14px;">Enter code sent to ...${masked}</p>
-                        
-                        <input type="text" name="otp" placeholder="0000" maxlength="4" style="font-size:30px; letter-spacing:10px; text-align:center; width:100%; padding:10px; margin:20px 0; border:2px solid #ddd; border-radius:8px;" required autofocus>
-                        
-                        <button type="submit" style="width:100%; padding:15px; background:#2d3436; color:white; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">Verify Login</button>
-                    </form>
-                </body>
-                </html>
-            `);
-
-        } catch (e) {
-            console.error("❌ Admin Route Error:", e);
-            res.status(500).send("System Error.");
+        // Send WhatsApp
+        if (org.adminPhone) {
+            await sendWhatsApp(org.adminPhone, `🔐 *${org.name} Admin*\n\nLogin OTP: *${otp}*`);
+        } else {
+            console.log(`⚠️ No Phone. Mock OTP: ${otp}`);
         }
+
+        res.send(`
+            <html>
+            <head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+            <body style="font-family:sans-serif; display:flex; justify-content:center; align-items:center; height:100vh; background:#f4f7f6; margin:0;">
+                <form action="/admin/${code}/verify" method="POST" style="background:white; padding:30px; border-radius:10px; text-align:center; width:300px; box-shadow:0 10px 25px rgba(0,0,0,0.1);">
+                    <h3>🔐 ${org.name}</h3>
+                    <p>Enter OTP sent to ...${org.adminPhone ? org.adminPhone.slice(-4) : '????'}</p>
+                    <input name="otp" placeholder="0000" maxlength="4" style="font-size:24px; text-align:center; width:100%; padding:10px; margin-bottom:15px;" required>
+                    <button style="width:100%; padding:15px; background:#1e272e; color:white; border:none; border-radius:5px; font-weight:bold;">Login</button>
+                </form>
+            </body>
+            </html>
+        `);
     });
 
-    // 2. VERIFY OTP & SHOW DASHBOARD
     router.post('/admin/:code/verify', async (req, res) => {
         const { code } = req.params;
-        const { otp } = req.body;
+        const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
 
-        try {
-            const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
+        if (!org || org.otp !== req.body.otp) return res.send("<h3>❌ Invalid OTP</h3><a href='javascript:history.back()'>Try Again</a>");
+        
+        // Set Cookie
+        res.setHeader('Set-Cookie', `session_${code}=active; HttpOnly; Path=/; Max-Age=3600`); // 1 Hour Session
+        res.redirect(`/admin/${code}/dashboard`);
+    });
 
-            if (!org || org.otp !== otp) return res.send("<h3>🚫 Wrong Code</h3><a href='javascript:history.back()'>Try Again</a>");
+    router.get('/admin/:code/logout', (req, res) => {
+        res.setHeader('Set-Cookie', `session_${req.params.code}=; Max-Age=0`);
+        res.redirect(`/admin/${req.params.code}`);
+    });
 
-            // Fetch Transactions
-            const transactions = await prisma.transaction.findMany({
-                where: { churchCode: code.toUpperCase(), status: 'success' },
-                orderBy: { date: 'desc' },
-                take: 50
-            });
-            
-            const total = transactions.reduce((sum, tx) => sum + tx.amount, 0);
+    // ==========================================
+    // 2. DASHBOARD (FINANCE)
+    // ==========================================
+    router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
+        const txs = await prisma.transaction.findMany({
+            where: { churchCode: req.org.code, status: 'success' },
+            orderBy: { date: 'desc' }, take: 50
+        });
+        const total = txs.reduce((sum, t) => sum + t.amount, 0);
 
-            // Generate Rows
-            const rows = transactions.map(tx => `
-                <tr style="border-bottom:1px solid #eee;">
-                    <td style="padding:10px;">${new Date(tx.date).toLocaleDateString()}</td>
-                    <td style="padding:10px;">${tx.type}</td>
-                    <td style="padding:10px;">${tx.phone}</td>
-                    <td style="padding:10px; font-weight:bold;">R${tx.amount.toFixed(2)}</td>
-                </tr>
-            `).join('');
+        const rows = txs.map(t => `
+            <tr>
+                <td>
+                    <div style="font-weight:bold;">${t.type}</div>
+                    <div style="font-size:11px; color:#888;">${new Date(t.date).toLocaleDateString()}</div>
+                </td>
+                <td>${t.phone}</td>
+                <td style="text-align:right; font-weight:bold;">R${t.amount.toFixed(2)}</td>
+            </tr>
+        `).join('');
 
-            // Render Dashboard
-            res.send(`
-                <!DOCTYPE html>
-                <html>
-                ${getHead('Dashboard')}
-                <body style="font-family:sans-serif; padding:30px; background:#f9f9f9; margin:0;">
-                    <div style="max-width:800px; margin:0 auto;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:30px;">
-                            <h1 style="margin:0; color:#2d3436;">${org.name}</h1>
-                            <div style="text-align:right;">
-                                <div style="font-size:12px; color:#888;">TOTAL RAISED</div>
-                                <div style="font-size:24px; font-weight:bold; color:#00b894;">R${total.toFixed(2)}</div>
-                            </div>
-                        </div>
+        res.send(renderPage(req.org, 'finance', `
+            <div class="card" style="text-align:center; padding:30px;">
+                <div style="font-size:12px; color:#888;">TOTAL FUNDS RAISED</div>
+                <div style="font-size:36px; font-weight:bold; color:#00b894;">R${total.toFixed(2)}</div>
+            </div>
+            <div class="card">
+                <h3>Recent Transactions</h3>
+                <table><tbody>${rows || '<tr><td>No transactions yet.</td></tr>'}</tbody></table>
+            </div>
+        `));
+    });
 
-                        <div style="background:white; padding:20px; border-radius:10px; box-shadow:0 2px 10px rgba(0,0,0,0.05);">
-                            <h3 style="margin-top:0; border-bottom:2px solid #eee; padding-bottom:10px;">Recent Transactions</h3>
-                            <table style="width:100%; border-collapse:collapse;">
-                                <thead style="background:#f1f2f6;">
-                                    <tr>
-                                        <th style="padding:10px; text-align:left; color:#636e72; font-size:12px;">DATE</th>
-                                        <th style="padding:10px; text-align:left; color:#636e72; font-size:12px;">TYPE</th>
-                                        <th style="padding:10px; text-align:left; color:#636e72; font-size:12px;">FROM</th>
-                                        <th style="padding:10px; text-align:left; color:#636e72; font-size:12px;">AMOUNT</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${rows || '<tr><td colspan="4" style="text-align:center; padding:20px;">No payments yet.</td></tr>'}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </body>
-                </html>
-            `);
+    // ==========================================
+    // 3. EVENTS MANAGEMENT
+    // ==========================================
+    router.get('/admin/:code/events', checkSession, async (req, res) => {
+        const events = await prisma.event.findMany({ where: { churchCode: req.org.code }, orderBy: { id: 'desc' } });
+        
+        const list = events.map(e => `
+            <div class="card" style="display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <div style="font-weight:bold;">${e.name}</div>
+                    <div style="font-size:12px; color:#888;">${e.date} • R${e.price}</div>
+                </div>
+                <span class="tag active">${e.status}</span>
+            </div>
+        `).join('');
 
-        } catch (e) {
-            console.error(e);
-            res.send("System Error.");
-        }
+        res.send(renderPage(req.org, 'events', `
+            <div class="card">
+                <h3>📅 Create New Event</h3>
+                <form method="POST" action="/admin/${req.org.code}/events/add">
+                    <label>Event Name</label>
+                    <input name="name" placeholder="e.g. Easter Conference" required>
+                    <label>Date Text</label>
+                    <input name="date" placeholder="e.g. 15 April @ 6pm" required>
+                    <label>Ticket Price (ZAR)</label>
+                    <input type="number" name="price" value="0" required>
+                    <label>Expiry Date</label>
+                    <input type="date" name="expiryDate" required>
+                    <button class="btn">Create Event</button>
+                </form>
+            </div>
+            <h3>Your Events</h3>
+            ${list || '<p style="text-align:center; color:#888;">No events found.</p>'}
+        `));
+    });
+
+    router.post('/admin/:code/events/add', checkSession, async (req, res) => {
+        await prisma.event.create({
+            data: {
+                name: req.body.name,
+                date: req.body.date,
+                price: parseFloat(req.body.price),
+                churchCode: req.org.code,
+                status: 'Active',
+                expiryDate: safeDate(req.body.expiryDate)
+            }
+        });
+        res.redirect(`/admin/${req.org.code}/events`);
+    });
+
+    // ==========================================
+    // 4. NEWS MANAGEMENT
+    // ==========================================
+    router.get('/admin/:code/news', checkSession, async (req, res) => {
+        const news = await prisma.news.findMany({ where: { churchId: req.org.id }, orderBy: { id: 'desc' } });
+        
+        const list = news.map(n => `
+            <div class="card">
+                <div style="font-weight:bold;">${n.headline}</div>
+                <div style="font-size:13px; color:#555; margin-top:5px;">${n.body}</div>
+                <div style="font-size:11px; color:#888; margin-top:10px;">Expires: ${new Date(n.expiryDate).toLocaleDateString()}</div>
+            </div>
+        `).join('');
+
+        res.send(renderPage(req.org, 'news', `
+            <div class="card">
+                <h3>📰 Post Announcement</h3>
+                <form method="POST" action="/admin/${req.org.code}/news/add">
+                    <label>Headline</label>
+                    <input name="headline" placeholder="e.g. Sunday Service Time Change" required>
+                    <label>Message Body</label>
+                    <textarea name="body" rows="3" placeholder="Details..." required></textarea>
+                    <label>Expiry Date</label>
+                    <input type="date" name="expiryDate" required>
+                    <button class="btn">Post News</button>
+                </form>
+            </div>
+            <h3>Recent News</h3>
+            ${list || '<p style="text-align:center; color:#888;">No news posted.</p>'}
+        `));
+    });
+
+    router.post('/admin/:code/news/add', checkSession, async (req, res) => {
+        await prisma.news.create({
+            data: {
+                headline: req.body.headline,
+                body: req.body.body,
+                churchId: req.org.id,
+                status: 'Active',
+                expiryDate: safeDate(req.body.expiryDate)
+            }
+        });
+        res.redirect(`/admin/${req.org.code}/news`);
+    });
+
+    // ==========================================
+    // 5. ADS MANAGEMENT
+    // ==========================================
+    router.get('/admin/:code/ads', checkSession, async (req, res) => {
+        const ads = await prisma.ad.findMany({ where: { churchId: req.org.id }, orderBy: { id: 'desc' } });
+        
+        const list = ads.map(a => `
+            <div class="card" style="display:flex; justify-content:space-between;">
+                <div>${a.content}</div>
+                <div style="font-weight:bold; color:#00b894;">👁️ ${a.views || 0}</div>
+            </div>
+        `).join('');
+
+        res.send(renderPage(req.org, 'ads', `
+            <div class="card">
+                <h3>📢 Create Text Ad</h3>
+                <p style="font-size:12px; color:#666;">Ads appear on payment receipts.</p>
+                <form method="POST" action="/admin/${req.org.code}/ads/add">
+                    <label>Ad Content</label>
+                    <textarea name="content" rows="2" placeholder="e.g. Joe's Plumbing - 082 123 4567" required></textarea>
+                    <label>Expiry Date</label>
+                    <input type="date" name="expiryDate" required>
+                    <button class="btn">Create Ad</button>
+                </form>
+            </div>
+            <h3>Active Ads</h3>
+            ${list || '<p style="text-align:center; color:#888;">No ads running.</p>'}
+        `));
+    });
+
+    router.post('/admin/:code/ads/add', checkSession, async (req, res) => {
+        await prisma.ad.create({
+            data: {
+                content: req.body.content,
+                churchId: req.org.id,
+                status: 'Active',
+                expiryDate: safeDate(req.body.expiryDate)
+            }
+        });
+        res.redirect(`/admin/${req.org.code}/ads`);
     });
 
     app.use('/', router);
