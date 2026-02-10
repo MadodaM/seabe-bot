@@ -126,7 +126,15 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
             // --- OPTION 3: EVENTS (Tickets for Everyone) ---
             else if (incomingMsg === '3') {
                 const events = await prisma.event.findMany({ 
-                    where: { churchCode: session.orgCode, status: 'Active', isDonation: false, date: { gte: new Date() } } 
+                    where: { 
+                        churchCode: session.orgCode, 
+                        status: 'Active', 
+                        // ❌ REMOVED: isDonation: false (This field might not exist in your new schema)
+                        // ❌ REMOVED: date: { gte: new Date() } 
+                        
+                        // ✅ ADDED: Filter by Expiry Date instead
+                        expiryDate: { gte: new Date() } 
+                    } 
                 });
                 
                 if (events.length === 0) { 
@@ -134,8 +142,11 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
                     session.step = 'CHURCH_MENU'; 
                 } else {
                     let list = "🎟️ *Select an Event:*\n\n"; 
-                    events.forEach((e, index) => { list += `*${index + 1}.* ${e.name} (R${e.price})\n`; });
-                    reply = list + "\nReply with the number."; 
+                    events.forEach((e, index) => { 
+                        // Added the Date Text to the list so users know when it is
+                        list += `*${index + 1}.* ${e.name}\n🗓 ${e.date}\n💰 R${e.price}\n\n`; 
+                    });
+                    reply = list + "Reply with the number."; 
                     session.step = 'EVENT_SELECT'; 
                     session.availableEvents = events; 
                 }
