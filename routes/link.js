@@ -1,4 +1,14 @@
 // ==========================================
+// SEABE LINK (The Public Web Portal)
+// Supports: Churches ⛪, Societies 🛡️, NPOs 🤝
+// ==========================================
+const express = require('express');
+const router = express.Router(); // 👈 This was missing!
+const { createPaymentLink } = require('../services/paystack'); 
+
+module.exports = (app, { prisma }) => {
+
+    // ==========================================
     // 1. THE PUBLIC LANDING PAGE (GET)
     // Example: seabe.io/link/AFM001
     // ==========================================
@@ -30,6 +40,7 @@
                 orgLabel = 'Burial Society';
                 themeColor = '#2c3e50'; // Navy Blue
                 const fee = org.subscriptionFee || 150;
+                
                 optionsHtml = `
                     <option value="PREM" data-type="FIXED" data-price="${fee}">Monthly Premium (R${fee}) 🛡️</option>
                     <option value="JOIN_FEE" data-type="VARIABLE">Joining Fee 📝</option>
@@ -42,6 +53,7 @@
                 orgIcon = '🤝';
                 orgLabel = 'Non-Profit';
                 themeColor = '#27ae60'; // Green
+                
                 optionsHtml = `
                     <option value="DONATION" data-type="VARIABLE" selected>General Donation 💖</option>
                     <option value="PLEDGE" data-type="VARIABLE">Monthly Pledge 🔁</option>
@@ -52,6 +64,7 @@
             else {
                 orgIcon = '⛪';
                 themeColor = '#8e44ad'; // Purple
+                
                 optionsHtml = `
                     <option value="OFFERING" data-type="VARIABLE" selected>General Offering 🎁</option>
                     <option value="TITHE" data-type="VARIABLE">Tithe (10%) 🏛️</option>
@@ -64,6 +77,7 @@
             // --- ADD EVENTS & PROJECTS ---
             if (org.events && org.events.length > 0) {
                 optionsHtml += `<optgroup label="Campaigns & Events">`;
+                
                 org.events.forEach(e => {
                     if (e.isDonation) {
                         optionsHtml += `<option value="PROJECT_${e.id}" data-type="VARIABLE">${e.name} (Any Amount) 🏗️</option>`;
@@ -71,6 +85,7 @@
                         optionsHtml += `<option value="EVENT_${e.id}" data-type="FIXED" data-price="${e.price}">${e.name} (R${e.price}) 🎟️</option>`;
                     }
                 });
+                
                 optionsHtml += `</optgroup>`;
             }
 
@@ -178,7 +193,6 @@
                         }
                     }
                     
-                    // ⚖️ LEGAL CHECKBOX LOGIC
                     function togglePayButton() {
                         const checkbox = document.getElementById('termsCheckbox');
                         const btn = document.getElementById('payButton');
@@ -193,8 +207,7 @@
                             btn.style.cursor = 'not-allowed';
                         }
                     }
-
-                    // Run on load
+                    
                     updateAmountLogic();
                     togglePayButton();
                 </script>
@@ -207,3 +220,82 @@
             res.status(500).send("System Error loading page.");
         }
     });
+
+    // ==========================================
+    // 2. PROCESS THE PAYMENT (POST)
+    // ==========================================
+    router.post('/link/:code/process', async (req, res) => {
+        try {
+            const { code } = req.params;
+            const { amount, type, name, email, phone } = req.body;
+            
+            // Validate Org
+            const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
+            if (!org) return res.send("Error: Organization not found.");
+
+            // Clean Phone (Remove spaces, ensure format)
+            const cleanPhone = phone.replace(/\D/g, ''); 
+            
+            // Construct Reference
+            const ref = `WEB-${code}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
+
+            // Call Paystack Service
+            const link = await createPaymentLink(
+                amount, // Note: sanitization happens inside the service now!
+                ref, 
+                email, 
+                org.subaccountCode, 
+                cleanPhone, 
+                org.name
+            );
+
+            if (link) {
+                // UPSERT MEMBER
+                const updateData = {};
+                if (org.type === 'CHURCH') {
+                    updateData.churchCode = org.code;
+                } else if (org.type === 'BURIAL_SOCIETY') {
+                    updateData.societyCode = org.code;
+                }
+
+                await prisma.member.upsert({
+                    where: { phone: cleanPhone },
+                    update: { ...updateData, email: email }, 
+                    create: { 
+                        phone: cleanPhone, 
+                        firstName: name.split(' ')[0], 
+                        lastName: name.split(' ')[1] || 'Guest',
+                        email: email,
+                        joinedAt: new Date(),
+                        ...updateData
+                    }
+                });
+
+                // LOG TRANSACTION
+                await prisma.transaction.create({
+                    data: {
+                        churchCode: org.code, 
+                        phone: cleanPhone,
+                        type: type, 
+                        amount: parseFloat(amount),
+                        reference: ref,
+                        status: 'PENDING',
+                        date: new Date()
+                    }
+                });
+
+                // REDIRECT TO PAYSTACK
+                res.redirect(link);
+            } else {
+                res.status(500).send("Error communicating with Payment Gateway.");
+            }
+
+        } catch (e) {
+            console.error("Web Payment Processing Error:", e);
+            res.status(500).send("System Error Processing Payment.");
+        }
+    });
+
+    // 🔌 CONNECT THE ROUTER
+    app.use('/', router); 
+};
