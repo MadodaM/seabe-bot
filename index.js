@@ -453,22 +453,50 @@ app.post('/whatsapp', async (req, res) => {
 });
 
 // --- SUCCESS PAGE ---
-app.get('/payment-success', (req, res) => {
-    // We send the HTML as a STRING inside backticks (`)
+// Add 'async' here so we can wait for the Database/Paystack
+app.get('/payment-success', async (req, res) => {
+    const { reference } = req.query; // 👈 Capture the reference from Paystack
+    console.log(`🔎 User returned with Ref: ${reference}`);
+
+    if (reference) {
+        try {
+            // 1. Double-check with Paystack immediately
+            const resp = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
+                headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
+            });
+
+            // 2. If Paystack says it's good, update the DB right now
+            if (resp.data.data.status === 'success') {
+                await prisma.transaction.updateMany({
+                    where: { reference: reference },
+                    data: { status: 'SUCCESS' } // 👈 Ensure this matches your DB casing
+                });
+                console.log(`✅ DB Synced instantly for ${reference}`);
+            }
+        } catch (e) {
+            // If this fails, it's okay—the Webhook is our backup safety net
+            console.log("⏳ Verification skipped, waiting for webhook.");
+        }
+    }
+
+    // 3. NOW send the HTML you wrote
     res.send(`
         <html>
             <head>
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <style>
-                    body { font-family: sans-serif; text-align: center; padding: 50px; }
-                    .btn { background: #25D366; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; }
+                    body { font-family: sans-serif; text-align: center; padding: 50px; background: #f4f7f6; }
+                    .card { background: white; padding: 40px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); max-width: 400px; margin: auto; }
+                    .btn { background: #25D366; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin-top: 20px; }
                 </style>
             </head>
             <body>
-                <h1>✅ Payment Successful</h1>
-                <p>Thank you! Your transaction is complete.</p>
-                <br>
-                <a href="https://wa.me/${process.env.TWILIO_PHONE_NUMBER ? process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '') : ''}?text=Hi" class="btn">Return to WhatsApp</a>
+                <div class="card">
+                    <h1>✅ Payment Successful</h1>
+                    <p>Thank you! Your transaction has been recorded.</p>
+                    <br>
+                    <a href="https://wa.me/${process.env.TWILIO_PHONE_NUMBER ? process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '') : ''}?text=Hi" class="btn">Return to WhatsApp</a>
+                </div>
             </body>
         </html>
     `);
