@@ -475,17 +475,22 @@ app.get('/payment-success', async (req, res) => {
 
                     // 4. Send the PDF
                     if (client) {
-                        const date = new Date().toISOString().split('T')[0];
-                        const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=Seabe&to=${phone}&date=${date}&items[0][name]=Contribution&items[0][unit_cost]=${amount}`;
+						const date = new Date().toISOString().split('T')[0];
+						// We use encodeURIComponent to handle special characters in names
+						const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=Seabe&to=${encodeURIComponent(phone)}&date=${date}&items[0][name]=Contribution&items[0][unit_cost]=${amount}`;
 
-                        await client.messages.create({
-                            from: process.env.TWILIO_PHONE_NUMBER,
-                            to: phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`,
-                            body: `✅ *Payment Received*\nRef: ${reference}\nAmount: R${amount}\n\nThank you! 🙏`,
-                            mediaUrl: [ pdfUrl ]
-                        });
-                        console.log(`📑 Invoice sent to ${phone}`);
-                    }
+						try {
+							await client.messages.create({
+								from: TWILIO_NUMBER, // Ensure this starts with 'whatsapp:'
+								to: phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`,
+								body: `✅ *Payment Received*\n\nRef: ${reference}\nAmount: R${amount}\n\nThank you for your contribution! 🙏`,
+								mediaUrl: [ pdfUrl ]
+							});
+							console.log(`📡 REAL Twilio API call sent to ${phone}`);
+						} catch (twilioErr) {
+							console.error("❌ Twilio API Error:", twilioErr.message);
+						}
+					}
                 } else {
                     console.error(`❌ Could not find a matching PENDING transaction for ${reference}`);
                 }
