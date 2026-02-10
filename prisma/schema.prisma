@@ -60,7 +60,8 @@ model Church {
   adminPhone     String   @default("27832182707") // The number that receives the OTP
   otp            String?  // The current code (e.g. "4821")
   otpExpires     DateTime? // When the code stops working
-
+  createdAt      DateTime @default(now())
+  
   // Relations
   members        Member[] @relation("ChurchMembers")
   societyMembers Member[] @relation("SocietyMembers")
