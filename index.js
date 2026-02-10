@@ -481,7 +481,7 @@ app.get('/payment-success', async (req, res) => {
 
 						try {
 							await client.messages.create({
-								from: TWILIO_NUMBER, // Ensure this starts with 'whatsapp:'
+								from: TWILIO_PHONE_NUMBER, // Ensure this starts with 'whatsapp:'
 								to: phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`,
 								body: `✅ *Payment Received*\n\nRef: ${reference}\nAmount: R${amount}\n\nThank you for your contribution! 🙏`,
 								mediaUrl: [ pdfUrl ]
