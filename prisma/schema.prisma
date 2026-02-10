@@ -63,9 +63,11 @@ model Church {
   createdAt      DateTime @default(now())
   
   // Relations
+  news           News[]
   members        Member[] @relation("ChurchMembers")
   societyMembers Member[] @relation("SocietyMembers")
 
+  
   events       Event[]
   ads          Ad[]
   transactions Transaction[]
@@ -111,6 +113,9 @@ model News {
   status     String   @default("Active")
   expiryDate DateTime
   createdAt  DateTime @default(now())
+  
+  churchId     Int
+  church     Church   @relation(fields: [churchId], references: [id])
 }
 
 model Ad {
