@@ -45,7 +45,7 @@ app.use('/public', express.static(path.join(__dirname, 'public')));
 
 // Dedicated ping route to keep Render awake
 app.get('/ping', (req, res) => {
-    res.status(200).send("Stay awake!");
+    res.status(200).send("Heartbeat received. Seabe Engine is awake.");
 });
 
 // --- ROUTES ---
@@ -590,10 +590,6 @@ if (process.env.NODE_ENV !== 'test') {
 // Export the app for testing
 module.exports = app;
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-    console.log(`✅ Seabe Engine running on ${PORT}`);
-});
 
 // Dedicated ping route to keep Render awake (Place this ABOVE app.listen)
 app.get('/ping', (req, res) => {
@@ -609,10 +605,12 @@ app.listen(PORT, () => {
     console.log(`✅ Seabe Engine running on ${PORT}`);
 });
 
-// Heartbeat logic
+// --- ☀️ KEEP-WARM HEARTBEAT ---
 const SELF_URL = `https://${process.env.HOST_URL}/ping`;
 setInterval(() => {
     if (process.env.HOST_URL) {
-        axios.get(SELF_URL).catch(() => {});
+        axios.get(SELF_URL)
+            .then(() => console.log("☀️ Heartbeat: Successfully pinged /ping"))
+            .catch((err) => console.error("⚠️ Heartbeat: Failed", err.message));
     }
 }, 600000);
