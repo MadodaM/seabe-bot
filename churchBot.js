@@ -162,13 +162,27 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
 
             // --- OPTION 5: NEWS ---
             else if (incomingMsg === '5') {
-                 const news = await prisma.news.findMany({ 
-                    where: { churchCode: session.orgCode, status: 'Active' }, 
-                    orderBy: { createdAt: 'desc' }, 
-                    take: 3 
-                });
-                reply = news.length === 0 ? "📰 No news updates." : "*Latest Updates:*\n\n" + news.map(n => `📌 *${n.headline}*\n${n.body || ''}\n\n`).join('');
-                session.step = 'CHURCH_MENU';
+                // 1. Find the church ID first using the code (e.g., "AFM001")
+const church = await prisma.church.findUnique({
+    where: { code: "AFM001" } // or whatever variable holds the code
+});
+
+if (!church) {
+    console.error("Church not found!");
+    return;
+}
+
+// 2. Now fetch the news using the churchId we just found
+const news = await prisma.news.findMany({
+    where: {
+        churchId: church.id, // Use the ID, not the Code
+        status: "Active"
+    },
+    orderBy: {
+        createdAt: "desc"
+    },
+    take: 3
+});
             }
 
             // --- OPTION 6: PROFILE ---

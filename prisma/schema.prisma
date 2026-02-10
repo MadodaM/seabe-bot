@@ -89,7 +89,7 @@ model Transaction {
   type       String // OFFERING, TITHE, PREM, TICKET
   amount     Float
   reference  String   @unique
-  status     String   @default("PENDING")
+  status    String   // 👈 Is the default 'pending' or 'PENDING'?
   date       DateTime @default(now())
 }
 
