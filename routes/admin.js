@@ -1,78 +1,63 @@
 // ==========================================
-// CLIENT DASHBOARD (Debug Mode)
+// CLIENT DASHBOARD (Live Mode 🟢)
 // Route: /admin/:code
 // ==========================================
 const express = require('express');
 const router = express.Router();
 
-// 1. MOCK WHATSAPP (Prevents import errors)
-async function sendWhatsApp(to, text) {
-    console.log("========================================");
-    console.log(`📱 MOCK WHATSAPP to ${to}:`);
-    console.log(text);
-    console.log("========================================");
-    return true;
-}
+// 👇 IMPORT THE REAL SERVICE
+const { sendWhatsApp } = require('../services/whatsapp');
 
-// 2. GENERATE OTP
+// Helper: Generate 4-digit OTP
 const generateOTP = () => Math.floor(1000 + Math.random() * 9000).toString();
 
-// 3. BULLETPROOF EXPORT
-// Accepts (app, prisma) OR (app, { prisma })
-module.exports = (app, arg2) => {
-    
-    // 🛡️ Safe Extraction: Handle both styles of passing arguments
-    const prisma = arg2.prisma || arg2;
+module.exports = (app, { prisma }) => {
 
-    if (!prisma) {
-        console.error("❌ FATAL: Prisma Client is undefined in admin.js");
-    }
-
-    // LOGIN PAGE ROUTE
+    // 1. LOGIN PAGE
     router.get('/admin/:code', async (req, res) => {
         const { code } = req.params;
         
         try {
-            // Check Database Connection
-            if (!prisma) throw new Error("Database (Prisma) not connected to route.");
-
-            console.log(`🔍 Accessing Admin for: ${code}`);
-
-            // 1. Find the Organization
+            // Find Org
             const org = await prisma.church.findUnique({
                 where: { code: code.toUpperCase() }
             });
 
-            if (!org) return res.send("<h3>Error: Organization not found. Check the code.</h3>");
+            if (!org) return res.send("<h3>Error: Organization not found.</h3>");
 
-            // 2. Generate OTP
+            // Generate OTP
             const otp = generateOTP();
-            const expiry = new Date(Date.now() + 5 * 60000); 
+            const expiry = new Date(Date.now() + 5 * 60000); // 5 mins
 
-            // 3. Save to Database
+            // Save to DB
             await prisma.church.update({
                 where: { code: code.toUpperCase() },
                 data: { otp: otp, otpExpires: expiry }
             });
 
-            // 4. Send Notification (Mock)
-            // Note: If adminPhone is missing, we log it but don't crash
+            // 🚀 SEND REAL WHATSAPP
             if (org.adminPhone) {
-                const message = `🔐 *${org.name} Admin*\n\nOTP: *${otp}*`;
+                console.log(`📨 Sending OTP to ${org.adminPhone}...`);
+                const message = `🔐 *${org.name} Admin*\n\nYour Login OTP is: *${otp}*\n\nValid for 5 minutes.`;
+                
+                // Call the service
                 await sendWhatsApp(org.adminPhone, message);
             } else {
                 console.log("⚠️ No Admin Phone Number set for this Org");
             }
 
-            // 5. Render Login Page
+            // Mask phone for UI
+            const masked = org.adminPhone ? org.adminPhone.slice(-4) : '....';
+
+            // Render Page
             res.send(`
                 <html>
                 <body style="font-family:sans-serif; display:flex; justify-content:center; align-items:center; height:100vh; background:#f4f4f4;">
                     <form action="/admin/${code}/verify" method="POST" style="background:white; padding:40px; border-radius:10px; text-align:center; width:300px; box-shadow:0 10px 25px rgba(0,0,0,0.1);">
                         <h2>🔐 ${org.name}</h2>
-                        <p style="color:#666; font-size:14px;">CHECK SERVER LOGS FOR OTP</p>
+                        <p style="color:#666; font-size:14px;">Enter code sent to ...${masked}</p>
                         
-                        <input type="text" name="otp" placeholder="Enter OTP" maxlength="4" style="font-size:30px; letter-spacing:10px; text-align:center; width:100%; padding:10px; margin:20px 0; border:2px solid #ddd; border-radius:8px;" required autofocus>
+                        <input type="text" name="otp" placeholder="0000" maxlength="4" style="font-size:30px; letter-spacing:10px; text-align:center; width:100%; padding:10px; margin:20px 0; border:2px solid #ddd; border-radius:8px;" required autofocus>
                         
                         <button type="submit" style="width:100%; padding:15px; background:#000; color:white; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">Verify Login</button>
                     </form>
@@ -81,18 +66,12 @@ module.exports = (app, arg2) => {
             `);
 
         } catch (e) {
-            console.error("❌ Admin Page Crash:", e);
-            // SHOW THE ACTUAL ERROR ON SCREEN
-            res.status(500).send(`
-                <h3>System Error</h3>
-                <p>The server crashed with the following message:</p>
-                <pre style="background:#eee; padding:10px; border-radius:5px;">${e.message}</pre>
-                <p>Check your server logs for more details.</p>
-            `);
+            console.error("❌ Admin Route Error:", e);
+            res.status(500).send("System Error.");
         }
     });
 
-    // VERIFY OTP ROUTE
+    // 2. VERIFY OTP
     router.post('/admin/:code/verify', async (req, res) => {
         const { code } = req.params;
         const { otp } = req.body;
@@ -111,19 +90,52 @@ module.exports = (app, arg2) => {
             
             const total = transactions.reduce((sum, tx) => sum + tx.amount, 0);
 
+            // Render Dashboard
+            const rows = transactions.map(tx => `
+                <tr style="border-bottom:1px solid #eee;">
+                    <td style="padding:10px;">${new Date(tx.date).toLocaleDateString()}</td>
+                    <td style="padding:10px;">${tx.type}</td>
+                    <td style="padding:10px;">${tx.phone}</td>
+                    <td style="padding:10px; font-weight:bold;">R${tx.amount.toFixed(2)}</td>
+                </tr>
+            `).join('');
+
             res.send(`
                 <html>
-                <body style="font-family:sans-serif; padding:40px;">
-                   <h1>${org.name} Dashboard</h1>
-                   <h2 style="color:green;">Balance: R${total.toFixed(2)}</h2>
-                   <p>Success! You are logged in.</p>
+                <body style="font-family:sans-serif; padding:30px; background:#f9f9f9;">
+                    <div style="max-width:800px; margin:0 auto;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:30px;">
+                            <h1 style="margin:0;">${org.name}</h1>
+                            <div style="text-align:right;">
+                                <div style="font-size:12px; color:#888;">TOTAL RAISED</div>
+                                <div style="font-size:24px; font-weight:bold; color:#27ae60;">R${total.toFixed(2)}</div>
+                            </div>
+                        </div>
+
+                        <div style="background:white; padding:20px; border-radius:10px; box-shadow:0 2px 10px rgba(0,0,0,0.05);">
+                            <h3 style="margin-top:0;">Recent Transactions</h3>
+                            <table style="width:100%; border-collapse:collapse;">
+                                <thead style="background:#eee;">
+                                    <tr>
+                                        <th style="padding:10px; text-align:left;">Date</th>
+                                        <th style="padding:10px; text-align:left;">Type</th>
+                                        <th style="padding:10px; text-align:left;">From</th>
+                                        <th style="padding:10px; text-align:left;">Amount</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${rows || '<tr><td colspan="4" style="text-align:center; padding:20px;">No payments yet.</td></tr>'}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </body>
                 </html>
             `);
 
         } catch (e) {
             console.error(e);
-            res.send(`<h3>Verify Error</h3><pre>${e.message}</pre>`);
+            res.send("System Error.");
         }
     });
 
