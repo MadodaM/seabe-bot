@@ -31,6 +31,7 @@ function renderAdminPage(title, content, error = null) {
         <!DOCTYPE html>
         <html>
         <head>
+			<link rel="icon" type="image/png" href="/favicon.png">
             <title>${title} | Seabe Platform</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
