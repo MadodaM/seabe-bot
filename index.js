@@ -515,74 +515,85 @@ app.get('/payment-success', async (req, res) => {
     const { reference } = req.query;
     console.log(`🔎 Verification Check: ${reference}`);
 
-    if (reference) {
-        try {
-            const resp = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
-                headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
+    if (!reference) {
+        return res.status(400).send("Missing reference.");
+    }
+
+    try {
+        const resp = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
+            headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
+        });
+
+        if (resp.data.data.status === 'success') {
+            const paystackData = resp.data.data;
+            const meta = paystackData.metadata || {};
+            const verifiedAmount = paystackData.amount / 100; 
+            const phone = meta.whatsapp_number || meta.phone;
+
+            // 1. Find the transaction
+            let transaction = await prisma.transaction.findUnique({
+                where: { reference: reference }
             });
 
-            if (resp.data.data.status === 'success') {
-                const paystackData = resp.data.data;
-                const meta = paystackData.metadata || {};
-                const amount = paystackData.amount / 100; // Paystack is in cents
-                const phone = meta.whatsapp_number || meta.phone;
+            if (!transaction && phone) {
+                transaction = await prisma.transaction.findFirst({
+                    where: {
+                        phone: phone.replace('whatsapp:', ''),
+                        amount: verifiedAmount,
+                        status: 'PENDING'
+                    }
+                });
+            }
 
-                // 1. Try to find the transaction first
-                let transaction = await prisma.transaction.findUnique({
-                    where: { reference: reference }
+            if (transaction) {
+                // 2. Update Database
+                await prisma.transaction.update({
+                    where: { id: transaction.id },
+                    data: { status: 'SUCCESS', reference: reference }
                 });
 
-                // 2. If not found by reference, find by Phone + Amount + Pending status
-                if (!transaction && phone) {
-                    transaction = await prisma.transaction.findFirst({
-                        where: {
-                            phone: phone.replace('whatsapp:', ''),
-                            amount: amount,
-                            status: 'PENDING'
-                        }
-                    });
-                }
+                // 3. Prepare Receipt Data
+                const invoiceDate = new Date().toISOString().split('T')[0];
+                const receiptBody = 
+                    `📜 *OFFICIAL DIGITAL RECEIPT*\n` +
+                    `--------------------------------\n` +
+                    `⛪ *Organization:* AFM - Life in Christ\n` +
+                    `👤 *Member:* ${transaction.phone}\n` +
+                    `💰 *Amount:* R${transaction.amount}.00\n` +
+                    `📅 *Date:* ${invoiceDate}\n` +
+                    `🔢 *Reference:* ${reference}\n` +
+                    `--------------------------------\n` +
+                    `✅ *Status:* Confirmed & Recorded\n\n` +
+                    `_Thank you for your faithful contribution. This message serves as your proof of payment._`;
 
-                if (transaction) {
-                    // 3. Perform the update now that we've safely found it
-                    const updatedTx = await prisma.transaction.update({
-                        where: { id: transaction.id },
-                        data: { status: 'SUCCESS', reference: reference } // Update with the REAL reference
-                    });
+                // 4. THE BACKGROUND BUBBLE (Async IIFE)
+                // This lets us send the browser response immediately 
+                // while Twilio works in the background.
+                (async () => {
+                    try {
+                        await client.messages.create({
+                            from: process.env.TWILIO_PHONE_NUMBER,
+                            to: `whatsapp:${transaction.phone.includes('+') ? transaction.phone : '+' + transaction.phone}`,
+                            body: receiptBody
+                        });
+                        console.log(`📡 Text receipt sent successfully to ${transaction.phone}`);
+                    } catch (error) {
+                        console.error("❌ Receipt Delivery Error:", error.message);
+                    }
+                })(); 
 
-                    // 4. Send the PDF
-// --- 📄 PROFESSIONAL TEXT RECEIPT LOGIC ---
-const invoiceDate = new Date().toISOString().split('T')[0];
-const amount = transaction.amount;
-const ref = reference;
-
-const receiptBody = 
-    `📜 *OFFICIAL DIGITAL RECEIPT*\n` +
-    `--------------------------------\n` +
-    `⛪ *Organization:* AFM - Life in Christ\n` +
-    `👤 *Member:* ${transaction.phone}\n` +
-    `💰 *Amount:* R${amount}.00\n` +
-    `📅 *Date:* ${invoiceDate}\n` +
-    `🔢 *Reference:* ${ref}\n` +
-    `--------------------------------\n` +
-    `✅ *Status:* Confirmed & Recorded\n\n` +
-    `_Thank you for your faithful contribution. This message serves as your proof of payment._`;
-
-(async () => {
-        try {
-            await client.messages.create({
-                from: process.env.TWILIO_PHONE_NUMBER,
-                to: `whatsapp:${transaction.phone}`,
-                body: receiptBody
-            });
-            console.log(`📡 Text receipt sent successfully`);
-        } catch (error) {
-            console.error("❌ Receipt Delivery Error:", error.message);
+                // 5. IMMEDIATE RESPONSE (Beat the 15-second Render wall)
+                return res.send(`<h1>✅ Payment Received</h1><p>Check WhatsApp for your receipt.</p>`);
+            }
         }
-    })(); // 1. This closes the (async () => { ... }) block
+        
+        res.send("<h1>Processing...</h1><p>We are still verifying your payment. Check WhatsApp shortly.</p>");
 
-    res.send(`<h1>✅ Payment Received</h1><p>Check WhatsApp for your receipt.</p>`);
-}); // 2. This closes the app.get or app.post block
+    } catch (error) {
+        console.error("❌ Critical Payment Success Error:", error.message);
+        res.status(500).send("An error occurred during verification.");
+    }
+});
 
 const PORT = process.env.PORT || 3000;
 
