@@ -551,44 +551,33 @@ app.get('/payment-success', async (req, res) => {
                     });
 
                     // 4. Send the PDF
-                    if (client) {
-// 1. Use the unique name we set earlier
+// --- 📄 PROFESSIONAL TEXT RECEIPT LOGIC ---
 const invoiceDate = new Date().toISOString().split('T')[0];
+const amount = transaction.amount;
+const ref = reference;
 
-// 2. ENCODE EVERY DYNAMIC FIELD
-// This turns spaces into %20 and + into %2B so Twilio doesn't choke
-const safeFrom = encodeURIComponent("AFM - Life in Christ");
-const safeTo = encodeURIComponent(transaction.phone); 
-const safeItem = encodeURIComponent("Contribution");
-
-const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=${safeFrom}&to=${safeTo}&date=${invoiceDate}&items[0][name]=${safeItem}&items[0][unit_cost]=${transaction.amount}`;
-
-console.log(`📡 Sending Media URL: ${pdfUrl}`);
+const receiptBody = 
+    `📜 *OFFICIAL DIGITAL RECEIPT*\n` +
+    `--------------------------------\n` +
+    `⛪ *Organization:* AFM - Life in Christ\n` +
+    `👤 *Member:* ${transaction.phone}\n` +
+    `💰 *Amount:* R${amount}.00\n` +
+    `📅 *Date:* ${invoiceDate}\n` +
+    `🔢 *Reference:* ${ref}\n` +
+    `--------------------------------\n` +
+    `✅ *Status:* Confirmed & Recorded\n\n` +
+    `_Thank you for your faithful contribution. This message serves as your proof of payment._`;
 
 try {
     await client.messages.create({
         from: process.env.TWILIO_PHONE_NUMBER,
         to: `whatsapp:${transaction.phone}`,
-        // HYBRID BODY: Include the link in the text as a backup if media fails
-        body: `✅ *Payment Received*\n\nRef: ${reference}\nAmount: R${transaction.amount}\n\n📄 *View Receipt:* ${pdfUrl}\n\nThank you! 🙏`,
-        mediaUrl: [ pdfUrl ] 
+        body: receiptBody
     });
+    console.log(`📡 Text receipt sent successfully to ${transaction.phone}`);
 } catch (error) {
-    console.error("❌ Twilio Media Error:", error.message);
+    console.error("❌ Failed to send receipt:", error.message);
 }
-
-   try {
-        await client.messages.create({
-    from: process.env.TWILIO_PHONE_NUMBER,
-    to: `whatsapp:${transaction.phone}`,
-    // We move the link into the body of the message
-    body: `✅ *Payment Received*\n\nRef: ${reference}\nAmount: R${transaction.amount}\n\n📄 *Download Receipt:* ${pdfUrl}\n\nThank you! 🙏`
-});
-        console.log(`📡 REAL Twilio API call sent to ${phone}`);
-    } catch (twilioErr) {
-        // This will now catch any remaining issues (like incorrect phone formatting)
-        console.error("❌ Twilio API Error:", twilioErr.message);
-    }
 }
                 } else {
                     console.error(`❌ Could not find a matching PENDING transaction for ${reference}`);
