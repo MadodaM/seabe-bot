@@ -596,13 +596,12 @@ app.get('/ping', (req, res) => {
     res.status(200).send("Heartbeat received.");
 });
 
-// Use the existing PORT if it's already defined, otherwise define it
-if (typeof PORT === 'undefined') {
-    var PORT = process.env.PORT || 10000;
-}
+// --- 🚀 SERVER START ---
+// We use a unique name 'serverPort' to avoid the 'PORT' conflict
+const serverPort = process.env.PORT || 10000;
 
-app.listen(PORT, () => {
-    console.log(`✅ Seabe Engine running on ${PORT}`);
+app.listen(serverPort, () => {
+    console.log(`✅ Seabe Engine running on port ${serverPort}`);
 });
 
 // --- ☀️ KEEP-WARM HEARTBEAT ---
