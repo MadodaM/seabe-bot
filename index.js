@@ -552,10 +552,8 @@ app.get('/payment-success', async (req, res) => {
 
                     // 4. Send the PDF
                     if (client) {
-    const date = new Date().toISOString().split('T')[0];
+    const invoiceDate = new Date().toISOString().split('T')[0];
 	
-	const date = new Date().toISOString().split('T')[0];
-
 // 🛠️ We must encode these values to make the URL "safe" for Twilio
 const safeFrom = encodeURIComponent("AFM - Life in Christ");
 const safeTo = encodeURIComponent(transaction.phone);
