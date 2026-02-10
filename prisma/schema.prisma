@@ -98,7 +98,7 @@ model Event {
   churchCode  String
   church      Church   @relation(fields: [churchCode], references: [code])
   name        String
-  date        DateTime
+  date        String
   price       Float
   isDonation  Boolean  @default(false) // 👈 This powers the "Any Amount" logic
   description String?
