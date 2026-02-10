@@ -43,11 +43,49 @@ app.use(bodyParser.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
 // --- ROUTES ---
+// ==========================================
+// 1. STATIC LEGAL PAGES
+// (These are specific files, so they go first)
+// ==========================================
 app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacy.html')));
 app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
-require('./routes/web')(app, upload, { prisma });
-require('./routes/admin')(app, { prisma });
-require('./routes/link')(app, { prisma });
+
+// ==========================================
+// 2. SUPER ADMIN CONSOLE (Routes: /login, /admin/churches)
+// ⚠️ MUST be before Client Admin!
+// ==========================================
+try {
+    require('./routes/platform')(app, { prisma });
+    console.log("✅ Super Admin Platform Loaded");
+} catch (e) { console.log("⚠️ Platform routes missing"); }
+
+// ==========================================
+// 3. CLIENT PORTAL (Routes: /admin/:code)
+// ⚠️ Captures /admin/ANYTHING, so it must come AFTER specific admin routes
+// ==========================================
+try {
+    require('./routes/admin')(app, { prisma });
+    console.log("✅ Client Admin Loaded");
+} catch (e) { console.log("⚠️ Client Admin routes missing"); }
+
+// ==========================================
+// 4. PUBLIC PAYMENT LINKS (Routes: /link/:code)
+// ==========================================
+try {
+    require('./routes/link')(app, { prisma });
+    console.log("✅ Payment Link Routes Loaded");
+} catch (e) { console.log("⚠️ Link routes missing"); }
+
+// ==========================================
+// 5. GENERAL WEB & UPLOADS
+// (Usually contains catch-all or home pages)
+// ==========================================
+try {
+    // Ensure 'upload' middleware is defined before this line in your main file
+    require('./routes/web')(app, upload, { prisma });
+    console.log("✅ Web Routes Loaded");
+} catch (e) { console.log("⚠️ Web routes missing"); }
+
 
 // --- MEMORY ---
 let userSession = {}; 
