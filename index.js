@@ -552,18 +552,30 @@ app.get('/payment-success', async (req, res) => {
 
                     // 4. Send the PDF
                     if (client) {
-// 1. You declared it as 'invoiceDate' here...
+// 1. Use the unique name we set earlier
 const invoiceDate = new Date().toISOString().split('T')[0];
 
-// 2. ...so you MUST use 'invoiceDate' here!
+// 2. ENCODE EVERY DYNAMIC FIELD
+// This turns spaces into %20 and + into %2B so Twilio doesn't choke
 const safeFrom = encodeURIComponent("AFM - Life in Christ");
-const safeTo = encodeURIComponent(transaction.phone);
+const safeTo = encodeURIComponent(transaction.phone); 
 const safeItem = encodeURIComponent("Contribution");
 
-// FIXED LINE BELOW: Changed ${date} to ${invoiceDate}
 const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=${safeFrom}&to=${safeTo}&date=${invoiceDate}&items[0][name]=${safeItem}&items[0][unit_cost]=${transaction.amount}`;
 
-console.log(`🔗 Success! PDF Link generated: ${pdfUrl}`);
+console.log(`📡 Sending Media URL: ${pdfUrl}`);
+
+try {
+    await client.messages.create({
+        from: process.env.TWILIO_PHONE_NUMBER,
+        to: `whatsapp:${transaction.phone}`,
+        // HYBRID BODY: Include the link in the text as a backup if media fails
+        body: `✅ *Payment Received*\n\nRef: ${reference}\nAmount: R${transaction.amount}\n\n📄 *View Receipt:* ${pdfUrl}\n\nThank you! 🙏`,
+        mediaUrl: [ pdfUrl ] 
+    });
+} catch (error) {
+    console.error("❌ Twilio Media Error:", error.message);
+}
 
    try {
         await client.messages.create({
