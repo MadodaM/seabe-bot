@@ -595,16 +595,24 @@ app.listen(PORT, () => {
     console.log(`✅ Seabe Engine running on ${PORT}`);
 });
 
-// --- ☀️ KEEP-WARM LOGIC START ---
-// This prevents Render from putting your app to sleep (Cold Start)
-const SELF_URL = `https://${process.env.HOST_URL}/payment-success`;
+// Dedicated ping route to keep Render awake (Place this ABOVE app.listen)
+app.get('/ping', (req, res) => {
+    res.status(200).send("Heartbeat received.");
+});
 
+// Use the existing PORT if it's already defined, otherwise define it
+if (typeof PORT === 'undefined') {
+    var PORT = process.env.PORT || 10000;
+}
+
+app.listen(PORT, () => {
+    console.log(`✅ Seabe Engine running on ${PORT}`);
+});
+
+// Heartbeat logic
+const SELF_URL = `https://${process.env.HOST_URL}/ping`;
 setInterval(() => {
-    // Only ping if we actually have a HOST_URL set
     if (process.env.HOST_URL) {
-        axios.get(SELF_URL)
-            .then(() => console.log("☀️ Server Keep-Warm Ping Sent"))
-            .catch((err) => console.log("⚠️ Keep-warm ping failed (this is usually okay):", err.message));
+        axios.get(SELF_URL).catch(() => {});
     }
-}, 600000); // 10 minutes (600,000ms)
-// --- KEEP-WARM LOGIC END ---
+}, 600000);
