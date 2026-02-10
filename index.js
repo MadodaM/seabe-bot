@@ -131,67 +131,47 @@ cron.schedule('0 8 * * 1', async () => {
 // --- PAYSTACK WEBHOOK (The "Receipt Engine") ---
 app.post('/paystack/webhook', async (req, res) => {
     try {
-        // 1. Validate the event (Security Check)
-        const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
-                           .update(JSON.stringify(req.body))
-                           .digest('hex');
-
-        if (hash !== req.headers['x-paystack-signature']) {
-            return res.sendStatus(400); // Stop hackers
-        }
+        const hash = crypto.createHmac('sha512', PAYSTACK_SECRET).update(JSON.stringify(req.body)).digest('hex');
+        if (hash !== req.headers['x-paystack-signature']) return res.sendStatus(400);
 
         const event = req.body;
-
-        // 2. Process Successful Payments
         if (event.event === 'charge.success') {
             const data = event.data;
-            const reference = data.reference;
-            
-            // A. FIND THE USER'S PHONE NUMBER
-            // We look in metadata first (Web Payments), then fallback to email lookup
-            let userPhone = data.metadata?.phone || data.metadata?.custom_fields?.find(f => f.variable_name === 'phone')?.value;
+            const ref = data.reference;
 
-            // B. UPDATE DATABASE
-            // We find the pending transaction by Reference and update it
+            // 1. Check if already processed by Success Page
+            const existingTx = await prisma.transaction.findUnique({ where: { reference: ref } });
+            if (existingTx && existingTx.status === 'SUCCESS') {
+                console.log(`♻️ Webhook ignored: ${ref} already handled.`);
+                return res.sendStatus(200);
+            }
+
+            // 2. Otherwise, process as normal
             const transaction = await prisma.transaction.update({
-                where: { reference: reference },
+                where: { reference: ref },
                 data: { status: 'SUCCESS' }
             });
 
-            // If we couldn't find phone in metadata, use the one from the database transaction
-            if (!userPhone && transaction) {
-                userPhone = transaction.phone;
-            }
+            // 3. Send Receipt (Fallback)
+            if (transaction && client) {
+                const userPhone = transaction.phone;
+                const date = new Date().toISOString().split('T')[0];
+                const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=Seabe&to=${userPhone}&date=${date}&items[0][name]=Contribution&items[0][unit_cost]=${transaction.amount}`;
 
-            // C. GENERATE RECEIPT (PDF)
-            // We create a dynamic PDF URL using a free invoice generator API (or your own logic)
-            // This ensures WhatsApp always has a valid link to deliver.
-            const date = new Date().toISOString().split('T')[0];
-            const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=Seabe&to=${userPhone}&date=${date}&items[0][name]=Contribution&items[0][quantity]=1&items[0][unit_cost]=${data.amount / 100}`;
-
-            // D. SEND WHATSAPP RECEIPT
-            if (userPhone) {
-                // Ensure phone number has 'whatsapp:' prefix
-                const to = userPhone.startsWith('whatsapp:') ? userPhone : `whatsapp:${userPhone}`;
-                
                 await client.messages.create({
                     from: process.env.TWILIO_PHONE_NUMBER,
-                    to: to,
-                    body: `✅ *Receipt: Payment Received*\n\nReference: ${reference}\nAmount: R${data.amount / 100}\n\nThank you for your contribution! 🙏\n\n_Reply *History* to see all payments._`,
-                    // 👇 This attaches the PDF
-                    mediaUrl: [ pdfUrl ] 
+                    to: `whatsapp:${userPhone.replace('whatsapp:', '')}`,
+                    body: `✅ *Receipt: Payment Received*\n\nRef: ${ref}\nAmount: R${transaction.amount}\n\nThank you! 🙏`,
+                    mediaUrl: [ pdfUrl ]
                 });
-                console.log(`✅ Receipt sent to ${userPhone}`);
             }
         }
-
-        res.sendStatus(200); // Tell Paystack "We got it"
-
+        res.sendStatus(200);
     } catch (e) {
         console.error("Webhook Error:", e);
         res.sendStatus(500);
     }
-});
+});;
 
 
 // ==========================================
@@ -455,50 +435,54 @@ app.post('/whatsapp', async (req, res) => {
 // --- SUCCESS PAGE ---
 // Add 'async' here so we can wait for the Database/Paystack
 app.get('/payment-success', async (req, res) => {
-    const { reference } = req.query; // 👈 Capture the reference from Paystack
-    console.log(`🔎 User returned with Ref: ${reference}`);
+    const { reference } = req.query;
 
     if (reference) {
         try {
-            // 1. Double-check with Paystack immediately
+            // 1. Verify with Paystack
             const resp = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
-                headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
+                headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` }
             });
 
-            // 2. If Paystack says it's good, update the DB right now
             if (resp.data.data.status === 'success') {
-                await prisma.transaction.updateMany({
+                // 2. Update DB and get transaction details
+                const transaction = await prisma.transaction.update({
                     where: { reference: reference },
-                    data: { status: 'SUCCESS' } // 👈 Ensure this matches your DB casing
+                    data: { status: 'SUCCESS' }
                 });
-                console.log(`✅ DB Synced instantly for ${reference}`);
+
+                // 3. Send WhatsApp Receipt immediately
+                if (transaction && client) {
+                    const userPhone = transaction.phone;
+                    const date = new Date().toISOString().split('T')[0];
+                    const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=Seabe&to=${userPhone}&date=${date}&items[0][name]=Contribution&items[0][unit_cost]=${transaction.amount}`;
+
+                    await client.messages.create({
+                        from: process.env.TWILIO_PHONE_NUMBER,
+                        to: userPhone.startsWith('whatsapp:') ? userPhone : `whatsapp:${userPhone}`,
+                        body: `✅ *Receipt: Payment Received*\n\nRef: ${reference}\nAmount: R${transaction.amount}\n\nThank you for your contribution! 🙏`,
+                        mediaUrl: [ pdfUrl ] 
+                    });
+                    console.log(`📑 Instant Receipt sent for ${reference}`);
+                }
             }
         } catch (e) {
-            // If this fails, it's okay—the Webhook is our backup safety net
-            console.log("⏳ Verification skipped, waiting for webhook.");
+            console.log("⏳ Success page sync skipped (likely already processed or network jitter).");
         }
     }
 
-    // 3. NOW send the HTML you wrote
     res.send(`
-        <html>
-            <head>
-                <meta name="viewport" content="width=device-width, initial-scale=1">
-                <style>
-                    body { font-family: sans-serif; text-align: center; padding: 50px; background: #f4f7f6; }
-                    .card { background: white; padding: 40px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); max-width: 400px; margin: auto; }
-                    .btn { background: #25D366; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin-top: 20px; }
-                </style>
-            </head>
-            <body>
-                <div class="card">
-                    <h1>✅ Payment Successful</h1>
-                    <p>Thank you! Your transaction has been recorded.</p>
-                    <br>
-                    <a href="https://wa.me/${process.env.TWILIO_PHONE_NUMBER ? process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '') : ''}?text=Hi" class="btn">Return to WhatsApp</a>
-                </div>
-            </body>
-        </html>
+        <html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+        <body style="font-family:sans-serif; text-align:center; padding:50px; background:#f4f7f6;">
+            <div style="background:white; padding:40px; border-radius:15px; box-shadow:0 10px 25px rgba(0,0,0,0.05); max-width:400px; margin:auto;">
+                <h1 style="color:#27ae60;">✅ Payment Successful</h1>
+                <p>Thank you! Your transaction has been recorded.</p>
+                <a href="https://wa.me/${process.env.TWILIO_PHONE_NUMBER ? process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '') : ''}?text=Hi" 
+                   style="background:#25D366; color:white; padding:15px 30px; text-decoration:none; border-radius:5px; font-weight:bold; display:inline-block; margin-top:20px;">
+                   Return to WhatsApp
+                </a>
+            </div>
+        </body></html>
     `);
 });
 
