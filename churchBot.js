@@ -162,10 +162,13 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
 
             // --- OPTION 5: NEWS ---
             else if (incomingMsg === '5') {
-                const news = await prisma.news.findMany({ 
+                // --- 📰 UPDATED NEWS LOGIC ---
+console.log(`🔎 Fetching news for: ${session.orgCode}`);
+
+const news = await prisma.news.findMany({ 
     where: { 
         church: {
-            code: session.orgCode // This checks the 'code' field in the related Church table
+            code: session.orgCode // This 'hops' to the Church table to find the match
         },
         status: 'Active' 
     }, 
@@ -173,13 +176,15 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
     take: 3 
 });
 
-// The rest of your logic is perfect
-reply = news.length === 0 
-    ? "📰 No news updates at the moment. Please check back later! 🙏" 
-    : "*Latest Updates:*\n\n" + news.map(n => `📌 *${n.headline}*\n${n.body || ''}`).join('\n\n');
+// Build the response string
+if (news.length === 0) {
+    reply = "📰 No news updates at the moment. Please check back later! 🙏";
+} else {
+    reply = "*Latest Updates:*\n\n" + 
+            news.map(n => `📌 *${n.headline}*\n${n.body || ''}`).join('\n\n');
+}
 
 session.step = 'CHURCH_MENU';
-            }
 
             // --- OPTION 6: PROFILE ---
             else if (incomingMsg === '6') {
