@@ -553,16 +553,24 @@ app.get('/payment-success', async (req, res) => {
                     // 4. Send the PDF
                     if (client) {
     const date = new Date().toISOString().split('T')[0];
-    const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=Seabe&to=${encodeURIComponent(phone)}&date=${date}&items[0][name]=Contribution&items[0][unit_cost]=${amount}`;
+	
+	const date = new Date().toISOString().split('T')[0];
 
+// 🛠️ We must encode these values to make the URL "safe" for Twilio
+const safeFrom = encodeURIComponent("AFM - Life in Christ");
+const safeTo = encodeURIComponent(transaction.phone);
+const safeItem = encodeURIComponent("Contribution");
+
+const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=${safeFrom}&to=${safeTo}&date=${date}&items[0][name]=${safeItem}&items[0][unit_cost]=${transaction.amount}`;
+
+console.log(`🔗 Generated PDF Link: ${pdfUrl}`);
     try {
         await client.messages.create({
-            // ✅ Using the correct variable name
-            from: TWILIO_PHONE_NUMBER.startsWith('whatsapp:') ? TWILIO_PHONE_NUMBER : `whatsapp:${TWILIO_PHONE_NUMBER}`,
-            to: phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`,
-            body: `✅ *Payment Received*\n\nRef: ${reference}\nAmount: R${amount}\n\nThank you for your contribution! 🙏`,
-            mediaUrl: [ pdfUrl ]
-        });
+    from: process.env.TWILIO_PHONE_NUMBER,
+    to: `whatsapp:${transaction.phone}`,
+    // We move the link into the body of the message
+    body: `✅ *Payment Received*\n\nRef: ${reference}\nAmount: R${transaction.amount}\n\n📄 *Download Receipt:* ${pdfUrl}\n\nThank you! 🙏`
+});
         console.log(`📡 REAL Twilio API call sent to ${phone}`);
     } catch (twilioErr) {
         // This will now catch any remaining issues (like incorrect phone formatting)
