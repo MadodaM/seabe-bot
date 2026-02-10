@@ -1,14 +1,4 @@
 // ==========================================
-// SEABE LINK (The Public Web Portal)
-// Supports: Churches ⛪, Societies 🛡️, NPOs 🤝
-// ==========================================
-const express = require('express');
-const router = express.Router();
-const { createPaymentLink } = require('../services/paystack'); 
-
-module.exports = (app, { prisma }) => {
-
-    // ==========================================
     // 1. THE PUBLIC LANDING PAGE (GET)
     // Example: seabe.io/link/AFM001
     // ==========================================
@@ -39,10 +29,7 @@ module.exports = (app, { prisma }) => {
                 orgIcon = '🛡️';
                 orgLabel = 'Burial Society';
                 themeColor = '#2c3e50'; // Navy Blue
-                
                 const fee = org.subscriptionFee || 150;
-                
-                // Note: data-type="FIXED" locks the amount input. "VARIABLE" lets user type.
                 optionsHtml = `
                     <option value="PREM" data-type="FIXED" data-price="${fee}">Monthly Premium (R${fee}) 🛡️</option>
                     <option value="JOIN_FEE" data-type="VARIABLE">Joining Fee 📝</option>
@@ -55,7 +42,6 @@ module.exports = (app, { prisma }) => {
                 orgIcon = '🤝';
                 orgLabel = 'Non-Profit';
                 themeColor = '#27ae60'; // Green
-                
                 optionsHtml = `
                     <option value="DONATION" data-type="VARIABLE" selected>General Donation 💖</option>
                     <option value="PLEDGE" data-type="VARIABLE">Monthly Pledge 🔁</option>
@@ -66,7 +52,6 @@ module.exports = (app, { prisma }) => {
             else {
                 orgIcon = '⛪';
                 themeColor = '#8e44ad'; // Purple
-                
                 optionsHtml = `
                     <option value="OFFERING" data-type="VARIABLE" selected>General Offering 🎁</option>
                     <option value="TITHE" data-type="VARIABLE">Tithe (10%) 🏛️</option>
@@ -76,22 +61,16 @@ module.exports = (app, { prisma }) => {
                 `;
             }
 
-            // --- ADD EVENTS & PROJECTS (The Mix) ---
+            // --- ADD EVENTS & PROJECTS ---
             if (org.events && org.events.length > 0) {
                 optionsHtml += `<optgroup label="Campaigns & Events">`;
-                
                 org.events.forEach(e => {
                     if (e.isDonation) {
-                        // 🏗️ VARIABLE PROJECT (e.g. Building Fund) -> User types amount
-                        // We store the ID in the value: "PROJECT_5"
                         optionsHtml += `<option value="PROJECT_${e.id}" data-type="VARIABLE">${e.name} (Any Amount) 🏗️</option>`;
                     } else {
-                        // 🎟️ FIXED TICKET (e.g. Concert) -> Price is locked
-                        // We store the ID in the value: "EVENT_12"
                         optionsHtml += `<option value="EVENT_${e.id}" data-type="FIXED" data-price="${e.price}">${e.name} (R${e.price}) 🎟️</option>`;
                     }
                 });
-                
                 optionsHtml += `</optgroup>`;
             }
 
@@ -117,10 +96,16 @@ module.exports = (app, { prisma }) => {
                     input, select { width: 100%; padding: 14px; border: 2px solid #eee; border-radius: 12px; font-size: 16px; box-sizing: border-box; transition: 0.3s; background: #fff; }
                     input:focus, select:focus { border-color: var(--primary); outline: none; }
                     
-                    .btn { width: 100%; padding: 16px; background: var(--primary); color: white; border: none; border-radius: 12px; font-weight: 700; font-size: 16px; cursor: pointer; margin-top: 10px; transition: 0.3s; }
-                    .btn:hover { opacity: 0.9; transform: translateY(-2px); }
+                    /* CHECKBOX STYLES */
+                    .checkbox-wrapper { display: flex; align-items: flex-start; gap: 10px; background: #f9f9f9; padding: 15px; border-radius: 12px; border: 1px solid #eee; }
+                    .checkbox-wrapper input { width: 20px; height: 20px; margin: 0; cursor: pointer; }
+                    .checkbox-wrapper label { margin: 0; font-size: 13px; color: #555; text-transform: none; font-weight: 400; line-height: 1.4; cursor: pointer; }
+                    .checkbox-wrapper a { color: var(--primary); text-decoration: none; font-weight: 600; }
+
+                    .btn { width: 100%; padding: 16px; background: var(--primary); color: white; border: none; border-radius: 12px; font-weight: 700; font-size: 16px; cursor: not-allowed; margin-top: 10px; transition: 0.3s; opacity: 0.5; }
+                    .btn:not([disabled]):hover { opacity: 0.9; transform: translateY(-2px); }
                     
-                    .secure-footer { text-align: center; margin-top: 25px; font-size: 11px; color: #aaa; display: flex; align-items: center; justify-content: center; gap: 5px; }
+                    .secure-footer { text-align: center; margin-top: 25px; font-size: 11px; color: #aaa; line-height: 1.5; }
                 </style>
             </head>
             <body>
@@ -152,11 +137,20 @@ module.exports = (app, { prisma }) => {
                             <input type="tel" name="phone" placeholder="WhatsApp Number" required>
                         </div>
 
-                        <button type="submit" class="btn">Proceed to Pay</button>
+                        <div class="input-group checkbox-wrapper">
+                            <input type="checkbox" id="termsCheckbox" onchange="togglePayButton()">
+                            <label for="termsCheckbox">
+                                I agree to the <a href="/terms" target="_blank">Terms</a> & <a href="/privacy" target="_blank">Privacy Policy</a>. 
+                                <br><span style="font-size:11px; color:#888;">(Refunds subject to Org policy)</span>
+                            </label>
+                        </div>
+
+                        <button type="submit" class="btn" id="payButton" disabled>Proceed to Pay</button>
                     </form>
                     
                     <div class="secure-footer">
-                        🔒 Secured by Paystack & Seabe
+                        🔒 Secured by Paystack & Seabe<br>
+                        Seabe Digital is a technology platform. We are not a bank or insurer.
                     </div>
                 </div>
 
@@ -170,13 +164,11 @@ module.exports = (app, { prisma }) => {
                         const price = option.getAttribute('data-price');
 
                         if (type === 'FIXED') {
-                            // Lock the amount for Tickets/Premiums
                             input.value = price;
                             input.readOnly = true;
                             input.style.backgroundColor = "#f9f9f9";
                             input.style.color = "#555";
                         } else {
-                            // Unlock for Donations
                             input.value = '';
                             input.readOnly = false;
                             input.style.backgroundColor = "white";
@@ -185,8 +177,26 @@ module.exports = (app, { prisma }) => {
                             input.focus();
                         }
                     }
-                    // Run on load in case browser remembers selection
+                    
+                    // ⚖️ LEGAL CHECKBOX LOGIC
+                    function togglePayButton() {
+                        const checkbox = document.getElementById('termsCheckbox');
+                        const btn = document.getElementById('payButton');
+                        
+                        if (checkbox.checked) {
+                            btn.disabled = false;
+                            btn.style.opacity = '1';
+                            btn.style.cursor = 'pointer';
+                        } else {
+                            btn.disabled = true;
+                            btn.style.opacity = '0.5';
+                            btn.style.cursor = 'not-allowed';
+                        }
+                    }
+
+                    // Run on load
                     updateAmountLogic();
+                    togglePayButton();
                 </script>
             </body>
             </html>
@@ -197,83 +207,3 @@ module.exports = (app, { prisma }) => {
             res.status(500).send("System Error loading page.");
         }
     });
-
-    // ==========================================
-    // 2. PROCESS THE PAYMENT (POST)
-    // ==========================================
-    router.post('/link/:code/process', async (req, res) => {
-        try {
-            const { code } = req.params;
-            const { amount, type, name, email, phone } = req.body;
-            
-            // Validate Org
-            const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
-            if (!org) return res.send("Error: Organization not found.");
-
-            // Clean Phone (Remove spaces, ensure format)
-            const cleanPhone = phone.replace(/\D/g, ''); 
-            
-            // Construct Reference
-            const ref = `WEB-${code}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
-
-            // Call Paystack Service
-            const link = await createPaymentLink(
-                parseFloat(amount), 
-                ref, 
-                email, 
-                org.subaccountCode, 
-                cleanPhone, 
-                org.name
-            );
-
-            if (link) {
-                // --- A. UPSERT MEMBER (Save the user) ---
-                // 💡 FIX: We use 'churchCode' or 'societyCode' depending on type
-                const updateData = {};
-                if (org.type === 'CHURCH') {
-                    updateData.churchCode = org.code;
-                } else if (org.type === 'BURIAL_SOCIETY') {
-                    updateData.societyCode = org.code; // Assuming you have societyCode in schema
-                }
-                // For NPO, we might assume they use 'churchCode' field or skip linking for now
-
-                await prisma.member.upsert({
-                    where: { phone: cleanPhone },
-                    update: { ...updateData, email: email }, 
-                    create: { 
-                        phone: cleanPhone, 
-                        firstName: name.split(' ')[0], 
-                        lastName: name.split(' ')[1] || 'Guest',
-                        email: email,
-                        joinedAt: new Date(),
-                        ...updateData
-                    }
-                });
-
-                // --- B. LOG TRANSACTION (Pending) ---
-                await prisma.transaction.create({
-                    data: {
-                        churchCode: org.code, // We store the Org Code here regardless of type
-                        phone: cleanPhone,
-                        type: type, 
-                        amount: parseFloat(amount),
-                        reference: ref,
-                        status: 'PENDING',
-                        date: new Date()
-                    }
-                });
-
-                // --- C. REDIRECT TO PAYSTACK ---
-                res.redirect(link);
-            } else {
-                res.status(500).send("Error communicating with Payment Gateway.");
-            }
-
-        } catch (e) {
-            console.error("Web Payment Processing Error:", e);
-            res.status(500).send("System Error Processing Payment.");
-        }
-    });
-app.use('/', router); 
-
-}; // <--- End of module.exports
