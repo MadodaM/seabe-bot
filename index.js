@@ -552,17 +552,20 @@ app.get('/payment-success', async (req, res) => {
 
                     // 4. Send the PDF
                     if (client) {
-    const invoiceDate = new Date().toISOString().split('T')[0];
-	
-// 🛠️ We must encode these values to make the URL "safe" for Twilio
+// 1. You declared it as 'invoiceDate' here...
+const invoiceDate = new Date().toISOString().split('T')[0];
+
+// 2. ...so you MUST use 'invoiceDate' here!
 const safeFrom = encodeURIComponent("AFM - Life in Christ");
 const safeTo = encodeURIComponent(transaction.phone);
 const safeItem = encodeURIComponent("Contribution");
 
-const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=${safeFrom}&to=${safeTo}&date=${date}&items[0][name]=${safeItem}&items[0][unit_cost]=${transaction.amount}`;
+// FIXED LINE BELOW: Changed ${date} to ${invoiceDate}
+const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=${safeFrom}&to=${safeTo}&date=${invoiceDate}&items[0][name]=${safeItem}&items[0][unit_cost]=${transaction.amount}`;
 
-console.log(`🔗 Generated PDF Link: ${pdfUrl}`);
-    try {
+console.log(`🔗 Success! PDF Link generated: ${pdfUrl}`);
+
+   try {
         await client.messages.create({
     from: process.env.TWILIO_PHONE_NUMBER,
     to: `whatsapp:${transaction.phone}`,
