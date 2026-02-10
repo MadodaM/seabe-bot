@@ -574,18 +574,10 @@ try {
         to: `whatsapp:${transaction.phone}`,
         body: receiptBody
     });
-    console.log(`📡 Text receipt sent successfully to ${transaction.phone}`);
+    console.log(`📡 Text receipt sent successfully`);
 } catch (error) {
-    console.error("❌ Failed to send receipt:", error.message);
-}
-}
-                } else {
-                    console.error(`❌ Could not find a matching PENDING transaction for ${reference}`);
-                }
-            }
-        } catch (e) {
-            console.error("⚠️ PDF Logic Error:", e.message);
-        }
+    console.error("❌ Receipt Delivery Error:", error.message);
+} // <--- This 'catch' block is mandatory!
     }
     res.send(`<h1>✅ Payment Received</h1><p>Check WhatsApp for your receipt.</p>`);
 });
