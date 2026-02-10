@@ -163,28 +163,19 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
             // --- OPTION 5: NEWS ---
             else if (incomingMsg === '5') {
                 // --- 📰 UPDATED NEWS LOGIC ---
-console.log(`🔎 Fetching news for: ${session.orgCode}`);
-
 const news = await prisma.news.findMany({ 
-    where: { 
-        church: {
-            code: session.orgCode // This 'hops' to the Church table to find the match
-        },
-        status: 'Active' 
-    }, 
-    orderBy: { createdAt: 'desc' }, 
-    take: 3 
-});
+        where: { church: { code: session.orgCode }, status: 'Active' }, 
+        orderBy: { createdAt: 'desc' }, 
+        take: 3 
+    });
 
-// Build the response string
-if (news.length === 0) {
-    reply = "📰 No news updates at the moment. Please check back later! 🙏";
-} else {
-    reply = "*Latest Updates:*\n\n" + 
-            news.map(n => `📌 *${n.headline}*\n${n.body || ''}`).join('\n\n');
+    if (news.length === 0) {
+        reply = "📰 No news updates at the moment.";
+    } else {
+        reply = "*Latest Updates:*\n\n" + news.map(n => `📌 *${n.headline}*\n${n.body || ''}`).join('\n\n');
+    }
+    session.step = 'CHURCH_MENU';
 }
-
-session.step = 'CHURCH_MENU';
 
             // --- OPTION 6: PROFILE ---
             else if (incomingMsg === '6') {
