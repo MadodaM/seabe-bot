@@ -436,54 +436,44 @@ app.post('/whatsapp', async (req, res) => {
 // Add 'async' here so we can wait for the Database/Paystack
 app.get('/payment-success', async (req, res) => {
     const { reference } = req.query;
+    console.log(`🔎 Success Page reached for Ref: ${reference}`);
 
     if (reference) {
         try {
-            // 1. Verify with Paystack
             const resp = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
-                headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` }
+                headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
             });
 
             if (resp.data.data.status === 'success') {
-                // 2. Update DB and get transaction details
                 const transaction = await prisma.transaction.update({
                     where: { reference: reference },
                     data: { status: 'SUCCESS' }
                 });
 
-                // 3. Send WhatsApp Receipt immediately
-                if (transaction && client) {
+                // Check if Twilio is actually ready
+                if (!client) {
+                    console.error("❌ PDF ABORTED: Twilio client is not initialized.");
+                } else {
                     const userPhone = transaction.phone;
                     const date = new Date().toISOString().split('T')[0];
+                    // Using the official invoice-generator API
                     const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=Seabe&to=${userPhone}&date=${date}&items[0][name]=Contribution&items[0][unit_cost]=${transaction.amount}`;
 
                     await client.messages.create({
                         from: process.env.TWILIO_PHONE_NUMBER,
                         to: userPhone.startsWith('whatsapp:') ? userPhone : `whatsapp:${userPhone}`,
-                        body: `✅ *Receipt: Payment Received*\n\nRef: ${reference}\nAmount: R${transaction.amount}\n\nThank you for your contribution! 🙏`,
+                        body: `✅ *Payment Received*\nRef: ${reference}\nAmount: R${transaction.amount}\n\nThank you! 🙏`,
                         mediaUrl: [ pdfUrl ] 
                     });
-                    console.log(`📑 Instant Receipt sent for ${reference}`);
+                    console.log(`📑 PDF Invoice successfully sent to ${userPhone}`);
                 }
             }
         } catch (e) {
-            console.log("⏳ Success page sync skipped (likely already processed or network jitter).");
+            console.error("⚠️ PDF Logic Error:", e.message);
         }
     }
 
-    res.send(`
-        <html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
-        <body style="font-family:sans-serif; text-align:center; padding:50px; background:#f4f7f6;">
-            <div style="background:white; padding:40px; border-radius:15px; box-shadow:0 10px 25px rgba(0,0,0,0.05); max-width:400px; margin:auto;">
-                <h1 style="color:#27ae60;">✅ Payment Successful</h1>
-                <p>Thank you! Your transaction has been recorded.</p>
-                <a href="https://wa.me/${process.env.TWILIO_PHONE_NUMBER ? process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '') : ''}?text=Hi" 
-                   style="background:#25D366; color:white; padding:15px 30px; text-decoration:none; border-radius:5px; font-weight:bold; display:inline-block; margin-top:20px;">
-                   Return to WhatsApp
-                </a>
-            </div>
-        </body></html>
-    `);
+    res.send(`<h1>✅ Payment Received</h1><p>You can now close this window.</p>`);
 });
 
 const PORT = process.env.PORT || 3000;
