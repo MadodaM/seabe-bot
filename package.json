@@ -9,7 +9,8 @@
     "onboard": "node scripts/onboard.js",
     "add-event": "node scripts/add-event.js",
     "update-news": "node scripts/update-news.js",
-    "add-ad": "node scripts/add-ad.js"
+    "add-ad": "node scripts/add-ad.js",
+	"build": "npx prisma generate && npx prisma db push"
   },
   "keywords": [],
   "author": "",
