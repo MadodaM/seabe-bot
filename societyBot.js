@@ -62,31 +62,40 @@ if (incomingMsg === '1') {
             }
 
 // PREMIUM PAYMENT
-else if (incomingMsg === '5') {
-    const amount = 150.00;
-    const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
-    
-    const email = member.email || `${cleanPhone}@seabe.io`;
-    const ref = `${session.orgCode}-PREM-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
+        else if (incomingMsg === '5') {
+            const amount = 150.00;
+            const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
+            const email = member.email || `${cleanPhone}@seabe.io`;
+            const ref = `${session.orgCode}-PREM-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
 
-    const link = await createPaymentLink(amount, ref, email, session.subaccount, cleanPhone, session.orgName);
-    
-    if (link) {
-        // 🚨 CRITICAL ADDITION: Save the transaction to the DB so index.js can find it later
-        await prisma.transaction.create({
-            data: {
-                churchCode: session.orgCode, // This tracks which society/church gets the money
-                phone: cleanPhone,
-                amount: amount,
-                reference: ref,
-                status: 'PENDING',
-                type: 'SOCIETY_PREMIUM' // This helps you distinguish premiums from tithes
-            }
-        });
+            const link = await createPaymentLink(amount, ref, email, session.subaccount, cleanPhone, session.orgName);
+            
+            if (link) {
+                await prisma.transaction.create({
+                    data: {
+                        churchCode: session.orgCode,
+                        phone: cleanPhone,
+                        amount: amount,
+                        reference: ref,
+                        status: 'PENDING',
+                        type: 'SOCIETY_PREMIUM'
+                    }
+                });
+                reply = `💳 *Pay Premium*\nDue: R${amount}\n\n👉 ${link}`;
+            } else {
+                reply = "⚠️ Error generating link.";
+            } 
+        } // <--- ENSURE THIS BRACE CLOSES THE 'else if (incomingMsg === '5')'
 
-        reply = `💳 *Pay Premium*\nDue: R${amount}\n\n👉 ${link}`;
-    } else {
-        reply = "⚠️ Error generating link.";
+        // SEND REPLY
+        if (reply) {
+            twiml.message(reply);
+            res.type('text/xml').send(twiml.toString());
+        }
+
+    } catch (e) { // <--- The error was happening here because the above wasn't closed
+        console.error("❌ Society Bot Error:", e.message);
+        res.sendStatus(500);
     }
 }
 
