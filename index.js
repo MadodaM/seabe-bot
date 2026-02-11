@@ -20,6 +20,10 @@ const { PrismaClient } = require('@prisma/client');
 const { handleSocietyMessage } = require('./societyBot');
 const { handleChurchMessage } = require('./churchBot');
 
+const adminRoutes = require('./routes/admin');
+
+//app.use('/', adminRoutes);
+
 // --- CONFIGURATION ---
 const prisma = new PrismaClient();
 const ACCOUNT_SID = process.env.TWILIO_SID;

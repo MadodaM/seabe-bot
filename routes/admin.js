@@ -6,6 +6,10 @@
 const express = require('express');
 const router = express.Router();
 const { sendWhatsApp } = require('../services/whatsapp');
+const { PrismaClient } = require('@prisma/client');
+const axios = require('axios');
+const prisma = new PrismaClient();
+const twilio = require('twilio');
 
 // --- HELPERS ---
 const generateOTP = () => Math.floor(1000 + Math.random() * 9000).toString();
