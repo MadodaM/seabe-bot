@@ -83,6 +83,7 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
                                 reference: ref,
                                 status: 'PENDING',
                                 type: 'SOCIETY_PREMIUM'
+								...(member ? { member: { connect: { id: member.id } } } : {})
                             }
                         });
                         reply = `💳 *Pay Premium*\nDue: R${amount}.00\n\n👉 ${link}`;
