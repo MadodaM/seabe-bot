@@ -130,8 +130,9 @@ router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
     const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 
     const transactions = await prisma.transaction.findMany({
-        where: { churchCode: orgCode, status: 'SUCCESS', createdAt: { gte: startOfMonth } },
-        orderBy: { id: 'desc' } // Sorting by ID as safety if createdAt is tricky
+        // ✅ FIX: Using 'date' instead of 'createdAt' to match your schema
+        where: { churchCode: orgCode, status: 'SUCCESS', date: { gte: startOfMonth } },
+        orderBy: { id: 'desc' }
     });
 
     const titheTotal = transactions.filter(tx => ['OFFERING', 'TITHE'].includes(tx.type)).reduce((sum, tx) => sum + tx.amount, 0);
@@ -159,7 +160,7 @@ router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
                 <tbody>
                     ${transactions.slice(0, 10).map(tx => `
                         <tr>
-                            <td>${tx.createdAt.toLocaleDateString()}</td>
+                            <td>${tx.date ? tx.date.toLocaleDateString() : 'N/A'}</td>
                             <td>${tx.phone}</td>
                             <td><span class="badge">${tx.type}</span></td>
                             <td><strong>R${tx.amount}</strong></td>
@@ -244,6 +245,7 @@ router.post('/admin/:code/ads/delete', checkSession, async (req, res) => {
     res.redirect(`/admin/${req.org.code}/ads`);
 });
 
+// --- EXPORT ---
 module.exports = (app) => {
     app.use('/', router);
 };
