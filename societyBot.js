@@ -7,7 +7,7 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
     let reply = "";
 
     try {
-        // 1. MENU TRIGGER
+        // 1. MENU TRIGGER (Global catch-all for 'menu' or 'society')
         if (['society', 'menu'].includes(incomingMsg.toLowerCase())) {
             session.step = 'SOCIETY_MENU';
             reply = `🛡️ *${session.orgName}*\n_Burial Society Portal_\n\n` +
@@ -20,7 +20,7 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
                     `Reply with a number:`;
         }
 
-        // 2. MENU OPTIONS
+        // 2. MAIN MENU NAVIGATION
         else if (session.step === 'SOCIETY_MENU') {
             
             // POLICY STATUS
@@ -42,7 +42,7 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
                 }
             }
 
-            // DEPENDENTS
+            // VIEW DEPENDENTS
             else if (incomingMsg === '2') {
                 const dependents = await prisma.dependent.findMany({ where: { member: { phone: cleanPhone } } });
                 if (dependents.length === 0) {
@@ -53,45 +53,47 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
                 session.step = 'DEPENDENT_VIEW';
             }
 
-            // BANKING
+            // BANKING DETAILS
             else if (incomingMsg === '3') {
                 reply = `🏦 *Banking Details*\n\nBank: Standard Bank\nAcc: 123456789\nRef: ${cleanPhone}`;
             }
 
             // PREMIUM PAYMENT
-// PREMIUM PAYMENT
-else if (incomingMsg === '5') {
-    const member = await prisma.member.findUnique({ 
-        where: { phone: cleanPhone },
-        include: { society: true }
-    });
+            else if (incomingMsg === '5') {
+                const member = await prisma.member.findUnique({ 
+                    where: { phone: cleanPhone },
+                    include: { society: true }
+                });
 
-    // FIXED LINE: Added 'amount ='
-    const amount = member.monthlyPremium || member.society?.defaultPremium || 150.00;
-    
-    const email = member.email || `${cleanPhone}@seabe.io`;
-    const ref = `${session.orgCode}-PREM-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
+                if (!member) {
+                    reply = "⚠️ Member not found.";
+                } else {
+                    const amount = member.monthlyPremium || member.society?.defaultPremium || 150.00;
+                    const email = member.email || `${cleanPhone}@seabe.io`;
+                    const ref = `${session.orgCode}-PREM-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
 
-    const link = await createPaymentLink(amount, ref, email, session.subaccount, cleanPhone, session.orgName);
-    
-    if (link) {
-        await prisma.transaction.create({
-            data: {
-                churchCode: session.orgCode,
-                phone: cleanPhone,
-                amount: amount,
-                reference: ref,
-                status: 'PENDING',
-                type: 'SOCIETY_PREMIUM'
+                    const link = await createPaymentLink(amount, ref, email, session.subaccount, cleanPhone, session.orgName);
+                    
+                    if (link) {
+                        await prisma.transaction.create({
+                            data: {
+                                churchCode: session.orgCode,
+                                phone: cleanPhone,
+                                amount: amount,
+                                reference: ref,
+                                status: 'PENDING',
+                                type: 'SOCIETY_PREMIUM'
+                            }
+                        });
+                        reply = `💳 *Pay Premium*\nDue: R${amount}.00\n\n👉 ${link}`;
+                    } else {
+                        reply = "⚠️ Error generating link.";
+                    }
+                }
             }
-        });
-        reply = `💳 *Pay Premium*\nDue: R${amount}.00\n\n👉 ${link}`;
-    } else {
-        reply = "⚠️ Error generating link.";
-    }
-}
+        } // End of SOCIETY_MENU
 
-        // 3. DEPENDENT LOGIC
+        // 3. DEPENDENT LOGIC (These should be separate 'else if' branches for their specific steps)
         else if (session.step === 'DEPENDENT_VIEW' && incomingMsg.toLowerCase() === 'add') {
             reply = "📝 Type Dependent's First Name:";
             session.step = 'ADD_DEP_NAME';
@@ -112,7 +114,7 @@ else if (incomingMsg === '5') {
                         memberId: member.id
                     }
                 });
-                reply = `✅ Added ${session.tempDep.name}.\nReply *2* to view list.`;
+                reply = `✅ Added ${session.tempDep.name}.\nReply *2* to view list or *menu* for main menu.`;
                 session.step = 'SOCIETY_MENU';
             } else {
                 reply = "⚠️ Error: Member record not found.";
@@ -129,6 +131,6 @@ else if (incomingMsg === '5') {
         console.error("❌ Society Bot Error:", e.message);
         if (!res.headersSent) res.status(500).send("Internal Server Error");
     }
-} // <--- Added missing closing brace for the function
+}
 
 module.exports = { handleSocietyMessage };
