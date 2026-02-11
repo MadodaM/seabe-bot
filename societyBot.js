@@ -60,7 +60,7 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
 
             // PREMIUM PAYMENT
             else if (incomingMsg === '5') {
-                const amount = 150.00;
+                const member.monthlyPremium || member.society?.defaultPremium || 150.00;
                 const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
                 
                 if (!member) {
