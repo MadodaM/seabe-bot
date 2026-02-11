@@ -10,7 +10,7 @@
     "add-event": "node scripts/add-event.js",
     "update-news": "node scripts/update-news.js",
     "add-ad": "node scripts/add-ad.js",
-	"build": "npx prisma generate && npx prisma db push"
+    "build": "npx prisma generate && npx prisma db push"
   },
   "keywords": [],
   "author": "",
@@ -21,6 +21,7 @@
     "@sendgrid/mail": "^8.1.6",
     "axios": "^1.13.4",
     "body-parser": "^2.2.2",
+    "csv-parser": "^3.2.0",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "fs": "^0.0.1-security",

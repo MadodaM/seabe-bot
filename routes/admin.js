@@ -4,6 +4,12 @@ const { sendWhatsApp } = require('../services/whatsapp');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const twilio = require('twilio');
+const multer = require('multer');
+const csv = require('csv-parser');
+const fs = require('fs');
+
+// Setup Multer for CSV Uploads
+const upload = multer({ dest: 'uploads/' });
 
 // Initialize Twilio Client
 const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH_TOKEN);
@@ -60,6 +66,7 @@ const renderPage = (org, activeTab, content) => {
         </div>
         <div class="nav">
             <a href="/admin/${org.code}/dashboard" style="${navStyle('dashboard')}">📊 Dashboard</a>
+            <a href="/admin/${org.code}/members" style="${navStyle('members')}">👥 Members</a>
             <a href="/admin/${org.code}/events" style="${navStyle('events')}">📅 Events</a>
             <a href="/admin/${org.code}/ads" style="${navStyle('ads')}">📢 Ads</a>
         </div>
@@ -81,7 +88,7 @@ const checkSession = async (req, res, next) => {
 
 // --- ROUTES ---
 
-// Login Page
+// (Login, Verify, Logout routes remain unchanged...)
 router.get('/admin/:code', async (req, res) => {
     const { code } = req.params;
     const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
@@ -108,48 +115,43 @@ router.get('/admin/:code', async (req, res) => {
     `);
 });
 
-// Verify OTP
 router.post('/admin/:code/verify', async (req, res) => {
     const { code } = req.params;
     const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
     if (!org || org.otp !== req.body.otp) return res.send("<h3>❌ Invalid OTP</h3><a href='javascript:history.back()'>Try Again</a>");
-    
     res.setHeader('Set-Cookie', `session_${code}=active; HttpOnly; Path=/; Max-Age=3600`);
     res.redirect(`/admin/${code}/dashboard`);
 });
 
-// Logout
 router.get('/admin/:code/logout', (req, res) => {
     res.setHeader('Set-Cookie', `session_${req.params.code}=; Path=/; Max-Age=0`);
     res.redirect(`/admin/${req.params.code}`);
 });
 
-// Dashboard
+// --- DASHBOARD ---
 router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
     const orgCode = req.org.code;
     const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-
     const transactions = await prisma.transaction.findMany({
         where: { churchCode: orgCode, status: 'SUCCESS', date: { gte: startOfMonth } },
         orderBy: { id: 'desc' }
     });
-
     const titheTotal = transactions.filter(tx => ['OFFERING', 'TITHE'].includes(tx.type)).reduce((sum, tx) => sum + tx.amount, 0);
     const premiumTotal = transactions.filter(tx => tx.type === 'SOCIETY_PREMIUM').reduce((sum, tx) => sum + tx.amount, 0);
 
     res.send(renderPage(req.org, 'dashboard', `
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px;">
             <div class="card" style="border-left: 5px solid #00b894;">
-                <small style="color: #636e72;">TOTAL COLLECTIONS</small>
-                <h2 style="margin: 10px 0;">R${(titheTotal + premiumTotal).toLocaleString()}</h2>
+                <small>TOTAL COLLECTIONS</small>
+                <h2>R${(titheTotal + premiumTotal).toLocaleString()}</h2>
             </div>
             <div class="card" style="border-left: 5px solid #0984e3;">
-                <small style="color: #636e72;">CHURCH TITHES</small>
-                <h2 style="margin: 10px 0;">R${titheTotal.toLocaleString()}</h2>
+                <small>CHURCH TITHES</small>
+                <h2>R${titheTotal.toLocaleString()}</h2>
             </div>
             <div class="card" style="border-left: 5px solid #6c5ce7;">
-                <small style="color: #636e72;">SOCIETY PREMIUMS</small>
-                <h2 style="margin: 10px 0;">R${premiumTotal.toLocaleString()}</h2>
+                <small>SOCIETY PREMIUMS</small>
+                <h2>R${premiumTotal.toLocaleString()}</h2>
             </div>
         </div>
         <div class="card">
@@ -170,7 +172,97 @@ router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
     `));
 });
 
-// Events
+// --- 👥 MEMBERS PAGE (With Search & CSV) ---
+router.get('/admin/:code/members', checkSession, async (req, res) => {
+    const { q } = req.query; // Search query
+    
+    const members = await prisma.member.findMany({
+        where: {
+            churchCode: req.org.code,
+            ...(q ? {
+                OR: [
+                    { phone: { contains: q } },
+                    { lastName: { contains: q, mode: 'insensitive' } },
+                    { firstName: { contains: q, mode: 'insensitive' } }
+                ]
+            } : {})
+        },
+        orderBy: { lastName: 'asc' }
+    });
+
+    const rows = members.map(m => `
+        <tr>
+            <td><b>${m.firstName} ${m.lastName}</b><br><small>${m.phone}</small></td>
+            <td><span class="badge" style="background:${m.status === 'ACTIVE' ? '#e8f5e9' : '#ffebe6'};">${m.status}</span></td>
+            <td>R${m.monthlyPremium || '150.00'}</td>
+            <td>
+                <form method="POST" action="/admin/${req.org.code}/members/delete" style="display:inline;">
+                    <input type="hidden" name="id" value="${m.id}"><button class="btn-del">Delete</button>
+                </form>
+            </td>
+        </tr>`).join('');
+
+    res.send(renderPage(req.org, 'members', `
+        <div class="card">
+            <h3>👥 Member Directory</h3>
+            <form method="GET" action="/admin/${req.org.code}/members" style="display:flex; gap:10px; margin-bottom:10px;">
+                <input name="q" value="${q || ''}" placeholder="Search by name or phone..." style="margin-bottom:0;">
+                <button class="btn" style="width:auto;">Search</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h3>📂 Bulk Import (CSV)</h3>
+            <form method="POST" action="/admin/${req.org.code}/members/upload" enctype="multipart/form-data">
+                <input type="file" name="file" accept=".csv" required>
+                <button class="btn" style="background:#0984e3;">Upload & Sync Members</button>
+                <small style="display:block; margin-top:10px; color:#888;">CSV Headers: firstName, lastName, phone, monthlyPremium</small>
+            </form>
+        </div>
+
+        <div class="card" style="padding:0; overflow-x:auto;">
+            <table>
+                <thead><tr><th>Member</th><th>Status</th><th>Premium</th><th>Action</th></tr></thead>
+                <tbody>${rows || '<tr><td colspan="4">No members found</td></tr>'}</tbody>
+            </table>
+        </div>
+    `));
+});
+
+// CSV Upload Handler
+router.post('/admin/:code/members/upload', checkSession, upload.single('file'), async (req, res) => {
+    const results = [];
+    fs.createReadStream(req.file.path)
+        .pipe(csv())
+        .on('data', (data) => results.push(data))
+        .on('end', async () => {
+            for (const row of results) {
+                try {
+                    await prisma.member.upsert({
+                        where: { phone: row.phone },
+                        update: { firstName: row.firstName, lastName: row.lastName, monthlyPremium: parseFloat(row.monthlyPremium) || 150.0 },
+                        create: { 
+                            firstName: row.firstName, 
+                            lastName: row.lastName, 
+                            phone: row.phone, 
+                            monthlyPremium: parseFloat(row.monthlyPremium) || 150.0,
+                            churchCode: req.org.code,
+                            status: 'ACTIVE'
+                        }
+                    });
+                } catch (e) { console.error("CSV Row Error:", e.message); }
+            }
+            fs.unlinkSync(req.file.path); // Clean up temp file
+            res.redirect(`/admin/${req.org.code}/members?success=true`);
+        });
+});
+
+router.post('/admin/:code/members/delete', checkSession, async (req, res) => {
+    await prisma.member.delete({ where: { id: parseInt(req.body.id) } });
+    res.redirect(`/admin/${req.org.code}/members`);
+});
+
+// --- EVENTS ---
 router.get('/admin/:code/events', checkSession, async (req, res) => {
     const events = await prisma.event.findMany({ where: { churchCode: req.org.code }, orderBy: { id: 'desc' } });
     res.send(renderPage(req.org, 'events', `
@@ -202,7 +294,7 @@ router.post('/admin/:code/events/delete', checkSession, async (req, res) => {
     res.redirect(`/admin/${req.org.code}/events`);
 });
 
-// Ads
+// --- ADS ---
 router.get('/admin/:code/ads', checkSession, async (req, res) => {
     const ads = await prisma.ad.findMany({ where: { churchId: req.org.id }, orderBy: { id: 'desc' } });
     res.send(renderPage(req.org, 'ads', `
@@ -224,21 +316,11 @@ router.get('/admin/:code/ads', checkSession, async (req, res) => {
 
 router.post('/admin/:code/ads/add', checkSession, async (req, res) => {
     const { content, imageUrl } = req.body;
-    
-    // 🟢 FIX: Generate a default expiry date (30 days from now) to satisfy Prisma schema
     const defaultExpiry = new Date();
     defaultExpiry.setDate(defaultExpiry.getDate() + 30);
 
     try {
-        await prisma.ad.create({ 
-            data: { 
-                content, 
-                imageUrl: imageUrl || null, 
-                churchId: req.org.id,
-                expiryDate: defaultExpiry 
-            } 
-        });
-        
+        await prisma.ad.create({ data: { content, imageUrl: imageUrl || null, churchId: req.org.id, expiryDate: defaultExpiry } });
         const members = await prisma.member.findMany({ where: { churchCode: req.org.code } });
         members.forEach(m => {
             client.messages.create({
@@ -246,14 +328,10 @@ router.post('/admin/:code/ads/add', checkSession, async (req, res) => {
                 to: `whatsapp:${m.phone}`,
                 body: `📢 *${req.org.name}*\n\n${content}`,
                 mediaUrl: imageUrl ? [imageUrl] : undefined
-            }).catch(e => console.error("Twilio Error:", e.message));
+            }).catch(e => console.error(e));
         });
-
         res.redirect(`/admin/${req.org.code}/ads`);
-    } catch (error) {
-        console.error("Prisma Create Ad Error:", error.message);
-        res.status(500).send("Database Error: Failed to create announcement.");
-    }
+    } catch (e) { res.status(500).send(e.message); }
 });
 
 router.post('/admin/:code/ads/delete', checkSession, async (req, res) => {
@@ -261,7 +339,6 @@ router.post('/admin/:code/ads/delete', checkSession, async (req, res) => {
     res.redirect(`/admin/${req.org.code}/ads`);
 });
 
-// --- EXPORT ---
 module.exports = (app) => {
     app.use('/', router);
 };
