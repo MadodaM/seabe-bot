@@ -607,7 +607,145 @@ app.get('/payment-success', async (req, res) => {
         res.status(500).send("An error occurred during verification.");
     }
 });
+
+app.get('/admin/sync-payments', async (req, res) => {
+    console.log("🔄 Starting Global Payment Sync...");
+    
+    try {
+        // 1. Find all transactions that are still PENDING
+        const pendingTransactions = await prisma.transaction.findMany({
+            where: { status: 'PENDING' }
+        });
+
+        let updatedCount = 0;
+
+        // 2. Loop through and check each one with Paystack
+        for (const tx of pendingTransactions) {
+            try {
+                const resp = await axios.get(`https://api.paystack.co/transaction/verify/${tx.reference}`, {
+                    headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
+                });
+
+                // 3. If Paystack says it was successful, update our DB
+                if (resp.data.data.status === 'success') {
+                    await prisma.transaction.update({
+                        where: { id: tx.id },
+                        data: { status: 'SUCCESS' }
+                    });
+                    updatedCount++;
+                    console.log(`✅ Fixed Ref: ${tx.reference}`);
+                }
+            } catch (err) {
+                console.error(`⚠️ Could not verify ${tx.reference}: ${err.message}`);
+            }
+        }
+
+        res.send({
+            message: "Sync Complete",
+            checked: pendingTransactions.length,
+            updated: updatedCount
+        });
+
+    } catch (error) {
+        res.status(500).send({ error: error.message });
+    }
+});
+
+app.get('/cron/sync-payments', async (req, res) => {
+    // 1. Security Check: Only allow the cron service to call this
+    const cronKey = req.headers['x-cron-key'] || req.query.key;
+    if (cronKey !== process.env.SECRET_CRON_KEY) {
+        return res.status(401).send("Unauthorized");
+    }
+
+    console.log("⏰ Automated Sync Started...");
+    
+    try {
+        const pendingTxs = await prisma.transaction.findMany({
+            where: { 
+                status: 'PENDING',
+                createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } // Only check last 7 days
+            }
+        });
+
+        let fixes = 0;
+        for (const tx of pendingTxs) {
+            const resp = await axios.get(`https://api.paystack.co/transaction/verify/${tx.reference}`, {
+                headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
+            });
+
+            if (resp.data.data.status === 'success') {
+                await prisma.transaction.update({
+                    where: { id: tx.id },
+                    data: { status: 'SUCCESS' }
+                });
+                fixes++;
+            }
+        }
+        
+        console.log(`✅ Cron Sync Finished. Updated: ${fixes}`);
+        res.status(200).send({ status: "success", updated: fixes });
+    } catch (e) {
+        console.error("❌ Cron Sync Failed:", e.message);
+        res.status(500).send("Internal Error");
+    }
+});
+
+// --- PAYSTACK WEBHOOK (Required for Recurring Payments) ---
+app.post('/payment-success', async (req, res) => {
+    // Paystack sends a POST to the same URL or a dedicated /webhook URL
+    const event = req.body;
+
+    // 1. Validate the event is a successful charge
+    if (event.event === 'charge.success') {
+        const paystackData = event.data;
+        const reference = paystackData.reference;
+        const verifiedAmount = paystackData.amount / 100;
+        const customerEmail = paystackData.customer.email;
+
+        try {
+            // 2. Find the transaction in your DB
+            // Recurring payments generate NEW references, so we find by phone/email
+            const phone = customerEmail.split('@')[0]; // Extract phone from email
+
+            let transaction = await prisma.transaction.findFirst({
+                where: {
+                    phone: phone,
+                    amount: verifiedAmount,
+                    status: 'PENDING'
+                },
+                orderBy: { createdAt: 'desc' },
+                include: { church: true }
+            });
+
+            if (transaction) {
+                // 3. Update to SUCCESS
+                await prisma.transaction.update({
+                    where: { id: transaction.id },
+                    data: { 
+                        status: 'SUCCESS',
+                        reference: reference // Update to the NEW Paystack reference
+                    }
+                });
+
+                console.log(`✅ Recurring Payment Success for ${phone}`);
+                
+                // 4. Send the WhatsApp Receipt (Reuse your existing logic here)
+                const displayName = transaction.church?.name || "Seabe Platform";
+                // ... (Your Twilio receipt logic goes here) ...
+            }
+        } catch (error) {
+            console.error("❌ Webhook Error:", error.message);
+        }
+    }
+
+    // 5. Always respond with 200 to Paystack
+    res.sendStatus(200);
+});
+
 const PORT = process.env.PORT || 3000;
+
+
 
 // Only start the server if we are NOT testing
 if (process.env.NODE_ENV !== 'test') {
