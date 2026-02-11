@@ -130,7 +130,6 @@ router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
     const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 
     const transactions = await prisma.transaction.findMany({
-        // ✅ FIX: Using 'date' instead of 'createdAt' to match your schema
         where: { churchCode: orgCode, status: 'SUCCESS', date: { gte: startOfMonth } },
         orderBy: { id: 'desc' }
     });
@@ -205,7 +204,8 @@ router.post('/admin/:code/events/delete', checkSession, async (req, res) => {
 
 // Ads
 router.get('/admin/:code/ads', checkSession, async (req, res) => {
-    const ads = await prisma.ad.findMany({ where: { churchCode: req.org.code }, orderBy: { id: 'desc' } });
+    // ✅ FIX: Changed churchCode to churchId to match your Ad model schema
+    const ads = await prisma.ad.findMany({ where: { churchId: req.org.id }, orderBy: { id: 'desc' } });
     res.send(renderPage(req.org, 'ads', `
         <div class="card">
             <h3>📢 New Broadcast</h3>
@@ -225,7 +225,8 @@ router.get('/admin/:code/ads', checkSession, async (req, res) => {
 
 router.post('/admin/:code/ads/add', checkSession, async (req, res) => {
     const { content, imageUrl } = req.body;
-    await prisma.ad.create({ data: { content, imageUrl, churchCode: req.org.code } });
+    // ✅ FIX: Changed churchCode to churchId to match your Ad model schema
+    await prisma.ad.create({ data: { content, imageUrl, churchId: req.org.id } });
     
     const members = await prisma.member.findMany({ where: { churchCode: req.org.code } });
     members.forEach(m => {
