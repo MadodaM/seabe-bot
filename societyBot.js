@@ -130,6 +130,5 @@ if (incomingMsg === '1') {
         console.error("❌ Society Bot Error:", e.message);
         if (!res.headersSent) res.sendStatus(500);
     }
-}
 
 module.exports = { handleSocietyMessage };
