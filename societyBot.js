@@ -24,15 +24,26 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
         else if (session.step === 'SOCIETY_MENU') {
             
             // POLICY STATUS
-            if (incomingMsg === '1') {
-                const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
-                const statusEmoji = member.status === 'ACTIVE' ? '✅' : '⚠️';
-                reply = `📜 *Policy Status*\n\n` +
-                        `Policy No: ${member.policyNumber || 'N/A'}\n` +
-                        `Status: ${member.status} ${statusEmoji}\n` +
-                        `Joined: ${new Date(member.joinedAt).toLocaleDateString()}\n\n` +
-                        `Reply *0* to go back.`;
-            }
+if (incomingMsg === '1') {
+    // 1. Normalize the phone for database lookup (Strip '+' if it exists)
+    const dbLookupPhone = cleanPhone.startsWith('+') ? cleanPhone.slice(1) : cleanPhone;
+
+    // 2. Fetch the member using the normalized phone
+    const member = await prisma.member.findUnique({ 
+        where: { phone: dbLookupPhone } 
+    });
+
+    if (!member) {
+        reply = "⚠️ Policy not found. Please contact support.";
+    } else {
+        const statusEmoji = member.status === 'ACTIVE' ? '✅' : '⚠️';
+        reply = `📜 *Policy Status*\n\n` +
+                `Policy No: ${member.policyNumber || 'N/A'}\n` +
+                `Status: ${member.status || 'INACTIVE'} ${statusEmoji}\n` +
+                `Joined: ${member.joinedAt ? new Date(member.joinedAt).toLocaleDateString() : 'N/A'}\n\n` +
+                `Reply *0* to go back.`;
+    }
+}
 
             // DEPENDENTS
             else if (incomingMsg === '2') {
@@ -51,17 +62,23 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
             }
 
             // PREMIUM PAYMENT
-            else if (incomingMsg === '5') {
-                 // Hardcoded R150 for demo, or fetch from DB
-                 const amount = 150.00;
-                 const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
-                 const email = member.email || `${cleanPhone}@seabe.io`;
-                 const ref = `${session.orgCode}-PREM-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
+            // PREMIUM PAYMENT
+else if (incomingMsg === '5') {
+    const amount = 150.00;
+    const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
+    
+    // Ensure the email uses the clean phone format
+    const email = member.email || `${cleanPhone}@seabe.io`;
+    
+    // Use the last 4 digits of the clean phone for the reference
+    const ref = `${session.orgCode}-PREM-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
 
-                 const link = await createPaymentLink(amount, ref, email, session.subaccount, cleanPhone, session.orgName);
-                 if (link) reply = `💳 *Pay Premium*\nDue: R${amount}\n\n👉 ${link}`;
-                 else reply = "⚠️ Error generating link.";
-            }
+    // Generate the link
+    const link = await createPaymentLink(amount, ref, email, session.subaccount, cleanPhone, session.orgName);
+    
+    if (link) reply = `💳 *Pay Premium*\nDue: R${amount}\n\n👉 ${link}`;
+    else reply = "⚠️ Error generating link.";
+}
 
             // EXIT TO CHURCH
             else if (incomingMsg === '6') {
