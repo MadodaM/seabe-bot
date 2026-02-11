@@ -568,7 +568,7 @@ app.get('/payment-success', async (req, res) => {
                 const receiptBody = 
                     `📜 *OFFICIAL DIGITAL RECEIPT*\n` +
                     `--------------------------------\n` +
-                    `⛪ *Organization:* AFM - Life in Christ\n` +
+                    `🏛️ *Organization:* ${displayName}\n` +
                     `👤 *Member:* ${transaction.phone}\n` +
                     `💰 *Amount:* R${transaction.amount}.00\n` +
                     `📅 *Date:* ${invoiceDate}\n` +
