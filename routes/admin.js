@@ -204,7 +204,6 @@ router.post('/admin/:code/events/delete', checkSession, async (req, res) => {
 
 // Ads
 router.get('/admin/:code/ads', checkSession, async (req, res) => {
-    // ✅ FIX: Changed churchCode to churchId to match your Ad model schema
     const ads = await prisma.ad.findMany({ where: { churchId: req.org.id }, orderBy: { id: 'desc' } });
     res.send(renderPage(req.org, 'ads', `
         <div class="card">
@@ -225,20 +224,36 @@ router.get('/admin/:code/ads', checkSession, async (req, res) => {
 
 router.post('/admin/:code/ads/add', checkSession, async (req, res) => {
     const { content, imageUrl } = req.body;
-    // ✅ FIX: Changed churchCode to churchId to match your Ad model schema
-    await prisma.ad.create({ data: { content, imageUrl, churchId: req.org.id } });
     
-    const members = await prisma.member.findMany({ where: { churchCode: req.org.code } });
-    members.forEach(m => {
-        client.messages.create({
-            from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
-            to: `whatsapp:${m.phone}`,
-            body: `📢 *${req.org.name}*\n\n${content}`,
-            mediaUrl: imageUrl ? [imageUrl] : undefined
-        }).catch(e => console.error(e));
-    });
+    // 🟢 FIX: Generate a default expiry date (30 days from now) to satisfy Prisma schema
+    const defaultExpiry = new Date();
+    defaultExpiry.setDate(defaultExpiry.getDate() + 30);
 
-    res.redirect(`/admin/${req.org.code}/ads`);
+    try {
+        await prisma.ad.create({ 
+            data: { 
+                content, 
+                imageUrl: imageUrl || null, 
+                churchId: req.org.id,
+                expiryDate: defaultExpiry 
+            } 
+        });
+        
+        const members = await prisma.member.findMany({ where: { churchCode: req.org.code } });
+        members.forEach(m => {
+            client.messages.create({
+                from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
+                to: `whatsapp:${m.phone}`,
+                body: `📢 *${req.org.name}*\n\n${content}`,
+                mediaUrl: imageUrl ? [imageUrl] : undefined
+            }).catch(e => console.error("Twilio Error:", e.message));
+        });
+
+        res.redirect(`/admin/${req.org.code}/ads`);
+    } catch (error) {
+        console.error("Prisma Create Ad Error:", error.message);
+        res.status(500).send("Database Error: Failed to create announcement.");
+    }
 });
 
 router.post('/admin/:code/ads/delete', checkSession, async (req, res) => {
