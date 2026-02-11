@@ -120,9 +120,74 @@ module.exports = (app, { prisma }) => {
     });
 
     // 2. DASHBOARD
-    router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
-        const txs = await prisma.transaction.findMany({ where: { churchCode: req.org.code, status: 'success' }, orderBy: { date: 'desc' }, take: 50 });
-        const total = txs.reduce((sum, t) => sum + t.amount, 0);
+  // Inside your main Admin Dashboard route
+router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
+    const orgCode = req.org.code;
+
+    // 1. Get Totals for the Current Month
+    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+    const transactions = await prisma.transaction.findMany({
+        where: {
+            churchCode: orgCode,
+            status: 'SUCCESS',
+            createdAt: { gte: startOfMonth }
+        }
+    });
+
+    // 2. Split totals by Type
+    const titheTotal = transactions
+        .filter(tx => tx.type === 'OFFERING' || tx.type === 'TITHE')
+        .reduce((sum, tx) => sum + tx.amount, 0);
+
+    const premiumTotal = transactions
+        .filter(tx => tx.type === 'SOCIETY_PREMIUM')
+        .reduce((sum, tx) => sum + tx.amount, 0);
+
+    const totalCollection = titheTotal + premiumTotal;
+
+    // 3. Render the Dashboard with Stat Cards
+    res.send(renderPage(req.org, 'dashboard', `
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px;">
+            <div class="card" style="border-left: 5px solid #00b894;">
+                <small style="color: #636e72; text-transform: uppercase;">Total Collections (Feb)</small>
+                <h2 style="margin: 10px 0; color: #2d3436;">R${totalCollection.toLocaleString()}</h2>
+            </div>
+            <div class="card" style="border-left: 5px solid #0984e3;">
+                <small style="color: #636e72; text-transform: uppercase;">Church Tithes</small>
+                <h2 style="margin: 10px 0; color: #0984e3;">R${titheTotal.toLocaleString()}</h2>
+            </div>
+            <div class="card" style="border-left: 5px solid #6c5ce7;">
+                <small style="color: #636e72; text-transform: uppercase;">Society Premiums</small>
+                <h2 style="margin: 10px 0; color: #6c5ce7;">R${premiumTotal.toLocaleString()}</h2>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>📈 Recent Successes</h3>
+            <table style="width:100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="text-align:left; border-bottom: 2px solid #eee;">
+                        <th style="padding: 10px;">Date</th>
+                        <th>Member</th>
+                        <th>Type</th>
+                        <th>Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${transactions.slice(0, 5).map(tx => `
+                        <tr style="border-bottom: 1px solid #eee;">
+                            <td style="padding: 10px;">${tx.createdAt.toLocaleDateString()}</td>
+                            <td>${tx.phone}</td>
+                            <td><span class="badge">${tx.type}</span></td>
+                            <td><strong>R${tx.amount}</strong></td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `));
+});
 
         const rows = txs.map(t => `
             <tr>
@@ -216,38 +281,108 @@ module.exports = (app, { prisma }) => {
         res.redirect(`/admin/${req.org.code}/news`);
     });
 
-    // 5. ADS (With Delete)
-    router.get('/admin/:code/ads', checkSession, async (req, res) => {
-        const ads = await prisma.ad.findMany({ where: { churchId: req.org.id }, orderBy: { id: 'desc' } });
-        const list = ads.map(a => `
-            <div class="card" style="display:flex; justify-content:space-between;">
-                <div>${a.content}</div>
-                <div>
-                    <span style="font-weight:bold; color:#00b894; margin-right:10px;">👁️ ${a.views || 0}</span>
-                    <form method="POST" action="/admin/${req.org.code}/ads/delete" style="display:inline; margin:0;">
-                        <input type="hidden" name="id" value="${a.id}">
-                        <button class="btn btn-del" onclick="return confirm('Delete this ad?')">Delete</button>
-                    </form>
-                </div>
-            </div>`).join('');
+    // 5. ADS (With Image Support & Delete)
+router.get('/admin/:code/ads', checkSession, async (req, res) => {
+    const ads = await prisma.ad.findMany({ 
+        where: { churchId: req.org.id }, 
+        orderBy: { id: 'desc' } 
+    });
 
-        res.send(renderPage(req.org, 'ads', `
-            <div class="card">
-                <h3>📢 Create Ad</h3>
-                <form method="POST" action="/admin/${req.org.code}/ads/add">
-                    <label>Content</label><textarea name="content" rows="2" required></textarea>
-                    <label>Expiry</label><input type="date" name="expiryDate" required>
-                    <button class="btn">Create Ad</button>
+    const list = ads.map(a => `
+        <div class="card" style="display:flex; justify-content:space-between; align-items: center;">
+            <div style="display:flex; align-items: center; gap: 15px;">
+                ${a.imageUrl ? 
+                    `<img src="${a.imageUrl}" style="width:50px; height:50px; border-radius:5px; object-fit:cover; border:1px solid #eee;">` : 
+                    `<div style="width:50px; height:50px; background:#f5f5f5; display:flex; align-items:center; justify-content:center; border-radius:5px; color:#ccc;">📝</div>`
+                }
+                <div>
+                    <div style="font-weight: 500;">${a.content}</div>
+                    ${a.imageUrl ? `<small style="color:#888;">Flyer attached</small>` : ''}
+                </div>
+            </div>
+            <div>
+                <span style="font-weight:bold; color:#00b894; margin-right:10px;">👁️ ${a.views || 0}</span>
+                <form method="POST" action="/admin/${req.org.code}/ads/delete" style="display:inline; margin:0;">
+                    <input type="hidden" name="id" value="${a.id}">
+                    <button class="btn btn-del" onclick="return confirm('Delete this ad?')">Delete</button>
                 </form>
             </div>
-            <h3>Active Ads</h3>${list || '<p style="text-align:center; color:#888;">No ads running.</p>'}
-        `));
-    });
+        </div>`).join('');
 
-    router.post('/admin/:code/ads/add', checkSession, async (req, res) => {
-        await prisma.ad.create({ data: { content: req.body.content, churchId: req.org.id, status: 'Active', expiryDate: safeDate(req.body.expiryDate) } });
-        res.redirect(`/admin/${req.org.code}/ads`);
-    });
+    res.send(renderPage(req.org, 'ads', `
+        <div class="card">
+            <h3>📢 Create New Announcement</h3>
+            <form method="POST" action="/admin/${req.org.code}/ads/add">
+                <label>Message Content</label>
+                <textarea name="content" rows="2" placeholder="Write your message here..." required></textarea>
+                
+                <label>Flyer Image URL (Optional)</label>
+                <input type="text" name="imageUrl" placeholder="https://example.com/flyer.jpg">
+                <small style="color:#888; display:block; margin-bottom:10px;">Paste a link to a JPG or PNG image.</small>
+
+                <label>Expiry Date</label>
+                <input type="date" name="expiryDate" required>
+                
+                <button class="btn" style="width: 100%; margin-top: 10px;">🚀 Broadcast to Members</button>
+            </form>
+        </div>
+        
+        <h3 style="margin-top:20px;">Current Ads & Flyers</h3>
+        ${list || '<p style="text-align:center; color:#888;">No ads running.</p>'}
+    `));
+});
+    // POST: Save Ad and Broadcast to Members
+router.post('/admin/:code/ads/add', checkSession, async (req, res) => {
+    const { content, imageUrl, expiryDate } = req.body;
+
+    try {
+        // 1. Save the Ad to the Database
+        const newAd = await prisma.ad.create({
+            data: {
+                content: content,
+                imageUrl: imageUrl || null,
+                churchId: req.org.id,
+                churchCode: req.org.code,
+                // If your schema uses DateTime for expiry:
+                createdAt: new Date() 
+            }
+        });
+
+        // 2. Fetch all members for this organization
+        const members = await prisma.member.findMany({
+            where: { churchCode: req.org.code }
+        });
+
+        // 3. Broadcast to WhatsApp (Background Task)
+        // We don't 'await' this so the admin doesn't wait for 100 messages to send
+        (async () => {
+            for (const member of members) {
+                try {
+                    const messagePayload = {
+                        from: process.env.TWILIO_PHONE_NUMBER,
+                        to: `whatsapp:${member.phone}`,
+                        body: `📢 *Message from ${req.org.name}*\n\n${content}`
+                    };
+
+                    // Attach image if URL exists
+                    if (imageUrl) {
+                        messagePayload.mediaUrl = [imageUrl];
+                    }
+
+                    await client.messages.create(messagePayload);
+                } catch (err) {
+                    console.error(`❌ Failed broadcast to ${member.phone}:`, err.message);
+                }
+            }
+        })();
+
+        res.redirect(`/admin/${req.org.code}/ads?success=true`);
+
+    } catch (error) {
+        console.error("❌ Error creating ad:", error.message);
+        res.status(500).send("Error saving announcement.");
+    }
+});
 
     router.post('/admin/:code/ads/delete', checkSession, async (req, res) => {
         await prisma.ad.delete({ where: { id: parseInt(req.body.id) } });

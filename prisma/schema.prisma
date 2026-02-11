@@ -124,6 +124,8 @@ model Ad {
   churchId   Int
   church     Church   @relation(fields: [churchId], references: [id])
   content    String
+  imageUrl    String?  // 🟢 RE-ADD THIS to prevent crashes
+  isPlatform  Boolean  @default(false)
   views      Int      @default(0)
   status     String   @default("Active")
   expiryDate DateTime

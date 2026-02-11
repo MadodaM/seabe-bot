@@ -19,17 +19,17 @@ async function main() {
   console.log(`✅ Church Created: ${church.name}`);
 
   // 2. Create the Society
-  const society = await prisma.church.upsert({
-    where: { code: 'SIYA01' },
-    update: {},
-    create: {
-      code: 'SIYA01',
-      name: 'Siyakhula Burial Society',
-      subaccountCode: 'ACCT_yyyyyyyyyyyy',
-      adminPhone: '27831234567',
-      type: 'BURIAL_SOCIETY' 
-    },
-  });
+const society = await prisma.church.upsert({
+  where: { code: 'SIYA01' },
+  update: {},
+  create: {
+    code: 'SIYA01',
+    name: 'Siyakhula Burial Society',
+    subaccountCode: 'ACCT_yyyyyyyyyyyy',
+    adminPhone: '27831234567',
+    type: 'BURIAL_SOCIETY' // ✅ Use this exact string
+  },
+});
   console.log(`✅ Society Created: ${society.name}`);
 
   // 3. Create a Test Member
