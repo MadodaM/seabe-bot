@@ -39,6 +39,14 @@ try {
 const app = express();
 const upload = multer({ dest: 'uploads/' }); 
 
+// --- UTILITY: PHONE FORMATTER ---
+const formatPhone = (phone) => {
+    if (!phone) return "";
+    let clean = phone.replace(/\D/g, '');
+    if (clean.startsWith('0')) clean = '27' + clean.slice(1);
+    return '+' + clean;
+};
+
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use('/public', express.static(path.join(__dirname, 'public')));
@@ -166,7 +174,7 @@ app.post('/paystack/webhook', async (req, res) => {
 
                 await client.messages.create({
                     from: process.env.TWILIO_PHONE_NUMBER,
-                    to: `whatsapp:${userPhone.replace('whatsapp:', '')}`,
+                   	to: `whatsapp:${formatPhone(userPhone)}`,
                     body: `✅ *Receipt: Payment Received*\n\nRef: ${ref}\nAmount: R${transaction.amount}\n\nThank you! 🙏`,
                     mediaUrl: [ pdfUrl ]
                 });
@@ -499,7 +507,7 @@ await sendMessage(cleanPhone, "🤔 I didn't quite catch that. Reply *Menu* to s
              session.churchCode = member.church.id;
              return handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twiml, res);
         } else {
-             twiml.message("👋 Welcome! Reply *Hi* to start.");
+             twiml.message("👋 Welcome! Reply *Join* to start.");
              res.type('text/xml').send(twiml.toString());
         }
 
@@ -552,6 +560,9 @@ app.get('/payment-success', async (req, res) => {
                     data: { status: 'SUCCESS', reference: reference }
                 });
 
+
+
+
                 // 3. Prepare Receipt Data
                 const invoiceDate = new Date().toISOString().split('T')[0];
                 const receiptBody = 
@@ -573,7 +584,7 @@ app.get('/payment-success', async (req, res) => {
                     try {
                         await client.messages.create({
                             from: process.env.TWILIO_PHONE_NUMBER,
-                            to: `whatsapp:${transaction.phone.includes('+') ? transaction.phone : '+' + transaction.phone}`,
+                            to: `whatsapp:${formatPhone(transaction.phone)}`,
                             body: receiptBody
                         });
                         console.log(`📡 Text receipt sent successfully to ${transaction.phone}`);
