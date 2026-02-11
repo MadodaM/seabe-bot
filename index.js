@@ -518,7 +518,6 @@ await sendMessage(cleanPhone, "🤔 I didn't quite catch that. Reply *Menu* to s
 });
 
 // --- SUCCESS PAGE ---
-// Add 'async' here so we can wait for the Database/Paystack
 app.get('/payment-success', async (req, res) => {
     const { reference } = req.query;
     console.log(`🔎 Verification Check: ${reference}`);
@@ -538,33 +537,38 @@ app.get('/payment-success', async (req, res) => {
             const verifiedAmount = paystackData.amount / 100; 
             const phone = meta.whatsapp_number || meta.phone;
 
-            // 1. Find the transaction
+            // 1. Find the transaction and INCLUDE church details for the dynamic name
             let transaction = await prisma.transaction.findUnique({
-                where: { reference: reference }
+                where: { reference: reference },
+                include: { church: true } // Fetches the organization's info
             });
 
             if (!transaction && phone) {
+                const cleanPaystackPhone = phone.replace('whatsapp:', '').replace('+', '');
                 transaction = await prisma.transaction.findFirst({
                     where: {
-                        phone: phone.replace('whatsapp:', ''),
+                        OR: [
+                            { phone: cleanPaystackPhone },
+                            { phone: `+${cleanPaystackPhone}` }
+                        ],
                         amount: verifiedAmount,
                         status: 'PENDING'
-                    }
+                    },
+                    include: { church: true }
                 });
             }
 
             if (transaction) {
-                // 2. Update Database
+                // 2. Update Database to SUCCESS
                 await prisma.transaction.update({
                     where: { id: transaction.id },
                     data: { status: 'SUCCESS', reference: reference }
                 });
 
-
-
-
-                // 3. Prepare Receipt Data
+                // 3. Define Dynamic Name BEFORE using it in receiptBody
+                const displayName = transaction.church?.name || transaction.churchCode || "Seabe Platform";
                 const invoiceDate = new Date().toISOString().split('T')[0];
+
                 const receiptBody = 
                     `📜 *OFFICIAL DIGITAL RECEIPT*\n` +
                     `--------------------------------\n` +
@@ -577,9 +581,7 @@ app.get('/payment-success', async (req, res) => {
                     `✅ *Status:* Confirmed & Recorded\n\n` +
                     `_Thank you for your faithful contribution. This message serves as your proof of payment._`;
 
-                // 4. THE BACKGROUND BUBBLE (Async IIFE)
-                // This lets us send the browser response immediately 
-                // while Twilio works in the background.
+                // 4. Background Delivery
                 (async () => {
                     try {
                         await client.messages.create({
@@ -593,8 +595,8 @@ app.get('/payment-success', async (req, res) => {
                     }
                 })(); 
 
-                // 5. IMMEDIATE RESPONSE (Beat the 15-second Render wall)
-                return res.send(`<h1>✅ Payment Received</h1><p>Check WhatsApp for your receipt.</p>`);
+                // 5. Immediate Browser Feedback
+                return res.send(`<h1>✅ Payment Received</h1><p>Check WhatsApp for your receipt from ${displayName}.</p>`);
             }
         }
         
@@ -605,7 +607,6 @@ app.get('/payment-success', async (req, res) => {
         res.status(500).send("An error occurred during verification.");
     }
 });
-
 const PORT = process.env.PORT || 3000;
 
 // Only start the server if we are NOT testing
