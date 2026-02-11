@@ -98,8 +98,7 @@ if (incomingMsg === '1') {
         res.sendStatus(500);
     }
 }
-
-        // 3. DEPENDENT LOGIC
+// 3. DEPENDENT LOGIC
         else if (session.step === 'DEPENDENT_VIEW' && incomingMsg === 'add') {
             reply = "📝 Type Dependent's First Name:";
             session.step = 'ADD_DEP_NAME';
@@ -123,15 +122,15 @@ if (incomingMsg === '1') {
             session.step = 'SOCIETY_MENU';
         }
 
-        // SEND REPLY
+        // --- FINAL SEND LOGIC ---
         if (reply) {
             twiml.message(reply);
             res.type('text/xml').send(twiml.toString());
         }
 
     } catch (e) {
-        console.error(e);
-        res.sendStatus(500);
+        console.error("❌ Society Bot Error:", e.message);
+        if (!res.headersSent) res.sendStatus(500);
     }
 }
 
