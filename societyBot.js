@@ -60,33 +60,31 @@ if (incomingMsg === '1') {
             else if (incomingMsg === '3') {
                 reply = `🏦 *Banking Details*\n\nBank: Standard Bank\nAcc: 123456789\nRef: ${cleanPhone}`;
             }
-
 // PREMIUM PAYMENT
-        else if (incomingMsg === '5') {
-            const amount = 150.00;
-            const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
-            const email = member.email || `${cleanPhone}@seabe.io`;
-            const ref = `${session.orgCode}-PREM-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
+            else if (incomingMsg === '5') {
+                const amount = 150.00;
+                const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
+                const email = member.email || `${cleanPhone}@seabe.io`;
+                const ref = `${session.orgCode}-PREM-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
 
-            const link = await createPaymentLink(amount, ref, email, session.subaccount, cleanPhone, session.orgName);
-            
-            if (link) {
-                await prisma.transaction.create({
-                    data: {
-                        churchCode: session.orgCode,
-                        phone: cleanPhone,
-                        amount: amount,
-                        reference: ref,
-                        status: 'PENDING',
-                        type: 'SOCIETY_PREMIUM'
-                    }
-                });
-                reply = `💳 *Pay Premium*\nDue: R${amount}\n\n👉 ${link}`;
-            } else {
-                reply = "⚠️ Error generating link.";
-            } 
-        } // <--- ENSURE THIS BRACE CLOSES THE 'else if (incomingMsg === '5')'
-
+                const link = await createPaymentLink(amount, ref, email, session.subaccount, cleanPhone, session.orgName);
+                
+                if (link) {
+                    await prisma.transaction.create({
+                        data: {
+                            churchCode: session.orgCode,
+                            phone: cleanPhone,
+                            amount: amount,
+                            reference: ref,
+                            status: 'PENDING',
+                            type: 'SOCIETY_PREMIUM'
+                        }
+                    });
+                    reply = `💳 *Pay Premium*\nDue: R${amount}\n\n👉 ${link}`;
+                } else {
+                    reply = "⚠️ Error generating link.";
+                }
+            } // <--- This closes Option 5
         // SEND REPLY
         if (reply) {
             twiml.message(reply);
