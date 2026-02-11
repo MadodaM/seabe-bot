@@ -19,6 +19,7 @@ model Member {
   phone     String   @unique
   email     String?
   createdAt DateTime @default(now())
+  monthlyPremium Float?   // <--- ADD THIS LINE
 
   // Link 1: Church (Optional)
   churchCode String?

@@ -23,6 +23,14 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
         // 2. MAIN MENU NAVIGATION
         else if (session.step === 'SOCIETY_MENU') {
             
+			// 🚀 ADD THIS: EXIT TO CHURCH MODE
+			if (incomingMsg === '6') {
+				session.mode = 'CHURCH';
+				session.step = 'START';
+				session.orgCode = null; // Optional: Clear code so they have to re-enter it
+				reply = "⛪ *Switching to Church Mode.*\n\nPlease enter your Church Code (e.g., *AFM01*) to continue.";
+    }
+			
             // POLICY STATUS
             if (incomingMsg === '1') {
                 const dbLookupPhone = cleanPhone.startsWith('+') ? cleanPhone.slice(1) : cleanPhone;
@@ -82,7 +90,7 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
                                 amount: amount,
                                 reference: ref,
                                 status: 'PENDING',
-                                type: 'SOCIETY_PREMIUM'
+                                type: 'SOCIETY_PREMIUM',
 								...(member ? { member: { connect: { id: member.id } } } : {})
                             }
                         });
@@ -92,6 +100,9 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
                     }
                 }
             }
+			
+			
+			
         } // End of SOCIETY_MENU
 
         // 3. DEPENDENT LOGIC (These should be separate 'else if' branches for their specific steps)
