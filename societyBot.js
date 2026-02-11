@@ -61,36 +61,34 @@ if (incomingMsg === '1') {
                 reply = `🏦 *Banking Details*\n\nBank: Standard Bank\nAcc: 123456789\nRef: ${cleanPhone}`;
             }
 
-            // PREMIUM PAYMENT
-            // PREMIUM PAYMENT
+// PREMIUM PAYMENT
 else if (incomingMsg === '5') {
     const amount = 150.00;
     const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
     
-    // Ensure the email uses the clean phone format
     const email = member.email || `${cleanPhone}@seabe.io`;
-    
-    // Use the last 4 digits of the clean phone for the reference
     const ref = `${session.orgCode}-PREM-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
 
-    // Generate the link
     const link = await createPaymentLink(amount, ref, email, session.subaccount, cleanPhone, session.orgName);
     
-    if (link) reply = `💳 *Pay Premium*\nDue: R${amount}\n\n👉 ${link}`;
-    else reply = "⚠️ Error generating link.";
+    if (link) {
+        // 🚨 CRITICAL ADDITION: Save the transaction to the DB so index.js can find it later
+        await prisma.transaction.create({
+            data: {
+                churchCode: session.orgCode, // This tracks which society/church gets the money
+                phone: cleanPhone,
+                amount: amount,
+                reference: ref,
+                status: 'PENDING',
+                type: 'SOCIETY_PREMIUM' // This helps you distinguish premiums from tithes
+            }
+        });
+
+        reply = `💳 *Pay Premium*\nDue: R${amount}\n\n👉 ${link}`;
+    } else {
+        reply = "⚠️ Error generating link.";
+    }
 }
-
-            // EXIT TO CHURCH
-            else if (incomingMsg === '6') {
-                 reply = "🔄 Switching to Church mode...\nReply *Hi* to continue.";
-                 delete session.mode; 
-            }
-
-            else if (incomingMsg === '0') {
-                 // Recursive call to show menu again
-                 return handleSocietyMessage('society', cleanPhone, session, prisma, twiml, res);
-            }
-        }
 
         // 3. DEPENDENT LOGIC
         else if (session.step === 'DEPENDENT_VIEW' && incomingMsg === 'add') {
