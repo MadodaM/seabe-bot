@@ -59,35 +59,37 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
             }
 
             // PREMIUM PAYMENT
-            else if (incomingMsg === '5') {
-                const member.monthlyPremium || member.society?.defaultPremium || 150.00;
-                const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
-                
-                if (!member) {
-                    reply = "⚠️ Member record not found. Cannot generate payment.";
-                } else {
-                    const email = member.email || `${cleanPhone}@seabe.io`;
-                    const ref = `${session.orgCode}-PREM-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
-                    const link = await createPaymentLink(amount, ref, email, session.subaccount, cleanPhone, session.orgName);
-                    
-                    if (link) {
-                        await prisma.transaction.create({
-                            data: {
-                                churchCode: session.orgCode,
-                                phone: cleanPhone,
-                                amount: amount,
-                                reference: ref,
-                                status: 'PENDING',
-                                type: 'SOCIETY_PREMIUM'
-                            }
-                        });
-                        reply = `💳 *Pay Premium*\nDue: R${amount}\n\n👉 ${link}`;
-                    } else {
-                        reply = "⚠️ Error generating link.";
-                    }
-                }
+// PREMIUM PAYMENT
+else if (incomingMsg === '5') {
+    const member = await prisma.member.findUnique({ 
+        where: { phone: cleanPhone },
+        include: { society: true }
+    });
+
+    // FIXED LINE: Added 'amount ='
+    const amount = member.monthlyPremium || member.society?.defaultPremium || 150.00;
+    
+    const email = member.email || `${cleanPhone}@seabe.io`;
+    const ref = `${session.orgCode}-PREM-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
+
+    const link = await createPaymentLink(amount, ref, email, session.subaccount, cleanPhone, session.orgName);
+    
+    if (link) {
+        await prisma.transaction.create({
+            data: {
+                churchCode: session.orgCode,
+                phone: cleanPhone,
+                amount: amount,
+                reference: ref,
+                status: 'PENDING',
+                type: 'SOCIETY_PREMIUM'
             }
-        }
+        });
+        reply = `💳 *Pay Premium*\nDue: R${amount}.00\n\n👉 ${link}`;
+    } else {
+        reply = "⚠️ Error generating link.";
+    }
+}
 
         // 3. DEPENDENT LOGIC
         else if (session.step === 'DEPENDENT_VIEW' && incomingMsg.toLowerCase() === 'add') {
