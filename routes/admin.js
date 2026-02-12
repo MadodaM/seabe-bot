@@ -172,10 +172,12 @@ router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
     `));
 });
 
-// --- 👥 MEMBERS PAGE (With Search & CSV) ---
+// --- 👥 MEMBERS PAGE (With Arrears Tracking) ---
 router.get('/admin/:code/members', checkSession, async (req, res) => {
-    const { q } = req.query; // Search query
+    const { q } = req.query;
+    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     
+    // 1. Fetch Members
     const members = await prisma.member.findMany({
         where: {
             churchCode: req.org.code,
@@ -187,46 +189,54 @@ router.get('/admin/:code/members', checkSession, async (req, res) => {
                 ]
             } : {})
         },
+        include: {
+            // Include their transactions for the current month
+            Transactions: {
+                where: {
+                    status: 'SUCCESS',
+                    type: 'SOCIETY_PREMIUM',
+                    date: { gte: startOfMonth }
+                }
+            }
+        },
         orderBy: { lastName: 'asc' }
     });
 
-    const rows = members.map(m => `
+    const rows = members.map(m => {
+        const totalPaid = m.Transactions.reduce((sum, tx) => sum + tx.amount, 0);
+        const required = m.monthlyPremium || 150.0;
+        const isPaid = totalPaid >= required;
+        
+        // Visual Status logic
+        const statusLabel = isPaid ? 'PAID' : (totalPaid > 0 ? 'PARTIAL' : 'OUTSTANDING');
+        const statusColor = isPaid ? '#2ecc71' : (totalPaid > 0 ? '#f1c40f' : '#e74c3c');
+
+        return `
         <tr>
             <td><b>${m.firstName} ${m.lastName}</b><br><small>${m.phone}</small></td>
-            <td><span class="badge" style="background:${m.status === 'ACTIVE' ? '#e8f5e9' : '#ffebe6'};">${m.status}</span></td>
-            <td>R${m.monthlyPremium || '150.00'}</td>
+            <td>
+                <span class="badge" style="background:${statusColor}; color:white; padding:4px 8px;">
+                    ${statusLabel}
+                </div>
+                <div style="font-size:10px; margin-top:4px;">R${totalPaid} / R${required}</div>
+            </td>
             <td>
                 <form method="POST" action="/admin/${req.org.code}/members/delete" style="display:inline;">
                     <input type="hidden" name="id" value="${m.id}"><button class="btn-del">Delete</button>
                 </form>
             </td>
-        </tr>`).join('');
+        </tr>`;
+    }).join('');
 
     res.send(renderPage(req.org, 'members', `
-        <div class="card">
-            <h3>👥 Member Directory</h3>
-            <form method="GET" action="/admin/${req.org.code}/members" style="display:flex; gap:10px; margin-bottom:10px;">
-                <input name="q" value="${q || ''}" placeholder="Search by name or phone..." style="margin-bottom:0;">
-                <button class="btn" style="width:auto;">Search</button>
-            </form>
+        <div class="card" style="background: #1e272e; color: white;">
+            <h3 style="margin-top:0;">📊 February 2026 Summary</h3>
+            <div style="display:flex; gap:20px;">
+                <div><small>Paid</small><br><b>${members.filter(m => m.Transactions.reduce((s, t) => s + t.amount, 0) >= (m.monthlyPremium || 150)).length}</b></div>
+                <div><small>Outstanding</small><br><b>${members.filter(m => m.Transactions.reduce((s, t) => s + t.amount, 0) < (m.monthlyPremium || 150)).length}</b></div>
+            </div>
         </div>
-
-        <div class="card">
-            <h3>📂 Bulk Import (CSV)</h3>
-            <form method="POST" action="/admin/${req.org.code}/members/upload" enctype="multipart/form-data">
-                <input type="file" name="file" accept=".csv" required>
-                <button class="btn" style="background:#0984e3;">Upload & Sync Members</button>
-                <small style="display:block; margin-top:10px; color:#888;">CSV Headers: firstName, lastName, phone, monthlyPremium</small>
-            </form>
-        </div>
-
-        <div class="card" style="padding:0; overflow-x:auto;">
-            <table>
-                <thead><tr><th>Member</th><th>Status</th><th>Premium</th><th>Action</th></tr></thead>
-                <tbody>${rows || '<tr><td colspan="4">No members found</td></tr>'}</tbody>
-            </table>
-        </div>
-    `));
+        `));
 });
 
 // CSV Upload Handler
