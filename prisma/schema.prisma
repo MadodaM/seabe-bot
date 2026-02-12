@@ -150,3 +150,20 @@ model Claim {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
+
+model Admin {
+  id        Int      @id @default(autoincrement())
+  phone     String   @unique // The WhatsApp number used for OTP
+  name      String?
+  role      String   @default("STAFF") // e.g., OWNER, TREASURER, STAFF
+  church    Church   @relation(fields: [churchId], references: [id])
+  churchId  Int
+  createdAt DateTime @default(now())
+}
+
+model Church {
+  id             Int      @id @default(autoincrement())
+  code           String   @unique
+  // ... other fields ...
+  admins         Admin[]  // Relation to the new Admin model
+}
