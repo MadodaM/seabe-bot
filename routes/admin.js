@@ -69,6 +69,7 @@ const renderPage = (org, activeTab, content) => {
             <a href="/admin/${org.code}/members" style="${navStyle('members')}">👥 Members</a>
             <a href="/admin/${org.code}/events" style="${navStyle('events')}">📅 Events</a>
             <a href="/admin/${org.code}/ads" style="${navStyle('ads')}">📢 Ads</a>
+            <a href="/admin/${org.code}/settings" style="${navStyle('settings')}">⚙️ Settings</a>
         </div>
         <div class="container">${content}</div>
     </body>
@@ -386,6 +387,44 @@ router.post('/admin/:code/ads/add', checkSession, async (req, res) => {
 router.post('/admin/:code/ads/delete', checkSession, async (req, res) => {
     await prisma.ad.delete({ where: { id: parseInt(req.body.id) } });
     res.redirect(`/admin/${req.org.code}/ads`);
+});
+
+// --- ⚙️ SETTINGS ---
+router.get('/admin/:code/settings', checkSession, async (req, res) => {
+    res.send(renderPage(req.org, 'settings', `
+        <div class="card">
+            <h3>⚙️ Organization Settings</h3>
+            <form method="POST" action="/admin/${req.org.code}/settings/update">
+                <label>Organization Name</label>
+                <input name="name" value="${req.org.name}" required>
+                <label>Admin Phone (For OTPs)</label>
+                <input name="adminPhone" value="${req.org.adminPhone || ''}" placeholder="+27..." required>
+                <label>Standard Monthly Premium (R)</label>
+                <input type="number" name="defaultPremium" value="${req.org.defaultPremium || 150}" required>
+                <label>Paystack Public Key</label>
+                <input name="paystackPublicKey" value="${req.org.paystackPublicKey || ''}" placeholder="pk_test_...">
+                <button class="btn">💾 Save Settings</button>
+            </form>
+        </div>
+    `));
+});
+
+router.post('/admin/:code/settings/update', checkSession, async (req, res) => {
+    const { name, adminPhone, defaultPremium, paystackPublicKey } = req.body;
+    try {
+        await prisma.church.update({
+            where: { code: req.org.code },
+            data: {
+                name,
+                adminPhone,
+                defaultPremium: parseFloat(defaultPremium),
+                paystackPublicKey
+            }
+        });
+        res.redirect(`/admin/${req.org.code}/settings`);
+    } catch (e) {
+        res.status(500).send("Update failed: " + e.message);
+    }
 });
 
 module.exports = (app) => {
