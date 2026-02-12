@@ -13,13 +13,13 @@ datasource db {
 
 // --- USER & MEMBERSHIP ---
 model Member {
-  id        Int      @id @default(autoincrement())
-  firstName String
-  lastName  String
-  phone     String   @unique
-  email     String?
-  createdAt DateTime @default(now())
-  monthlyPremium Float?   // <--- ADD THIS LINE
+  id             Int      @id @default(autoincrement())
+  firstName      String
+  lastName       String
+  phone          String   @unique
+  email          String?
+  createdAt      DateTime @default(now())
+  monthlyPremium Float? // <--- ADD THIS LINE
 
   // Link 1: Church (Optional)
   churchCode String?
@@ -36,6 +36,7 @@ model Member {
 
   dependents   Dependent[]
   transactions Transaction[]
+  claims       Claim[]
 }
 
 model Dependent {
@@ -51,24 +52,24 @@ model Dependent {
 
 // --- ORGANIZATIONS ---
 model Church {
-  id              Int     @id @default(autoincrement())
-  code            String  @unique
+  id              Int       @id @default(autoincrement())
+  code            String    @unique
   name            String
-  type            OrgType @default(CHURCH)
+  type            OrgType   @default(CHURCH)
   email           String?
   subaccountCode  String? // Paystack Subaccount (ACCT_xxxx)
-  subscriptionFee Float?  @default(0.0) 
-  adminPhone     String   @default("27832182707") // The number that receives the OTP
-  otp            String?  // The current code (e.g. "4821")
-  otpExpires     DateTime? // When the code stops working
-  createdAt      DateTime @default(now())
-  
+  subscriptionFee Float?    @default(0.0)
+  adminPhone      String    @default("27832182707") // The number that receives the OTP
+  otp             String? // The current code (e.g. "4821")
+  otpExpires      DateTime? // When the code stops working
+  createdAt       DateTime  @default(now())
+
   // Relations
   news           News[]
   members        Member[] @relation("ChurchMembers")
   societyMembers Member[] @relation("SocietyMembers")
+  claims         Claim[]
 
-  
   events       Event[]
   ads          Ad[]
   transactions Transaction[]
@@ -90,7 +91,7 @@ model Transaction {
   type       String // OFFERING, TITHE, PREM, TICKET
   amount     Float
   reference  String   @unique
-  status    String   // 👈 Is the default 'pending' or 'PENDING'?
+  status     String // 👈 Is the default 'pending' or 'PENDING'?
   date       DateTime @default(now())
 }
 
@@ -114,9 +115,9 @@ model News {
   status     String   @default("Active")
   expiryDate DateTime
   createdAt  DateTime @default(now())
-  
-  churchId   Int      @default(1)
-  church     Church   @relation(fields: [churchId], references: [id])
+
+  churchId Int    @default(1)
+  church   Church @relation(fields: [churchId], references: [id])
 }
 
 model Ad {
@@ -124,10 +125,28 @@ model Ad {
   churchId   Int
   church     Church   @relation(fields: [churchId], references: [id])
   content    String
-  imageUrl    String?  // 🟢 RE-ADD THIS to prevent crashes
-  isPlatform  Boolean  @default(false)
+  imageUrl   String? // 🟢 RE-ADD THIS to prevent crashes
+  isPlatform Boolean  @default(false)
   views      Int      @default(0)
   status     String   @default("Active")
   expiryDate DateTime
   createdAt  DateTime @default(now())
+}
+
+model Claim {
+  id Int @id @default(autoincrement())
+
+  // Link to Church
+  churchCode String
+  church     Church @relation(fields: [churchCode], references: [code])
+
+  // Link to Member
+  memberPhone String
+  member      Member @relation(fields: [memberPhone], references: [phone])
+
+  beneficiaryName String
+  payoutAmount    Float
+  status          String   @default("PENDING") // PENDING, APPROVED, PAID, DECLINED
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
