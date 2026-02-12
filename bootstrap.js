@@ -6,14 +6,14 @@ async function main() {
 
     // 1. Create the Church/Society
     const church = await prisma.church.upsert({
-        where: { code: 'SIYA01' },
+        where: { code: 'AFM01' },
         update: {},
         create: {
             code: 'SIYA01',
-            name: 'Siya Burial Society',
-            type: 'SOCIETY', // Change to 'CHURCH' if testing church view
+            name: 'SIYA01	Siya Burial Society',
+            type: 'CHURCH', // Change to 'CHURCH' if testing church view and 'BURIAL_SOCIETY' if testing Burial SOCIETY view
             adminPhone: '+27832182707', // Your number
-            defaultPremium: 150.0
+            defaultPremium: 0.0
         }
     });
 
