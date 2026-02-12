@@ -52,27 +52,28 @@ model Dependent {
 
 // --- ORGANIZATIONS ---
 model Church {
-  id              Int       @id @default(autoincrement())
-  code            String    @unique
-  name            String
-  type            OrgType   @default(CHURCH)
-  email           String?
-  subaccountCode  String? // Paystack Subaccount (ACCT_xxxx)
-  subscriptionFee Float?    @default(0.0)
-  adminPhone      String    @default("27832182707") // The number that receives the OTP
-  otp             String? // The current code (e.g. "4821")
-  otpExpires      DateTime? // When the code stops working
-  createdAt       DateTime  @default(now())
+  id             Int       @id @default(autoincrement())
+  code           String    @unique
+  name           String
+  type           String // "CHURCH" or "SOCIETY"
+  adminPhone     String?
+  defaultPremium Float?    @default(150.0)
+  otp            String?
+  otpExpires     DateTime?
+  createdAt      DateTime  @default(now())
 
   // Relations
-  news           News[]
-  members        Member[] @relation("ChurchMembers")
-  societyMembers Member[] @relation("SocietyMembers")
-  claims         Claim[]
+  admins Admin[]
 
-  events       Event[]
-  ads          Ad[]
+  // Explicitly named relations to solve the Member error:
+  churchMembers  Member[] @relation("ChurchMembers")
+  societyMembers Member[] @relation("SocietyMembers")
+
   transactions Transaction[]
+  events       Event[]
+  claims       Claim[]
+  ads          Ad[]
+  news         News[] // ✅ Added this to fix the News error
 }
 
 enum OrgType {
@@ -153,17 +154,10 @@ model Claim {
 
 model Admin {
   id        Int      @id @default(autoincrement())
-  phone     String   @unique // The WhatsApp number used for OTP
+  phone     String   @unique
   name      String?
-  role      String   @default("STAFF") // e.g., OWNER, TREASURER, STAFF
+  role      String   @default("STAFF")
   church    Church   @relation(fields: [churchId], references: [id])
   churchId  Int
   createdAt DateTime @default(now())
-}
-
-model Church {
-  id             Int      @id @default(autoincrement())
-  code           String   @unique
-  // ... other fields ...
-  admins         Admin[]  // Relation to the new Admin model
 }
