@@ -79,14 +79,11 @@ const renderPage = (org, activeTab, content) => {
 router.get('/admin/:code/sync-payments', async (req, res) => {
     const { code } = req.params;
     const { key } = req.query;
-
     if (!key || key !== process.env.CRON_SECRET) {
         return res.status(401).send("Unauthorized: Invalid API Key");
     }
-
     try {
         console.log(`[Cron] Syncing payments for ${code}`);
-        // Add Paystack reconciliation loop here if needed
         res.status(200).send("Sync Complete");
     } catch (error) {
         res.status(500).send(error.message);
@@ -98,7 +95,6 @@ const checkSession = async (req, res, next) => {
     const { code } = req.params;
     const cookies = parseCookies(req);
     if (!cookies[`session_${code}`]) return res.redirect(`/admin/${code}`);
-    
     req.org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
     if (!req.org) return res.send("Organization not found");
     next();
@@ -111,15 +107,12 @@ router.get('/admin/:code', async (req, res) => {
     const { code } = req.params;
     const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
     if (!org) return res.send("<h3>Organization not found.</h3>");
-
     const otp = generateOTP();
     await prisma.church.update({ 
         where: { code: code.toUpperCase() }, 
         data: { otp: otp, otpExpires: new Date(Date.now() + 5 * 60000) } 
     });
-
     if (org.adminPhone) await sendWhatsApp(org.adminPhone, `🔐 *${org.name} Admin*\n\nLogin OTP: *${otp}*`);
-    
     res.send(`
         <html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
         <body style="font-family:sans-serif; display:flex; justify-content:center; align-items:center; height:100vh; background:#f4f7f6; margin:0;">
@@ -189,7 +182,7 @@ router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
     `));
 });
 
-// --- 👥 MEMBERS PAGE (Fixed Case & Arrears Tracking) ---
+// --- 👥 MEMBERS PAGE ---
 router.get('/admin/:code/members', checkSession, async (req, res) => {
     const { q } = req.query;
     const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
@@ -206,12 +199,8 @@ router.get('/admin/:code/members', checkSession, async (req, res) => {
             } : {})
         },
         include: {
-            transactions: { // ✅ FIXED: Lowercase mapping
-                where: {
-                    status: 'SUCCESS',
-                    type: 'SOCIETY_PREMIUM',
-                    date: { gte: startOfMonth }
-                }
+            transactions: { 
+                where: { status: 'SUCCESS', type: 'SOCIETY_PREMIUM', date: { gte: startOfMonth } }
             }
         },
         orderBy: { lastName: 'asc' }
@@ -241,10 +230,15 @@ router.get('/admin/:code/members', checkSession, async (req, res) => {
 
     res.send(renderPage(req.org, 'members', `
         <div class="card" style="background: #1e272e; color: white;">
-            <h3 style="margin-top:0;">📊 February 2026 Collection Cycle</h3>
-            <div style="display:flex; gap:20px;">
-                <div><small>Paid</small><br><b>${members.filter(m => m.transactions.reduce((s, t) => s + t.amount, 0) >= (m.monthlyPremium || 150)).length}</b></div>
-                <div><small>Outstanding</small><br><b>${members.filter(m => m.transactions.reduce((s, t) => s + t.amount, 0) < (m.monthlyPremium || 150)).length}</b></div>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <h3 style="margin-top:0;">📊 February 2026 Collection Cycle</h3>
+                    <div style="display:flex; gap:20px;">
+                        <div><small>Paid</small><br><b>${members.filter(m => m.transactions.reduce((s, t) => s + t.amount, 0) >= (m.monthlyPremium || 150)).length}</b></div>
+                        <div style="color:#ff7675;"><small>Outstanding</small><br><b>${members.filter(m => m.transactions.reduce((s, t) => s + t.amount, 0) < (m.monthlyPremium || 150)).length}</b></div>
+                    </div>
+                </div>
+                <a href="/admin/${req.org.code}/members/export-arrears" class="btn" style="background:#d63031; width:auto; font-size:12px;">📥 Download Arrears CSV</a>
             </div>
         </div>
         <div class="card">
@@ -267,6 +261,27 @@ router.get('/admin/:code/members', checkSession, async (req, res) => {
     `));
 });
 
+// --- 📄 EXPORT ARREARS REPORT (CSV) ---
+router.get('/admin/:code/members/export-arrears', checkSession, async (req, res) => {
+    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    try {
+        const members = await prisma.member.findMany({
+            where: { OR: [{ churchCode: req.org.code }, { societyCode: req.org.code }] },
+            include: { transactions: { where: { status: 'SUCCESS', type: 'SOCIETY_PREMIUM', date: { gte: startOfMonth } } } }
+        });
+        const outstanding = members.filter(m => m.transactions.reduce((s, t) => s + t.amount, 0) < (m.monthlyPremium || 150.0));
+        let csvStr = "FirstName,LastName,Phone,Premium,Paid,Balance\n";
+        outstanding.forEach(m => {
+            const paid = m.transactions.reduce((s, t) => s + t.amount, 0);
+            const prem = m.monthlyPremium || 150.0;
+            csvStr += `${m.firstName},${m.lastName},${m.phone},${prem},${paid},${prem - paid}\n`;
+        });
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename=Arrears_${req.org.code}_${new Date().toISOString().split('T')[0]}.csv`);
+        res.status(200).send(csvStr);
+    } catch (e) { res.status(500).send(e.message); }
+});
+
 // Member Handlers
 router.post('/admin/:code/members/upload', checkSession, upload.single('file'), async (req, res) => {
     const results = [];
@@ -285,7 +300,7 @@ router.post('/admin/:code/members/upload', checkSession, upload.single('file'), 
                             churchCode: req.org.code, status: 'ACTIVE'
                         }
                     });
-                } catch (e) { console.error("CSV Row Error:", e.message); }
+                } catch (e) { console.error(e.message); }
             }
             fs.unlinkSync(req.file.path);
             res.redirect(`/admin/${req.org.code}/members`);
@@ -353,10 +368,9 @@ router.post('/admin/:code/ads/add', checkSession, async (req, res) => {
     const { content, imageUrl } = req.body;
     const defaultExpiry = new Date();
     defaultExpiry.setDate(defaultExpiry.getDate() + 30);
-
     try {
         await prisma.ad.create({ data: { content, imageUrl: imageUrl || null, churchId: req.org.id, expiryDate: defaultExpiry } });
-        const members = await prisma.member.findMany({ where: { churchCode: req.org.code } });
+        const members = await prisma.member.findMany({ where: { OR: [{ churchCode: req.org.code }, { societyCode: req.org.code }] } });
         members.forEach(m => {
             client.messages.create({
                 from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
