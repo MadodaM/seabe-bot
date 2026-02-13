@@ -312,4 +312,32 @@ router.get('/admin/:code/logout', (req, res) => {
     res.redirect(`/admin/${req.params.code}`);
 });
 
+// ... (Top of file remains the same) ...
+
+// ✅ SAFE INITIALIZATION: prevent "Unique constraint" crash
+// This runs once when the server starts to ensure the default admin exists.
+(async () => {
+    try {
+        // We use 'upsert' instead of 'create'
+        // Logic: Look for phone '+27832182707'. If found? Update nothing. If missing? Create it.
+        await prisma.member.upsert({
+            where: { phone: '27830000000' }, // The Unique Field
+            update: {}, // Do nothing if they exist
+            create: {
+                firstName: "Super",
+                lastName: "Admin",
+                phone: "27830000000",
+                churchCode: "HEADQUARTERS",
+                joinedAt: new Date(),
+                // ... any other required fields
+            }
+        });
+        console.log("✅ Admin System Ready");
+    } catch (e) {
+        // If it fails, just log it. DO NOT CRASH THE SERVER.
+        console.log("ℹ️ Admin check skipped or failed (non-critical):", e.message);
+    }
+})();
+
+module.exports = router;
 module.exports = (app) => { app.use('/', router); };
