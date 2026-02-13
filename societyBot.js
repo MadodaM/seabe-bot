@@ -13,7 +13,7 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
             reply = `🛡️ *${session.orgName}*\n_Burial Society Portal_\n\n` +
                     `1. My Policy 📜\n` +
                     `2. My Dependents 👨‍👩‍👧‍👦\n` +
-                    `3. Banking Details 🏦\n` +
+                    `3. KYC Compliance 🏦\n` +
                     `4. Digital Card 🪪\n` +
                     `5. Pay Premium 💳\n` +
                     `6. Exit to Church ⛪\n\n` +
@@ -61,7 +61,7 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
                 session.step = 'DEPENDENT_VIEW';
             }
 
-            // BANKING DETAILS
+            // KYC Compliance
             else if (incomingMsg === '3') {
                 const { generateKYCLink } = require('./routes/kyc');
 				const link = await generateKYCLink(cleanPhone, res.req.get('host'));

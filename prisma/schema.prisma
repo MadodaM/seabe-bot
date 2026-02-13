@@ -25,6 +25,8 @@ model Member {
   address          String?   // Stores ENCRYPTED data
   kycToken         String?   @unique
   kycTokenExpires  DateTime?
+  idPhotoUrl       String?  // Stores encrypted Cloudinary URL
+  proofOfAddressUrl String? // Stores encrypted Cloudinary URL
 
   // Link 1: Church (Optional)
   churchCode String?
