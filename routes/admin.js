@@ -9,6 +9,7 @@ const csv = require('csv-parser');
 const fs = require('fs');
 const crypto = require('crypto');
 const PDFDocument = require('pdfkit');
+const { decrypt } = require('../utils/crypto'); // ✅ ADDED: Decryption Tool
 
 const upload = multer({ dest: 'uploads/' });
 const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH_TOKEN);
@@ -26,15 +27,19 @@ const parseCookies = (req) => {
     return list;
 };
 
-// --- 🎨 UI TEMPLATE ---
+// --- 🎨 UI TEMPLATE (Updated with Verifications Tab) ---
 const renderPage = (org, activeTab, content) => {
     const isChurch = org.type === 'CHURCH';
     const navStyle = (tab) => `padding: 10px 15px; text-decoration: none; color: ${activeTab === tab ? '#000' : '#888'}; border-bottom: ${activeTab === tab ? '3px solid #00d2d3' : 'none'}; font-weight: bold; font-size: 14px;`;
     
-    return `<!DOCTYPE html><html><head><title>${org.name}</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:-apple-system,sans-serif;background:#f4f7f6;margin:0;padding-bottom:50px;}.header{background:white;padding:20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;}.nav{background:white;padding:0 20px;border-bottom:1px solid #ddd;overflow-x:auto;white-space:nowrap;display:flex;}.container{padding:20px;max-width:800px;margin:0 auto;}.card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.05);margin-bottom:20px;}.btn{display:inline-block;padding:12px 20px;background:#1e272e;color:white;text-decoration:none;border-radius:8px;border:none;font-weight:bold;font-size:14px;width:100%;text-align:center;cursor:pointer;}.btn-del{background:#ffebeb;color:#d63031;padding:5px 10px;font-size:11px;width:auto;border-radius:4px;border:none;}input,select,textarea,button{box-sizing:border-box;}input,select,textarea{width:100%;padding:12px;margin-bottom:15px;border:1px solid #ddd;border-radius:6px;}label{display:block;margin-bottom:5px;font-weight:bold;font-size:12px;color:#555;text-transform:uppercase;}table{width:100%;border-collapse:collapse;}td,th{padding:12px 8px;border-bottom:1px solid #eee;font-size:14px;text-align:left;}.badge{padding:4px 8px;border-radius:4px;font-size:10px;color:white;font-weight:bold;}a{color:#0984e3;text-decoration:none;}</style></head>
+    // ✅ NEW: 'Verifications' tab only shows for non-church orgs (Societies)
+    const verificationTab = !isChurch ? `<a href="/admin/${org.code}/verifications" style="${navStyle('verifications')}">🕵️ Verifications</a>` : '';
+
+    return `<!DOCTYPE html><html><head><title>${org.name}</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:-apple-system,sans-serif;background:#f4f7f6;margin:0;padding-bottom:50px;}.header{background:white;padding:20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;}.nav{background:white;padding:0 20px;border-bottom:1px solid #ddd;overflow-x:auto;white-space:nowrap;display:flex;}.container{padding:20px;max-width:800px;margin:0 auto;}.card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.05);margin-bottom:20px;}.btn{display:inline-block;padding:12px 20px;background:#1e272e;color:white;text-decoration:none;border-radius:8px;border:none;font-weight:bold;font-size:14px;width:100%;text-align:center;cursor:pointer;}.btn-del{background:#ffebeb;color:#d63031;padding:5px 10px;font-size:11px;width:auto;border-radius:4px;border:none;}.approve{background:#2ecc71;}.reject{background:#e74c3c;}.img-preview{max-width:100%;height:auto;border:1px solid #ddd;border-radius:5px;margin-top:10px;}input,select,textarea,button{box-sizing:border-box;}input,select,textarea{width:100%;padding:12px;margin-bottom:15px;border:1px solid #ddd;border-radius:6px;}label{display:block;margin-bottom:5px;font-weight:bold;font-size:12px;color:#555;text-transform:uppercase;}table{width:100%;border-collapse:collapse;}td,th{padding:12px 8px;border-bottom:1px solid #eee;font-size:14px;text-align:left;}.badge{padding:4px 8px;border-radius:4px;font-size:10px;color:white;font-weight:bold;}a{color:#0984e3;text-decoration:none;}</style></head>
     <body><div class="header"><b>${org.name} (${org.type})</b><a href="/admin/${org.code}/logout" style="color:red;font-size:12px;">Logout</a></div>
     <div class="nav">
         <a href="/admin/${org.code}/dashboard" style="${navStyle('dashboard')}">📊 Dashboard</a>
+        ${verificationTab}
         <a href="/admin/${org.code}/members" style="${navStyle('members')}">👥 Members</a>
         ${!isChurch ? `<a href="/admin/${org.code}/claims" style="${navStyle('claims')}">📑 Claims</a>` : ''}
         ${isChurch ? `<a href="/admin/${org.code}/events" style="${navStyle('events')}">📅 Events</a>` : ''}
@@ -94,7 +99,7 @@ router.post('/admin/:code/verify', async (req, res) => {
     res.redirect(`/admin/${org.code}/dashboard`);
 });
 
-// --- 📊 DASHBOARD (Seed = Pledge) ---
+// --- 📊 DASHBOARD ---
 router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
     const isChurch = req.org.type === 'CHURCH';
     const start = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
@@ -105,11 +110,10 @@ router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
 
     let cards = '';
     if (isChurch) {
-        const tithes = tx.filter(t => t.type === 'TITHE').reduce((s, t) => s + t.amount, 0);
-        const offerings = tx.filter(t => t.type === 'OFFERING').reduce((s, t) => s + t.amount, 0);
-        const tickets = tx.filter(t => t.type === 'EVENT_TICKET').reduce((s, t) => s + t.amount, 0);
-        // ✅ Seed Categorized as Pledge
-        const pledges = tx.filter(t => ['PLEDGE', 'SEED'].includes(t.type)).reduce((s, t) => s + t.amount, 0);
+        const tithes = tx.filter(t => t.type === 'TITHE').reduce((s, t) => s + parseFloat(t.amount), 0);
+        const offerings = tx.filter(t => t.type === 'OFFERING').reduce((s, t) => s + parseFloat(t.amount), 0);
+        const tickets = tx.filter(t => t.type === 'EVENT_TICKET').reduce((s, t) => s + parseFloat(t.amount), 0);
+        const pledges = tx.filter(t => ['PLEDGE', 'SEED'].includes(t.type)).reduce((s, t) => s + parseFloat(t.amount), 0);
 
         cards = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;">
             <div class="card" style="border-left:4px solid #00b894;"><small>TITHES</small><h3>R${tithes.toLocaleString()}</h3></div>
@@ -118,8 +122,8 @@ router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
             <div class="card" style="border-left:4px solid #6c5ce7;"><small>PLEDGES/SEEDS</small><h3>R${pledges.toLocaleString()}</h3></div>
         </div>`;
     } else {
-        const total = tx.filter(t => t.type === 'SOCIETY_PREMIUM').reduce((s, t) => s + t.amount, 0);
-        const liability = cl.reduce((s, c) => s + c.payoutAmount, 0);
+        const total = tx.filter(t => t.type === 'SOCIETY_PREMIUM').reduce((s, t) => s + parseFloat(t.amount), 0);
+        const liability = cl.reduce((s, c) => s + parseFloat(c.payoutAmount), 0);
         cards = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
             <div class="card" style="border-left:5px solid #6c5ce7;"><small>COLLECTIONS</small><h2>R${total.toLocaleString()}</h2></div>
             <div class="card" style="border-left:5px solid #e74c3c;"><small>CLAIMS LIABILITY</small><h2>R${liability.toLocaleString()}</h2></div>
@@ -128,21 +132,88 @@ router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
     res.send(renderPage(req.org, 'dashboard', cards + `<div class="card"><h3>Recent Activity</h3><table>${tx.slice(0, 5).map(t => `<tr><td>${t.phone}</td><td>${t.type}</td><td>R${t.amount}</td></tr>`).join('')}</table></div>`));
 });
 
-// --- 👥 MEMBERS (Scoped Filtering) ---
+// --- 🕵️ KYC VERIFICATION QUEUE (SOCIETY ONLY) ---
+router.get('/admin/:code/verifications', checkSession, async (req, res) => {
+    // 🔒 RESTRICTION: Only societies can see this page
+    if (req.org.type === 'CHURCH') {
+        return res.redirect(`/admin/${req.org.code}/dashboard`);
+    }
+
+    const pending = await prisma.member.findMany({
+        where: { 
+            churchCode: req.org.code,
+            NOT: { idNumber: null }, // Only members who uploaded docs
+            isIdVerified: false,     // Only unverified members
+            rejectionReason: null    // Only if not already rejected
+        }
+    });
+
+    if (pending.length === 0) return res.send(renderPage(req.org, 'verifications', `<div style="text-align:center;padding:50px;"><h3>✅ All Caught Up!</h3><p>No pending documents to review.</p></div>`));
+
+    const html = pending.map(m => {
+        // 🔓 DECRYPT DATA
+        const realID = decrypt(m.idNumber) || "Error";
+        const realAddress = decrypt(m.address) || "Error";
+        const idUrl = decrypt(m.idPhotoUrl);
+        const proofUrl = decrypt(m.proofOfAddressUrl);
+
+        return `<div class="card">
+            <h3>👤 ${m.firstName} ${m.lastName} (${m.phone})</h3>
+            <p><strong>ID:</strong> ${realID}</p>
+            <p><strong>Address:</strong> ${realAddress}</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                ${idUrl ? `<div><small>ID Photo</small><a href="${idUrl}" target="_blank"><img src="${idUrl}" class="img-preview"></a></div>` : ''}
+                ${proofUrl ? `<div><small>Proof of Address</small><a href="${proofUrl}" target="_blank"><img src="${proofUrl}" class="img-preview"></a></div>` : ''}
+            </div>
+            <br>
+            <form method="POST" action="/admin/${req.org.code}/verifications/action">
+                <input type="hidden" name="memberId" value="${m.id}">
+                <button name="action" value="approve" class="btn approve">✅ Approve Member</button>
+                <div style="margin-top:10px; display:flex; gap:5px;">
+                    <input name="reason" placeholder="Reason if rejecting..." style="margin-bottom:0;">
+                    <button name="action" value="reject" class="btn reject" style="width:auto;">❌ Reject</button>
+                </div>
+            </form>
+        </div>`;
+    }).join('');
+
+    res.send(renderPage(req.org, 'verifications', `<h3>Pending Reviews (${pending.length})</h3>${html}`));
+});
+
+router.post('/admin/:code/verifications/action', checkSession, async (req, res) => {
+    if (req.org.type === 'CHURCH') return res.status(403).send("Unauthorized");
+
+    const { memberId, action, reason } = req.body;
+    const member = await prisma.member.findUnique({ where: { id: parseInt(memberId) } });
+
+    if (member) {
+        if (action === 'approve') {
+            await prisma.member.update({ where: { id: member.id }, data: { isIdVerified: true, verifiedAt: new Date() } });
+            await sendWhatsApp(member.phone, `✅ *Verification Approved*\n\nHi ${member.firstName}, your documents have been accepted by ${req.org.name}.`);
+        } else {
+            await prisma.member.update({ where: { id: member.id }, data: { isIdVerified: false, rejectionReason: reason || "Docs unclear" } });
+            await sendWhatsApp(member.phone, `❌ *Verification Rejected*\n\nReason: ${reason || "Documents were not clear"}.\nPlease reply '3' to re-upload.`);
+        }
+    }
+    res.redirect(`/admin/${req.org.code}/verifications`);
+});
+
+// --- 👥 MEMBERS ---
 router.get('/admin/:code/members', checkSession, async (req, res) => {
     const isChurch = req.org.type === 'CHURCH';
     const { q } = req.query;
     const members = await prisma.member.findMany({
         where: { OR: isChurch ? [{ churchCode: req.org.code }] : [{ societyCode: req.org.code }], ...(q ? { OR: [{ phone: { contains: q } }, { lastName: { contains: q, mode: 'insensitive' } }] } : {}) },
-        include: { transactions: { where: { status: 'SUCCESS', churchCode: req.org.code } } }, // ✅ Filtered
+        include: { transactions: { where: { status: 'SUCCESS', churchCode: req.org.code } } },
         orderBy: { lastName: 'asc' }
     });
 
     const rows = members.map(m => {
-        const paid = m.transactions.reduce((s, t) => s + t.amount, 0);
+        const paid = m.transactions.reduce((s, t) => s + parseFloat(t.amount), 0);
         const reqAmt = m.monthlyPremium || 150.0;
         const statusBadge = !isChurch ? `<span class="badge" style="background:${paid >= reqAmt ? '#2ecc71' : '#e74c3c'}">${paid >= reqAmt ? 'PAID' : 'ARREARS'}</span>` : '';
-        return `<tr><td><a href="/admin/${req.org.code}/members/${m.phone}"><b>${m.firstName} ${m.lastName}</b></a></td><td>${statusBadge}</td><td>R${paid}</td><td><form method="POST" action="/admin/${req.org.code}/members/delete"><input type="hidden" name="id" value="${m.id}"><button class="btn-del">Delete</button></form></td></tr>`;
+        const kycBadge = m.isIdVerified ? '✅' : '⏳';
+        return `<tr><td><a href="/admin/${req.org.code}/members/${m.phone}"><b>${m.firstName} ${m.lastName}</b></a></td><td>${kycBadge}</td><td>${statusBadge}</td><td>R${paid}</td><td><form method="POST" action="/admin/${req.org.code}/members/delete"><input type="hidden" name="id" value="${m.id}"><button class="btn-del">Delete</button></form></td></tr>`;
     }).join('');
 
     const arrearsBtn = !isChurch ? `<a href="/admin/${req.org.code}/members/export-arrears" class="btn" style="background:#d63031;width:auto;margin-bottom:10px;">📥 Export Arrears</a>` : '';
@@ -166,22 +237,22 @@ router.get('/admin/:code/members/:phone', checkSession, async (req, res) => {
     const m = await prisma.member.findUnique({ 
         where: { phone: req.params.phone }, 
         include: { 
-            transactions: { where: { churchCode: req.org.code }, orderBy: { date: 'desc' } }, // ✅ Filtered
-            claims: { where: { churchCode: req.org.code } } // ✅ Filtered
+            transactions: { where: { churchCode: req.org.code }, orderBy: { date: 'desc' } },
+            claims: { where: { churchCode: req.org.code } }
         } 
     });
     if (!m) return res.send("Not Found");
-    res.send(renderPage(req.org, 'members', `<div style="display:flex;justify-content:space-between;margin-bottom:20px;"><a href="/admin/${req.org.code}/members">← Back</a><a href="/admin/${req.org.code}/members/${m.phone}/pdf" class="btn" style="background:#2ecc71;width:auto;">📄 KYC Statement</a></div><div class="card"><h3>👤 Identity Profile</h3><p><strong>ID:</strong> ${m.idNumber || 'N/A'}<br><strong>Address:</strong> ${m.address || 'N/A'}<br><strong>Phone:</strong> ${m.phone}</p></div><div class="card"><h4>💳 History at ${req.org.name}</h4><table>${m.transactions.map(t=>`<tr><td>${t.date.toLocaleDateString()}</td><td>${t.type}</td><td>R${t.amount}</td></tr>`).join('')}</table></div>`));
+    res.send(renderPage(req.org, 'members', `<div style="display:flex;justify-content:space-between;margin-bottom:20px;"><a href="/admin/${req.org.code}/members">← Back</a><a href="/admin/${req.org.code}/members/${m.phone}/pdf" class="btn" style="background:#2ecc71;width:auto;">📄 KYC Statement</a></div><div class="card"><h3>👤 Identity Profile</h3><p><strong>ID:</strong> ${decrypt(m.idNumber) || 'N/A'}<br><strong>Address:</strong> ${decrypt(m.address) || 'N/A'}<br><strong>Phone:</strong> ${m.phone}</p><p>Status: ${m.isIdVerified ? '✅ Verified' : '❌ Unverified'}</p></div><div class="card"><h4>💳 History at ${req.org.name}</h4><table>${m.transactions.map(t=>`<tr><td>${t.date.toLocaleDateString()}</td><td>${t.type}</td><td>R${t.amount}</td></tr>`).join('')}</table></div>`));
 });
 
 // --- 📄 PDF (Scoped) ---
 router.get('/admin/:code/members/:phone/pdf', checkSession, async (req, res) => {
-    const m = await prisma.member.findUnique({ where: { phone: req.params.phone }, include: { transactions: { where: { churchCode: req.org.code } } } }); // ✅ Filtered
+    const m = await prisma.member.findUnique({ where: { phone: req.params.phone }, include: { transactions: { where: { churchCode: req.org.code } } } }); 
     const doc = new PDFDocument();
     res.setHeader('Content-Type', 'application/pdf');
     doc.pipe(res);
     doc.fontSize(20).text(`${req.org.name} Statement`, { align: 'center' });
-    doc.moveDown().fontSize(10).text(`ID: ${m.idNumber || 'N/A'}\nAddress: ${m.address || 'N/A'}\nGenerated: ${new Date().toLocaleDateString()}`);
+    doc.moveDown().fontSize(10).text(`ID: ${decrypt(m.idNumber) || 'N/A'}\nAddress: ${decrypt(m.address) || 'N/A'}\nGenerated: ${new Date().toLocaleDateString()}`);
     doc.moveDown().fontSize(14).text('--- Financial Ledger ---');
     m.transactions.forEach(t => doc.fontSize(10).text(`${t.date.toLocaleDateString()} | ${t.type} | R${t.amount}`));
     doc.end();
