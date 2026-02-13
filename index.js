@@ -16,11 +16,14 @@ const multer = require('multer');
 const { MessagingResponse } = require('twilio').twiml;
 const { PrismaClient } = require('@prisma/client');
 
+
 // --- IMPORT BOTS ---
 const { handleSocietyMessage } = require('./societyBot');
 const { handleChurchMessage } = require('./churchBot');
 
 const adminRoutes = require('./routes/admin');
+const { router: kycRouter } = require('./routes/kyc');
+
 
 //app.use('/', adminRoutes);
 
@@ -50,6 +53,8 @@ const formatPhone = (phone) => {
     if (clean.startsWith('0')) clean = '27' + clean.slice(1);
     return '+' + clean;
 };
+
+app.use('/kyc', require('./routes/kyc').router);
 
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));

@@ -20,6 +20,11 @@ model Member {
   email          String?
   createdAt      DateTime @default(now())
   monthlyPremium Float? // <--- ADD THIS LINE
+  idType           String?   @default("SA_ID") 
+  idNumber         String?   // Stores ENCRYPTED data (e.g. "a1b2:f9e8...")
+  address          String?   // Stores ENCRYPTED data
+  kycToken         String?   @unique
+  kycTokenExpires  DateTime?
 
   // Link 1: Church (Optional)
   churchCode String?

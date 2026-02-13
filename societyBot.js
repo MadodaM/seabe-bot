@@ -63,7 +63,9 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
 
             // BANKING DETAILS
             else if (incomingMsg === '3') {
-                reply = `🏦 *Banking Details*\n\nBank: Standard Bank\nAcc: 123456789\nRef: ${cleanPhone}`;
+                const { generateKYCLink } = require('./routes/kyc');
+				const link = await generateKYCLink(cleanPhone, res.req.get('host'));
+				reply = `👤 *KYC Compliance*\n\nPlease verify your identity here:\n\n${link}`;
             }
 
             // PREMIUM PAYMENT
