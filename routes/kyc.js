@@ -32,6 +32,15 @@ const uploadToCloud = (buffer) => {
     });
 };
 
+// 1️⃣ Create a placeholder for the Bot Client
+let botClient = null;
+
+// 2️⃣ Helper to set the client (We call this from index.js)
+const setClient = (client) => {
+    botClient = client;
+    console.log("✅ KYC Route connected to WhatsApp Bot");
+};
+
 // Helper: Generate Link (Unchanged)
 async function generateKYCLink(phone, host) {
     const token = crypto.randomBytes(16).toString('hex');
@@ -123,5 +132,47 @@ router.post('/:token', upload.fields([{ name: 'idPhoto' }, { name: 'addressProof
         res.send("<h3>❌ Upload Failed</h3><p>Please try again or contact support.</p>"); 
     }
 });
+
+// 3️⃣ Update the POST Router to send the message
+router.post('/:token', upload.fields([{ name: 'idPhoto' }, { name: 'addressProof' }]), async (req, res) => {
+    try {
+        console.log("Processing KYC Upload...");
+        
+        // ... (Cloudinary upload logic remains the same) ...
+        // ... (Encryption logic remains the same) ...
+
+        // ✅ UPDATE: Save to DB and Capture the Result (so we get the phone number)
+        const updatedMember = await prisma.member.update({
+            where: { kycToken: req.params.token },
+            data: { 
+                idType: req.body.idType,
+                idNumber: encryptedID,
+                address: encryptedAddress,
+                idPhotoUrl: encryptedIdUrl,
+                proofOfAddressUrl: encryptedProofUrl,
+                kycToken: null, 
+                kycTokenExpires: null 
+            }
+        });
+
+        // 🚀 TRIGGER WHATSAPP CONFIRMATION
+        if (botClient && updatedMember.phone) {
+            // Format phone: Remove '+' and add '@c.us' (e.g., 2783...@c.us)
+            const chatId = updatedMember.phone.replace('+', '') + '@c.us';
+            
+            const message = `✅ *Documents Received!*\n\nHi ${updatedMember.firstName}, we have received your ID and Proof of Address.\n\nOur team will review them shortly. You can check your status in the main menu.`;
+            
+            botClient.sendMessage(chatId, message).catch(err => console.error("Failed to send WA confirmation:", err));
+        }
+
+        res.send("<div style='text-align:center; padding:50px; font-family:sans-serif;'><h1>✅ Documents Received!</h1><p>You have received a confirmation on WhatsApp.</p></div>");
+
+    } catch (e) { 
+        console.error("KYC Upload Error:", e);
+        res.send("<h3>❌ Upload Failed</h3><p>Please try again.</p>"); 
+    }
+});
+
+// ✅ EXPORT the new setClient function
 
 module.exports = { router, generateKYCLink };
