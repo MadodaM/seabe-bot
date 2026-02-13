@@ -6,6 +6,10 @@ const { encrypt } = require('../utils/crypto'); // 👈 Import Security Helper
 const prisma = new PrismaClient();
 const crypto = require('crypto');
 
+
+// to parse the HTML Form data
+router.use(express.urlencoded({ extended: true }));
+
 // Helper: Generate Link (Same as before)
 async function generateKYCLink(phone, host) {
     const token = crypto.randomBytes(16).toString('hex');
