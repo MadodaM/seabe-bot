@@ -27,6 +27,9 @@ model Member {
   kycTokenExpires  DateTime?
   idPhotoUrl       String?  // Stores encrypted Cloudinary URL
   proofOfAddressUrl String? // Stores encrypted Cloudinary URL
+  isIdVerified     Boolean   @default(false)
+  rejectionReason  String?
+  verifiedAt       DateTime?
 
   // Link 1: Church (Optional)
   churchCode String?
