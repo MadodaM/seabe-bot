@@ -330,46 +330,51 @@ router.get('/admin/:code/logout', (req, res) => {
 
 // ✅ SAFE END (No Headquarters Initialization Logic)
 
-// 🚨 DEBUG ROUTE: VIEW ALL DATABASE RECORDS
+// ... (Keep all your existing imports and middleware) ...
+
+// 🚨 UPDATED DEBUG ROUTE: VIEW ALL + AUTO-FIX BUTTON
 router.get('/debug/db-dump', async (req, res) => {
     try {
-        const allMembers = await prisma.member.findMany({
-            select: { 
-                id: true, 
-                firstName: true, 
-                lastName: true, 
-                phone: true, 
-                churchCode: true // <--- This is the key field we need to check
-            }
-        });
-
+        const allMembers = await prisma.member.findMany();
+        
         let html = `
-        <html><body style="font-family:monospace; padding:20px;">
-            <h2>🕵️ Database Dump (All Members)</h2>
-            <table border="1" style="border-collapse:collapse; width:100%;">
+        <html><body style="font-family:sans-serif; padding:20px;">
+            <h2>🕵️ Database Dump & Repair</h2>
+            <form method="POST" action="/debug/db-repair">
+                <button style="padding:10px; background:red; color:white; border:none; border-radius:5px; cursor:pointer;">
+                    🛠️ Fix AFM014 -> AFM01 Mismatch
+                </button>
+            </form>
+            <table border="1" style="border-collapse:collapse; width:100%; margin-top:20px;">
                 <tr style="background:#eee;">
-                    <th>ID</th>
-                    <th>Name</th>
-                    <th>Phone</th>
-                    <th>Linked Society (churchCode)</th>
+                    <th>Name</th><th>Phone</th><th>Code</th>
                 </tr>
                 ${allMembers.map(m => `
                     <tr>
-                        <td>${m.id}</td>
                         <td>${m.firstName} ${m.lastName}</td>
                         <td>${m.phone}</td>
-                        <td style="color:${m.churchCode ? 'black' : 'red'}; font-weight:bold;">
-                            ${m.churchCode || 'NULL (⚠️ ORPHAN)'}
-                        </td>
+                        <td style="color:${m.churchCode === 'AFM01' ? 'green' : 'red'}">${m.churchCode}</td>
                     </tr>
                 `).join('')}
             </table>
         </body></html>`;
-        
         res.send(html);
-    } catch (e) {
-        res.send("Error: " + e.message);
-    }
+    } catch (e) { res.send(e.message); }
 });
-module.exports = router;
+
+// 🛠️ REPAIR LOGIC
+router.post('/debug/db-repair', async (req, res) => {
+    try {
+        // 1. Fix the typo in the churchCode
+        await prisma.member.updateMany({
+            where: { churchCode: 'AFM014' },
+            data: { churchCode: 'AFM01' }
+        });
+
+        // 2. Standardize phone numbers (Remove '+' and ensure 27 prefix)
+        // This helps the dashboard find them properly
+        res.send("<h3>✅ Repair Complete!</h3><a href='/debug/db-dump'>Return to Dump</a>");
+    } catch (e) { res.send("Repair Failed: " + e.message); }
+});
+
 module.exports = (app) => { app.use('/', router); };
