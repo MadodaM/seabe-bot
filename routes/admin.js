@@ -329,5 +329,47 @@ router.get('/admin/:code/logout', (req, res) => {
 });
 
 // ✅ SAFE END (No Headquarters Initialization Logic)
+
+// 🚨 DEBUG ROUTE: VIEW ALL DATABASE RECORDS
+router.get('/debug/db-dump', async (req, res) => {
+    try {
+        const allMembers = await prisma.member.findMany({
+            select: { 
+                id: true, 
+                firstName: true, 
+                lastName: true, 
+                phone: true, 
+                churchCode: true // <--- This is the key field we need to check
+            }
+        });
+
+        let html = `
+        <html><body style="font-family:monospace; padding:20px;">
+            <h2>🕵️ Database Dump (All Members)</h2>
+            <table border="1" style="border-collapse:collapse; width:100%;">
+                <tr style="background:#eee;">
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>Phone</th>
+                    <th>Linked Society (churchCode)</th>
+                </tr>
+                ${allMembers.map(m => `
+                    <tr>
+                        <td>${m.id}</td>
+                        <td>${m.firstName} ${m.lastName}</td>
+                        <td>${m.phone}</td>
+                        <td style="color:${m.churchCode ? 'black' : 'red'}; font-weight:bold;">
+                            ${m.churchCode || 'NULL (⚠️ ORPHAN)'}
+                        </td>
+                    </tr>
+                `).join('')}
+            </table>
+        </body></html>`;
+        
+        res.send(html);
+    } catch (e) {
+        res.send("Error: " + e.message);
+    }
+});
 module.exports = router;
 module.exports = (app) => { app.use('/', router); };
