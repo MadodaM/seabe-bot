@@ -9,14 +9,14 @@ const csv = require('csv-parser');
 const fs = require('fs');
 const crypto = require('crypto');
 const PDFDocument = require('pdfkit');
-const { decrypt } = require('../utils/crypto'); // ✅ ADDED: Decryption Tool
+const { decrypt } = require('../utils/crypto'); 
 
 const upload = multer({ dest: 'uploads/' });
-const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH_TOKEN);
+// Safety check for env vars
+const client = twilio(process.env.TWILIO_SID || 'AC_dummy', process.env.TWILIO_AUTH_TOKEN || 'dummy');
 
 // --- 🛠️ HELPERS ---
 const generateOTP = () => Math.floor(1000 + Math.random() * 9000).toString();
-const safeDate = (d) => (d ? new Date(d) : new Date());
 const parseCookies = (req) => {
     const list = {};
     const rc = req.headers.cookie;
@@ -27,7 +27,7 @@ const parseCookies = (req) => {
     return list;
 };
 
-// --- 🎨 UI TEMPLATE (Updated with Verifications Tab) ---
+// --- 🎨 UI TEMPLATE ---
 const renderPage = (org, activeTab, content) => {
     const isChurch = org.type === 'CHURCH';
     const navStyle = (tab) => `padding: 10px 15px; text-decoration: none; color: ${activeTab === tab ? '#000' : '#888'}; border-bottom: ${activeTab === tab ? '3px solid #00d2d3' : 'none'}; font-weight: bold; font-size: 14px;`;
@@ -59,7 +59,7 @@ const checkSession = async (req, res, next) => {
     next();
 };
 
-// --- 🔐 AUTH (Checking Admin Model) ---
+// --- 🔐 AUTH ---
 router.get('/admin/:code', async (req, res) => {
     const { code } = req.params;
     const { phone } = req.query; 
@@ -132,40 +132,43 @@ router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
     res.send(renderPage(req.org, 'dashboard', cards + `<div class="card"><h3>Recent Activity</h3><table>${tx.slice(0, 5).map(t => `<tr><td>${t.phone}</td><td>${t.type}</td><td>R${t.amount}</td></tr>`).join('')}</table></div>`));
 });
 
-// --- 🕵️ KYC VERIFICATION QUEUE (SOCIETY ONLY) ---
+// --- 🕵️ KYC VERIFICATION QUEUE (UPDATED TO SHOW ALL) ---
 router.get('/admin/:code/verifications', checkSession, async (req, res) => {
     // 🔒 RESTRICTION: Only societies can see this page
     if (req.org.type === 'CHURCH') {
         return res.redirect(`/admin/${req.org.code}/dashboard`);
     }
 
-    const pending = await prisma.member.findMany({
-        where: { 
-            churchCode: req.org.code,
-            NOT: { idNumber: null }, // Only members who uploaded docs
-            isIdVerified: false,     // Only unverified members
-            rejectionReason: null    // Only if not already rejected
-        }
+    // 🔥 FIX: Fetch ALL members for this society to find the "invisible" ones
+    const allMembers = await prisma.member.findMany({
+        where: { churchCode: req.org.code }
     });
 
-    if (pending.length === 0) return res.send(renderPage(req.org, 'verifications', `<div style="text-align:center;padding:50px;"><h3>✅ All Caught Up!</h3><p>No pending documents to review.</p></div>`));
+    // Categorize them
+    const pending = allMembers.filter(m => !m.isIdVerified && !m.rejectionReason && m.idNumber);
+    const verified = allMembers.filter(m => m.isIdVerified);
+    const rejected = allMembers.filter(m => !m.isIdVerified && m.rejectionReason);
+    const incomplete = allMembers.filter(m => !m.idNumber); // Joined but no docs uploaded
 
-    const html = pending.map(m => {
-        // 🔓 DECRYPT DATA
-        const realID = decrypt(m.idNumber) || "Error";
-        const realAddress = decrypt(m.address) || "Error";
+    // Helper to render a card
+    const renderCard = (m, type) => {
+        const realID = m.idNumber ? (decrypt(m.idNumber) || "Decrypt Error") : "N/A";
         const idUrl = decrypt(m.idPhotoUrl);
         const proofUrl = decrypt(m.proofOfAddressUrl);
+        const showActions = type === 'pending';
 
-        return `<div class="card">
+        return `<div class="card" style="border-left:5px solid ${type === 'pending' ? '#f1c40f' : (type === 'verified' ? '#2ecc71' : '#e74c3c')}">
             <h3>👤 ${m.firstName} ${m.lastName} (${m.phone})</h3>
             <p><strong>ID:</strong> ${realID}</p>
-            <p><strong>Address:</strong> ${realAddress}</p>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            
+            ${showActions ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 ${idUrl ? `<div><small>ID Photo</small><a href="${idUrl}" target="_blank"><img src="${idUrl}" class="img-preview"></a></div>` : ''}
-                ${proofUrl ? `<div><small>Proof of Address</small><a href="${proofUrl}" target="_blank"><img src="${proofUrl}" class="img-preview"></a></div>` : ''}
-            </div>
-            <br>
+                ${proofUrl ? `<div><small>Address Proof</small><a href="${proofUrl}" target="_blank"><img src="${proofUrl}" class="img-preview"></a></div>` : ''}
+            </div>` : ''}
+
+            ${m.rejectionReason ? `<p style="color:red; font-weight:bold;">⚠️ Reason: ${m.rejectionReason}</p>` : ''}
+            
+            ${showActions ? `<br>
             <form method="POST" action="/admin/${req.org.code}/verifications/action">
                 <input type="hidden" name="memberId" value="${m.id}">
                 <button name="action" value="approve" class="btn approve">✅ Approve Member</button>
@@ -173,11 +176,24 @@ router.get('/admin/:code/verifications', checkSession, async (req, res) => {
                     <input name="reason" placeholder="Reason if rejecting..." style="margin-bottom:0;">
                     <button name="action" value="reject" class="btn reject" style="width:auto;">❌ Reject</button>
                 </div>
-            </form>
+            </form>` : ''}
         </div>`;
-    }).join('');
+    };
 
-    res.send(renderPage(req.org, 'verifications', `<h3>Pending Reviews (${pending.length})</h3>${html}`));
+    let html = `<h3>⏳ Pending Review (${pending.length})</h3>`;
+    html += pending.length ? pending.map(m => renderCard(m, 'pending')).join('') : '<p style="color:#888;">No pending reviews.</p>';
+
+    html += `<h3 style="margin-top:40px;">✅ Verified (${verified.length})</h3>`;
+    html += verified.length ? verified.map(m => renderCard(m, 'verified')).join('') : '<p style="color:#888;">No verified members.</p>';
+
+    html += `<h3 style="margin-top:40px;">❌ Rejected (${rejected.length})</h3>`;
+    html += rejected.length ? rejected.map(m => renderCard(m, 'rejected')).join('') : '<p style="color:#888;">No rejected members.</p>';
+
+    html += `<h3 style="margin-top:40px;">⚪ Incomplete / No Uploads (${incomplete.length})</h3>`;
+    html += `<p style="font-size:12px;color:#666;">These members joined via WhatsApp but have not uploaded documents yet.</p>`;
+    html += incomplete.map(m => `<div class="card" style="padding:10px; border-left:5px solid #ccc;">${m.firstName} ${m.lastName} (${m.phone})</div>`).join('');
+
+    res.send(renderPage(req.org, 'verifications', html));
 });
 
 router.post('/admin/:code/verifications/action', checkSession, async (req, res) => {
@@ -188,7 +204,7 @@ router.post('/admin/:code/verifications/action', checkSession, async (req, res) 
 
     if (member) {
         if (action === 'approve') {
-            await prisma.member.update({ where: { id: member.id }, data: { isIdVerified: true, verifiedAt: new Date() } });
+            await prisma.member.update({ where: { id: member.id }, data: { isIdVerified: true, verifiedAt: new Date(), rejectionReason: null } });
             await sendWhatsApp(member.phone, `✅ *Verification Approved*\n\nHi ${member.firstName}, your documents have been accepted by ${req.org.name}.`);
         } else {
             await prisma.member.update({ where: { id: member.id }, data: { isIdVerified: false, rejectionReason: reason || "Docs unclear" } });
@@ -312,32 +328,6 @@ router.get('/admin/:code/logout', (req, res) => {
     res.redirect(`/admin/${req.params.code}`);
 });
 
-// ... (Top of file remains the same) ...
-
-// ✅ SAFE INITIALIZATION: prevent "Unique constraint" crash
-// This runs once when the server starts to ensure the default admin exists.
-(async () => {
-    try {
-        // We use 'upsert' instead of 'create'
-        // Logic: Look for phone '+27832182707'. If found? Update nothing. If missing? Create it.
-        await prisma.member.upsert({
-            where: { phone: '27830000000' }, // The Unique Field
-            update: {}, // Do nothing if they exist
-            create: {
-                firstName: "Super",
-                lastName: "Admin",
-                phone: "27830000000",
-                churchCode: "HEADQUARTERS",
-                joinedAt: new Date(),
-                // ... any other required fields
-            }
-        });
-        console.log("✅ Admin System Ready");
-    } catch (e) {
-        // If it fails, just log it. DO NOT CRASH THE SERVER.
-        console.log("ℹ️ Admin check skipped or failed (non-critical):", e.message);
-    }
-})();
-
+// ✅ SAFE END (No Headquarters Initialization Logic)
 module.exports = router;
 module.exports = (app) => { app.use('/', router); };
