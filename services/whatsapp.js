@@ -2,7 +2,7 @@ const axios = require('axios');
 require('dotenv').config();
 
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
-const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
+const PHONE_NUMBER_ID = process.env.TWILIO_PHONE_NUMBER;
 
 async function sendWhatsApp(to, text) {
     // 🛡️ Safety Check: If no credentials, just log it (don't crash the server)
