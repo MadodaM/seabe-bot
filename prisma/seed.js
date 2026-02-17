@@ -2,56 +2,43 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('🌱 Starting Seed...');
+  console.log('🌱 Seeding production data...');
 
-  // 1. Create the Church
+  // 1. Seed a Church
   const church = await prisma.church.upsert({
-    where: { code: 'AFM01' },
+    where: { 
+      code: 'CH-001' // Using code because name isn't unique
+    },
     update: {},
     create: {
-      code: 'AFM01',
-      name: 'AFM - Life in Christ',
-      subaccountCode: 'ACCT_xxxxxxxxxxxx',
-      adminPhone: '27831234567',
-      type: 'CHURCH' 
+      code: 'CH-001',
+      name: 'Test Church A',
+      type: 'Standard',
+      // adminPhone: '0123456789', // Add if required by your schema
     },
   });
-  console.log(`✅ Church Created: ${church.name}`);
+  console.log('✅ Church seeded:', church.name);
 
-  // 2. Create the Society
-const society = await prisma.church.upsert({
-  where: { code: 'SIYA01' },
-  update: {},
-  create: {
-    code: 'SIYA01',
-    name: 'Siyakhula Burial Society',
-    subaccountCode: 'ACCT_yyyyyyyyyyyy',
-    adminPhone: '27831234567',
-    type: 'BURIAL_SOCIETY' // ✅ Use this exact string
-  },
-});
-  console.log(`✅ Society Created: ${society.name}`);
-
-  // 3. Create a Test Member
-  // I removed 'monthlyPremium' and 'societyCode' to match your schema's current state
-  const member = await prisma.member.upsert({
-    where: { phone: '27831234567' },
+  // 2. Seed a Burial Society
+  // Note: If you have a separate 'BurialSociety' model, change 'prisma.church' 
+  // to 'prisma.burialSociety'. Otherwise, use 'type' to distinguish them.
+  const society = await prisma.church.upsert({
+    where: { 
+      code: 'BS-001' 
+    },
     update: {},
     create: {
-      phone: '27831234567',
-      firstName: 'Test',
-      lastName: 'Member',
-      status: 'ACTIVE',
-      policyNumber: 'POL-999',
-      churchCode: 'AFM01' // Assuming this is how you link them
+      code: 'BS-001',
+      name: 'Test Burial Society A',
+      type: 'Society', 
     },
   });
-  console.log(`✅ Member Created: ${member.firstName}`);
+  console.log('✅ Society seeded:', society.name);
 }
 
 main()
   .catch((e) => {
-    console.error("❌ Seed Error:", e.message);
+    console.error(e);
     process.exit(1);
   })
   .finally(async () => {

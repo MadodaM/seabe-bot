@@ -1,5 +1,5 @@
 // routes/platform.js
-// VERSION: 4.0 (Multi-Org Support & OTP Fields)
+// VERSION: 4.1 (Schema Alignment: defaultPremium + subscriptionFee + subaccountCode)
 require('dotenv').config();
 
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
@@ -31,7 +31,7 @@ function renderAdminPage(title, content, error = null) {
         <!DOCTYPE html>
         <html>
         <head>
-			<link rel="icon" type="image/png" href="/favicon.png">
+            <link rel="icon" type="image/png" href="/favicon.png">
             <title>${title} | Seabe Platform</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
@@ -174,7 +174,7 @@ module.exports = function(app, { prisma }) {
                     {code:{contains:q, mode:'insensitive'}},
                     {adminPhone:{contains:q}} 
                 ]},
-                orderBy: { createdAt: 'desc' } // ✅ Uses latest schema sorting
+                orderBy: { createdAt: 'desc' } 
             });
 
             const rows = items.map(c => {
@@ -186,12 +186,12 @@ module.exports = function(app, { prisma }) {
                 <tr>
                     <td>
                         <strong>${c.name}</strong><br>
-                        <span style="font-size:11px; color:#999;">${c.email}</span>
+                        <span style="font-size:11px; color:#999;">${c.email || 'No Email'}</span>
                     </td>
                     <td><span class="tag ${badgeClass}">${c.type.replace('_', ' ')}</span></td>
                     <td><code>${c.code}</code></td>
                     <td>${c.adminPhone || '<span style="color:red">Missing</span>'}</td>
-                    <td>${c.subscriptionFee > 0 ? 'R'+c.subscriptionFee : '-'}</td>
+                    <td>${c.subaccountCode ? '✅ Linked' : '<span style="color:orange">Pending</span>'}</td>
                     <td style="text-align:right;">
                         <a href="/admin/churches/edit/${c.code}" class="btn btn-edit">Manage</a>
                     </td>
@@ -207,7 +207,7 @@ module.exports = function(app, { prisma }) {
                     <a href="/admin/churches/add" class="btn btn-primary" style="background:#00d2d3; color:black;">+ New Organization</a>
                 </div>
                 <table>
-                    <thead><tr><th>Organization</th><th>Type</th><th>Code</th><th>Admin Phone</th><th>Fee</th><th style="text-align:right;">Actions</th></tr></thead>
+                    <thead><tr><th>Organization</th><th>Type</th><th>Code</th><th>Admin Phone</th><th>Payments</th><th style="text-align:right;">Actions</th></tr></thead>
                     <tbody>${rows.length > 0 ? rows : '<tr><td colspan="6" style="text-align:center; padding:30px;">No results found.</td></tr>'}</tbody>
                 </table>
             `));
@@ -240,13 +240,23 @@ module.exports = function(app, { prisma }) {
                     <input name="adminPhone" required placeholder="27820001111" pattern="[0-9]+">
                     <small style="color:#666;">Format: 2782... (No spaces, no +)</small>
                 </div>
-                <div class="form-group">
-                    <label>Monthly Premium (For Societies)</label>
-                    <input type="number" name="subscriptionFee" placeholder="0.00" value="0" step="10">
+                
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px;">
+                    <div class="form-group">
+                        <label>Member Default Premium (ZAR)</label>
+                        <input type="number" name="defaultPremium" placeholder="150.00" value="150" step="10">
+                        <small style="color:#666;">Standard price for members.</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Org Subscription Fee (ZAR)</label>
+                        <input type="number" name="subscriptionFee" placeholder="0.00" value="0" step="10">
+                        <small style="color:#666;">What Org pays Platform.</small>
+                    </div>
                 </div>
+
                 <div class="form-group">
                     <label>Paystack Subaccount Code</label>
-                    <input name="subaccount" placeholder="ACCT_xxxx (Leave empty for PENDING)">
+                    <input name="subaccount" placeholder="ACCT_xxxx (Leave empty if none)">
                 </div>
                 <button class="btn btn-primary" style="width:100%; padding:15px;">Create Organization</button>
             </form>
@@ -266,10 +276,14 @@ module.exports = function(app, { prisma }) {
                     name: req.body.name, 
                     email: req.body.email, 
                     code: code,
-                    type: req.body.type, // ✅ Captures Org Type
-                    adminPhone: req.body.adminPhone, // ✅ Captures OTP Phone
-                    subscriptionFee: parseFloat(req.body.subscriptionFee || 0), // ✅ Captures Fee
-                    subaccountCode: req.body.subaccount || 'PENDING',
+                    type: req.body.type,
+                    adminPhone: req.body.adminPhone,
+                    
+                    // ✅ Updated Schema Fields
+                    defaultPremium: parseFloat(req.body.defaultPremium || 150),
+                    subscriptionFee: parseFloat(req.body.subscriptionFee || 0),
+                    subaccountCode: req.body.subaccount || '', // Maps 'subaccount' input to 'subaccountCode' DB field
+
                     createdAt: new Date()
                 } 
             });
@@ -302,17 +316,23 @@ module.exports = function(app, { prisma }) {
 
                 <div class="form-group">
                     <label>Admin WhatsApp Number</label>
-                    <input name="adminPhone" value="${c.adminPhone}" required>
+                    <input name="adminPhone" value="${c.adminPhone || ''}" required>
                 </div>
 
                 <div class="form-group">
                     <label>Email Address</label>
-                    <input name="email" value="${c.email}" required>
+                    <input name="email" value="${c.email || ''}" required>
                 </div>
 
-                <div class="form-group">
-                    <label>Monthly Premium (ZAR)</label>
-                    <input type="number" name="subscriptionFee" value="${c.subscriptionFee || 0}">
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px;">
+                    <div class="form-group">
+                        <label>Member Default Premium</label>
+                        <input type="number" name="defaultPremium" value="${c.defaultPremium || 150}">
+                    </div>
+                    <div class="form-group">
+                        <label>Org Subscription Fee</label>
+                        <input type="number" name="subscriptionFee" value="${c.subscriptionFee || 0}">
+                    </div>
                 </div>
 
                 <div class="form-group">
@@ -335,6 +355,9 @@ module.exports = function(app, { prisma }) {
                     email: req.body.email, 
                     type: req.body.type,
                     adminPhone: req.body.adminPhone,
+                    
+                    // ✅ Updated Schema Fields
+                    defaultPremium: parseFloat(req.body.defaultPremium),
                     subscriptionFee: parseFloat(req.body.subscriptionFee),
                     subaccountCode: req.body.subaccount 
                 } 
@@ -413,10 +436,6 @@ module.exports = function(app, { prisma }) {
         } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
-    // ... (EDIT EVENT LOGIC - Similar structure, omitted for brevity but functionality preserved by keeping old routes if needed) ...
-    // Note: You can paste the existing edit routes here if you wish, or I can provide them.
-    // Assuming standard CRUD pattern follows.
-
     // ============================================================
     // 3. ADS
     // ============================================================
@@ -483,7 +502,7 @@ module.exports = function(app, { prisma }) {
     });
 
     // ============================================================
-    // 4. NEWS (Corrected Schema Mappings)
+    // 4. NEWS
     // ============================================================
     app.get('/admin/news', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
@@ -533,9 +552,9 @@ module.exports = function(app, { prisma }) {
         try {
             await prisma.news.create({ 
                 data: { 
-                    headline: req.body.headline, // ✅ Correct Schema Field
+                    headline: req.body.headline,
                     body: req.body.body, 
-                    churchId: parseInt(req.body.churchId), // ✅ Correct Relation
+                    churchId: parseInt(req.body.churchId),
                     status: req.body.status, 
                     expiryDate: safeDate(req.body.expiryDate) 
                 } 

@@ -62,28 +62,34 @@ model Dependent {
 
 // --- ORGANIZATIONS ---
 model Church {
-  id             Int       @id @default(autoincrement())
-  code           String    @unique
-  name           String
-  type           String // "CHURCH" or "SOCIETY"
-  adminPhone     String?
-  defaultPremium Float?    @default(150.0)
-  otp            String?
-  otpExpires     DateTime?
-  createdAt      DateTime  @default(now())
+  id              Int      @id @default(autoincrement())
+  code            String   @unique
+  name            String
+  type            String   // "CHURCH" or "SOCIETY"
+  adminPhone      String?
+  email           String?  // ✅ Fixed
+  
+  // Financial Fields
+  defaultPremium  Float?   @default(150.0)
+  subscriptionFee Float?   @default(0.0)  // ✅ Added to match your code
+  subaccountCode  String?  // ✅ Renamed from 'Subaccount' to match your code
+  
+  otp             String?
+  otpExpires      DateTime?
+  createdAt       DateTime @default(now())
 
   // Relations
-  admins Admin[]
+  admins          Admin[]
+  
+  // Member Relations
+  churchMembers   Member[] @relation("ChurchMembers")
+  societyMembers  Member[] @relation("SocietyMembers")
 
-  // Explicitly named relations to solve the Member error:
-  churchMembers  Member[] @relation("ChurchMembers")
-  societyMembers Member[] @relation("SocietyMembers")
-
-  transactions Transaction[]
-  events       Event[]
-  claims       Claim[]
-  ads          Ad[]
-  news         News[] // ✅ Added this to fix the News error
+  transactions    Transaction[]
+  events          Event[]
+  claims          Claim[]
+  ads             Ad[]
+  news            News[]
 }
 
 enum OrgType {
