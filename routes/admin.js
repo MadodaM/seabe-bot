@@ -10,6 +10,15 @@ const fs = require('fs');
 const crypto = require('crypto');
 const PDFDocument = require('pdfkit');
 const { decrypt } = require('../utils/crypto'); 
+const { decrypt } = require('../utils/crypto'); 
+const cloudinary = require('cloudinary').v2; // 👈 ADD THIS
+
+// 🛡️ Ensure Cloudinary is Configured
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
 // 🛡️ SECURE UPLOAD CONFIGURATION
 const upload = multer({ 
@@ -29,6 +38,45 @@ const upload = multer({
 const client = twilio(process.env.TWILIO_SID || 'AC_dummy', process.env.TWILIO_AUTH_TOKEN || 'dummy');
 
 // --- 🛠️ HELPERS ---
+// --- 🔐 CLOUDINARY SIGNER ---
+const getSecureUrl = (encryptedUrl) => {
+    if (!encryptedUrl) return null;
+    
+    // 1. Decrypt the URL stored in DB
+    const rawUrl = decrypt(encryptedUrl);
+    if (!rawUrl) return null;
+
+    // 2. If it's not a Cloudinary link, just return it
+    if (!rawUrl.includes('cloudinary')) return rawUrl;
+
+    try {
+        // 3. Extract the "Public ID" from the full URL
+        // Example input: .../upload/v12345/folder/my-id-doc.jpg
+        // We need: folder/my-id-doc
+        const parts = rawUrl.split('/upload/');
+        if (parts.length < 2) return rawUrl;
+
+        let publicId = parts[1];
+        // Remove version number (e.g., v1762...) if it exists
+        if (publicId.startsWith('v')) {
+            publicId = publicId.replace(/^v\d+\//, ''); 
+        }
+        // Remove file extension (e.g., .jpg, .png)
+        publicId = publicId.split('.')[0];
+
+        // 4. Generate a specialized "Signed URL" valid for 1 hour
+        return cloudinary.url(publicId, {
+            type: 'authenticated', // 👈 This unlocks the private file
+            sign_url: true,        // 👈 This adds the signature
+            secure: true,
+            expires_at: Math.floor(Date.now() / 1000) + 3600 // Valid for 1 hour
+        });
+    } catch (e) {
+        console.error("Signing Error:", e);
+        return rawUrl; // Fallback
+    }
+};
+
 const generateOTP = () => Math.floor(1000 + Math.random() * 9000).toString();
 const parseCookies = (req) => {
     const list = {};
@@ -159,8 +207,8 @@ router.get('/admin/:code/verifications', checkSession, async (req, res) => {
 
     const renderCard = (m, type) => {
         const realID = m.idNumber ? (decrypt(m.idNumber) || "Decrypt Error") : "N/A";
-        const idUrl = decrypt(m.idPhotoUrl);
-        const proofUrl = decrypt(m.proofOfAddressUrl);
+        const idUrl = getSecureUrl(m.idPhotoUrl);
+		const proofUrl = getSecureUrl(m.proofOfAddressUrl);
         const showActions = type === 'pending';
 
         return `<div class="card" style="border-left:5px solid ${type === 'pending' ? '#f1c40f' : (type === 'verified' ? '#2ecc71' : (type === 'incomplete' ? '#ccc' : '#e74c3c'))}">
