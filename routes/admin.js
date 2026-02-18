@@ -193,41 +193,62 @@ router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
 });
 
 // --- 🕵️ KYC VERIFICATION QUEUE (Safe) ---
-router.get('/admin/:code/verifications', checkSession, async (req, res) => {
-    if (req.org.type === 'CHURCH') return res.redirect(`/admin/${req.org.code}/dashboard`);
+// --- 5. MEMBER PROFILE & VERIFICATION ---
+    router.get('/admin/:code/member/:id', checkSession, async (req, res) => {
+        const { id } = req.params;
+        const member = await prisma.member.findUnique({
+            where: { id: parseInt(id) }
+        });
 
-    // Fetch ALL members
-    const allMembers = await prisma.member.findMany({ where: { churchCode: req.org.code } });
+        if (!member) return res.send("Member not found");
 
-    const pending = allMembers.filter(m => !m.isIdVerified && !m.rejectionReason && m.idNumber);
-    const verified = allMembers.filter(m => m.isIdVerified);
-    const rejected = allMembers.filter(m => !m.isIdVerified && m.rejectionReason);
-    const incomplete = allMembers.filter(m => !m.idNumber); 
-
-    const renderCard = (m, type) => {
-        const realID = m.idNumber ? (decrypt(m.idNumber) || "Decrypt Error") : "N/A";
-        const idUrl = getSecureUrl(m.idPhotoUrl);
-		const proofUrl = getSecureUrl(m.proofOfAddressUrl);
-        const showActions = type === 'pending';
-
-        return `<div class="card" style="border-left:5px solid ${type === 'pending' ? '#f1c40f' : (type === 'verified' ? '#2ecc71' : (type === 'incomplete' ? '#ccc' : '#e74c3c'))}">
-            <h3>👤 ${m.firstName} ${m.lastName} (${m.phone})</h3>
-            <p><strong>ID:</strong> ${realID}</p>
-            ${showActions ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-                ${idUrl ? `<div><small>ID Photo</small><a href="${idUrl}" target="_blank"><img src="${idUrl}" class="img-preview"></a></div>` : ''}
-                ${proofUrl ? `<div><small>Address Proof</small><a href="${proofUrl}" target="_blank"><img src="${proofUrl}" class="img-preview"></a></div>` : ''}
-            </div><br>
-            <form method="POST" action="/admin/${req.org.code}/verifications/action">
-                <input type="hidden" name="memberId" value="${m.id}">
-                <button name="action" value="approve" class="btn approve">✅ Approve Member</button>
-                <div style="margin-top:10px; display:flex; gap:5px;">
-                    <input name="reason" placeholder="Reason if rejecting..." style="margin-bottom:0;">
-                    <button name="action" value="reject" class="btn reject" style="width:auto;">❌ Reject</button>
+        // 🔐 CLOUDINARY SIGNING LOGIC
+        // If the URL is from Cloudinary, we might need to append a signature or transformation
+        // For now, we will try to use the 'secure' HTTPS version and strict transformations
+        let photoUrl = member.photoUrl || "";
+        
+        // If your Cloudinary is set to "Authenticated", basic URLs return 401.
+        // We can try to generate a fetch-format url or just pass the raw one if public.
+        // If you see 401, it usually means we need to use the API to generate a signed link.
+        // But simpler fix: Ensure we don't request a restricted transformation.
+        
+        res.send(`
+            <html>
+            <head>
+                <title>Member Profile</title>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                    body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; background: #f4f4f9; }
+                    .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+                    .btn { display: inline-block; padding: 10px 15px; background: #ddd; color: #333; text-decoration: none; border-radius: 4px; margin-right: 10px;}
+                    .btn-danger { background: #d9534f; color: white; border: none; cursor: pointer; }
+                    img { max-width: 100%; border-radius: 4px; border: 1px solid #ddd; margin-top: 10px; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <a href="/admin/${req.params.code}/dashboard" class="btn">← Back</a>
+                    
+                    <h2>👤 ${member.firstName} ${member.lastName}</h2>
+                    <p><strong>Phone:</strong> ${member.phone}</p>
+                    <p><strong>ID Number:</strong> ${member.idNumber || "Not provided"}</p>
+                    <p><strong>Status:</strong> ${member.idNumber ? '✅ Verified' : '⚠️ Pending KYC'}</p>
+                    
+                    <hr>
+                    <h3>🆔 Identity Document</h3>
+                    ${photoUrl 
+                        ? `<a href="${photoUrl}" target="_blank"><img src="${photoUrl}" alt="ID Document"></a><br><small>Click image to enlarge</small>` 
+                        : `<p style="color:red;">❌ No ID Photo Uploaded</p>`}
+                    
+                    <br><br><br>
+                    <form action="/admin/${req.params.code}/member/${id}/delete" method="POST" onsubmit="return confirm('⚠️ Are you sure? This deletes the member AND their payment history permanently.');">
+                        <button class="btn btn-danger">Delete Member</button>
+                    </form>
                 </div>
-            </form>` : ''}
-            ${m.rejectionReason ? `<p style="color:red; font-weight:bold;">⚠️ Reason: ${m.rejectionReason}</p>` : ''}
-        </div>`;
-    };
+            </body>
+            </html>
+        `);
+    });
 
     let html = `<h3>⏳ Pending Review (${pending.length})</h3>${pending.map(m => renderCard(m, 'pending')).join('') || '<p>None</p>'}`;
     html += `<h3>✅ Verified (${verified.length})</h3>${verified.map(m => renderCard(m, 'verified')).join('') || '<p>None</p>'}`;
