@@ -118,26 +118,122 @@ module.exports = (app, { prisma }) => {
         res.send(renderPage(req.org, 'dashboard', `<div class="card"><h3>💰 Collected (This Month)</h3><h1>R${total.toLocaleString()}</h1></div><div class="card"><h3>Recent Activity</h3><table>${tx.slice(0, 5).map(t => `<tr><td>${t.phone}</td><td>${t.type}</td><td>R${t.amount}</td></tr>`).join('')}</table></div>`));
     });
 
-    // --- 🕵️ VERIFICATIONS (FIXED: Relaxed Search + idPhotoUrl) ---
-    router.get('/admin/:code/verifications', checkSession, async (req, res) => {
-        // Fetch ALL members, then filter in code to avoid DB schema errors
-        const allMembers = await prisma.member.findMany({ where: { churchCode: req.params.code.toUpperCase() } });
+    // --- 👥 MEMBERS LIST (FIXED: Added Upload Form) ---
+    router.get('/admin/:code/members', checkSession, async (req, res) => {
+        const { q } = req.query;
+        const members = await prisma.member.findMany({ 
+            where: { churchCode: req.org.code, ...(q ? { OR: [{ phone: { contains: q } }, { lastName: { contains: q, mode: 'insensitive' } }] } : {}) },
+            orderBy: { lastName: 'asc' } 
+        });
+        const rows = members.map(m => `<tr><td><a href="/admin/${req.org.code}/member/${m.id}"><b>${m.firstName} ${m.lastName}</b></a></td><td>${m.phone}</td></tr>`).join('');
         
-        // Filter: Must have ID Photo OR ID Number (checks string length to be safe)
-        const queue = allMembers.filter(m => (m.idPhotoUrl && m.idPhotoUrl.length > 5) || (m.idNumber && m.idNumber.length > 5));
-
-        res.send(renderPage(req.org, 'verifications', `
-            <div class="card"><h3>📂 Verification Queue (${queue.length})</h3>
-            <table><thead><tr><th>Name</th><th>Status</th><th>Action</th></tr></thead>
-            <tbody>${queue.length > 0 ? queue.map(m => `<tr><td>${m.firstName}</td><td>${(m.idPhotoUrl && m.idPhotoUrl.length > 5) ? '📷 Photo' : '📝 Data'}</td><td><a href="/admin/${req.params.code}/member/${m.id}" class="btn" style="width:auto;padding:5px 10px;">View</a></td></tr>`).join('') : '<tr><td colspan="3">No items found.</td></tr>'}</tbody>
-            </table></div>`));
+        // 🛠️ RE-ADDED UPLOAD FORM
+        res.send(renderPage(req.org, 'members', `
+            <div class="card">
+                <div style="display:flex;gap:10px;justify-content:space-between;">
+                    <form style="flex:1;display:flex;gap:5px;">
+                        <input name="q" placeholder="Search name or phone..." value="${q || ''}">
+                        <button class="btn" style="width:auto;">Search</button>
+                    </form>
+                </div>
+                <hr style="margin:15px 0;border:0;border-top:1px solid #eee;">
+                <form method="POST" action="/admin/${req.org.code}/members/upload" enctype="multipart/form-data" style="background:#f8f9fa;padding:15px;border-radius:5px;">
+                    <label>📂 Bulk Import (CSV)</label>
+                    <div style="display:flex;gap:10px;align-items:center;">
+                        <input type="file" name="file" accept=".csv" required style="margin:0;background:white;">
+                        <button class="btn" style="width:auto;background:#0984e3;">Upload</button>
+                    </div>
+                    <small style="color:#666;">Columns: Name, Phone (e.g. 0831234567)</small>
+                </form>
+            </div>
+            <div class="card">
+                <h3>Member List (${members.length})</h3>
+                <table>${rows}</table>
+            </div>
+        `));
     });
 
-    // --- VERIFICATIONS ACTIONS ---
+    // --- UPLOAD HANDLER (FIXED: Flexible Columns) ---
+    router.post('/admin/:code/members/upload', checkSession, (req, res, next) => {
+        upload.single('file')(req, res, (err) => { if (err) return res.send(err.message); next(); });
+    }, async (req, res) => {
+        const results = [];
+        fs.createReadStream(req.file.path).pipe(csv()).on('data', (d) => results.push(d)).on('end', async () => {
+            let added = 0;
+            for (const r of results) {
+                // 🛠️ Flexible Column Matching
+                const phone = r.phone || r.Phone || r.mobile || r.Mobile || r['Phone Number'];
+                const name = r.firstName || r.Name || r['First Name'] || r.name;
+                
+                if (phone && name) {
+                    try { 
+                        // Clean phone number
+                        let cleanPhone = phone.replace(/\D/g, '');
+                        if (cleanPhone.length === 10 && cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+                        
+                        await prisma.member.upsert({ 
+                            where: { phone: cleanPhone }, 
+                            update: { firstName: name }, 
+                            create: { firstName: name, phone: cleanPhone, churchCode: req.org.code } 
+                        }); 
+                        added++;
+                    } catch (e) { console.error("Import Error:", e.message); }
+                }
+            }
+            fs.unlinkSync(req.file.path);
+            res.redirect(`/admin/${req.org.code}/members`);
+        });
+    });
+
+    // --- 🛡️ TEAM (FIXED: Added Name Field) ---
+    router.get('/admin/:code/team', checkSession, async (req, res) => {
+        try {
+            const admins = await prisma.admin.findMany({ where: { churchId: req.org.id } });
+            const rows = admins.map(a => `<tr><td>${a.name || 'Staff'}</td><td>${a.phone}</td></tr>`).join('');
+            
+            // 🛠️ RE-ADDED NAME INPUT
+            res.send(renderPage(req.org, 'team', `
+                <div class="card">
+                    <h3>Invite Team Member</h3>
+                    <form method="POST" action="/admin/${req.org.code}/team/add" style="display:flex;gap:10px;flex-wrap:wrap;">
+                        <input name="name" placeholder="Name (e.g. John)" required style="flex:1;">
+                        <input name="phone" placeholder="Phone (e.g. +27...)" required style="flex:1;">
+                        <button class="btn" style="width:auto;">Add Admin</button>
+                    </form>
+                </div>
+                <div class="card"><table>${rows}</table></div>
+            `));
+        } catch (e) { res.send(renderPage(req.org, 'team', `<div class="card"><h3>Team</h3><p>Not available.</p></div>`)); }
+    });
+
+    router.post('/admin/:code/team/add', checkSession, async (req, res) => {
+        try { 
+            // Normalize phone
+            let p = req.body.phone.replace(/\D/g, '');
+            if (p.length === 10 && p.startsWith('0')) p = '27' + p.substring(1);
+
+            await prisma.admin.create({ 
+                data: { 
+                    name: req.body.name, 
+                    phone: p, 
+                    churchId: req.org.id, 
+                    role: 'STAFF' 
+                } 
+            }); 
+        } catch(e){ console.log(e); }
+        res.redirect(`/admin/${req.org.code}/team`);
+    });
+
+    // --- 🕵️ VERIFICATIONS & ACTIONS ---
+    router.get('/admin/:code/verifications', checkSession, async (req, res) => {
+        const allMembers = await prisma.member.findMany({ where: { churchCode: req.params.code.toUpperCase() } });
+        const queue = allMembers.filter(m => (m.idPhotoUrl && m.idPhotoUrl.length > 5) || (m.idNumber && m.idNumber.length > 5));
+        res.send(renderPage(req.org, 'verifications', `<div class="card"><h3>📂 Verification Queue (${queue.length})</h3><table><thead><tr><th>Name</th><th>Status</th><th>Action</th></tr></thead><tbody>${queue.length > 0 ? queue.map(m => `<tr><td>${m.firstName}</td><td>${(m.idPhotoUrl && m.idPhotoUrl.length > 5) ? '📷 Photo' : '📝 Data'}</td><td><a href="/admin/${req.params.code}/member/${m.id}" class="btn" style="width:auto;padding:5px 10px;">View</a></td></tr>`).join('') : '<tr><td colspan="3">No items found.</td></tr>'}</tbody></table></div>`));
+    });
+
     router.post('/admin/:code/verifications/action', checkSession, async (req, res) => {
         const { memberId, action, reason } = req.body;
         const member = await prisma.member.findUnique({ where: { id: parseInt(memberId) } });
-
         if (member) {
             if (action === 'approve') {
                 await prisma.member.update({ where: { id: member.id }, data: { isIdVerified: true, verifiedAt: new Date(), rejectionReason: null } });
@@ -150,33 +246,17 @@ module.exports = (app, { prisma }) => {
         res.redirect(`/admin/${req.org.code}/verifications`);
     });
 
-    // --- 👤 MEMBER PROFILE (FIXED: idPhotoUrl + HTTPS) ---
+    // --- 👤 MEMBER PROFILE ---
     router.get('/admin/:code/member/:id', checkSession, async (req, res) => {
         const member = await prisma.member.findUnique({ where: { id: parseInt(req.params.id) } });
         if (!member) return res.send("Not Found");
-        
-        let photoUrl = member.idPhotoUrl || ""; // ✅ Fixed Column Name
+        let photoUrl = member.idPhotoUrl || ""; 
         if (photoUrl.startsWith('http:')) photoUrl = photoUrl.replace('http:', 'https:');
-
         res.send(`<html><head><title>Profile</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:sans-serif;padding:20px;max-width:600px;margin:0 auto;background:#f4f4f9}.card{background:white;padding:20px;border-radius:8px;}</style></head><body>
-            <div class="card"><a href="/admin/${req.params.code}/verifications">Back</a><h2>${member.firstName} ${member.lastName}</h2>
-            <p>ID: ${member.idNumber || 'N/A'}</p>
-            <hr>
-            ${photoUrl.length > 5 ? `<a href="${photoUrl}"><img src="${photoUrl}" style="max-width:100%;border-radius:5px;"></a>` : '<p style="color:red">No Photo</p>'}
-            <br><br>
-            <div style="background:#f0f2f5;padding:15px;">
-                <h4>Action</h4>
-                <form action="/admin/${req.params.code}/verifications/action" method="POST">
-                    <input type="hidden" name="memberId" value="${member.id}">
-                    <button name="action" value="approve" style="background:#2ecc71;color:white;padding:10px;border:none;cursor:pointer;">✅ Approve</button>
-                    <button name="action" value="reject" style="background:#e74c3c;color:white;padding:10px;border:none;cursor:pointer;">❌ Reject</button>
-                </form>
-            </div>
-            <br><a href="/admin/${req.params.code}/members/${member.phone}/pdf" style="display:block;margin-top:10px;">📄 Download Statement (PDF)</a>
-            </div></body></html>`);
+            <div class="card"><a href="/admin/${req.params.code}/verifications">Back</a><h2>${member.firstName} ${member.lastName}</h2><p>ID: ${member.idNumber || 'N/A'}</p><hr>${photoUrl.length > 5 ? `<a href="${photoUrl}"><img src="${photoUrl}" style="max-width:100%;border-radius:5px;"></a>` : '<p style="color:red">No Photo</p>'}<br><br><div style="background:#f0f2f5;padding:15px;"><h4>Action</h4><form action="/admin/${req.params.code}/verifications/action" method="POST"><input type="hidden" name="memberId" value="${member.id}"><button name="action" value="approve" style="background:#2ecc71;color:white;padding:10px;border:none;cursor:pointer;">✅ Approve</button> <button name="action" value="reject" style="background:#e74c3c;color:white;padding:10px;border:none;cursor:pointer;">❌ Reject</button></form></div><br><a href="/admin/${req.params.code}/members/${member.phone}/pdf" style="display:block;margin-top:10px;">📄 Download Statement (PDF)</a></div></body></html>`);
     });
 
-    // --- 📄 PDF STATEMENT (RESTORED) ---
+    // --- 📄 PDF & SETTINGS ---
     router.get('/admin/:code/members/:phone/pdf', checkSession, async (req, res) => {
         const m = await prisma.member.findUnique({ where: { phone: req.params.phone } }); 
         const doc = new PDFDocument();
@@ -184,37 +264,8 @@ module.exports = (app, { prisma }) => {
         doc.pipe(res);
         doc.fontSize(20).text(`${req.org.name}`, { align: 'center' });
         doc.fontSize(14).text(`Statement for ${m.firstName} ${m.lastName}`, { align: 'center' });
-        doc.moveDown();
-        doc.fontSize(12).text(`Date: ${new Date().toDateString()}`);
         doc.end();
     });
-
-    // --- 👥 MEMBERS LIST ---
-    router.get('/admin/:code/members', checkSession, async (req, res) => {
-        const { q } = req.query;
-        const members = await prisma.member.findMany({ 
-            where: { churchCode: req.org.code, ...(q ? { OR: [{ phone: { contains: q } }, { lastName: { contains: q, mode: 'insensitive' } }] } : {}) },
-            orderBy: { lastName: 'asc' } 
-        });
-        const rows = members.map(m => `<tr><td><a href="/admin/${req.org.code}/member/${m.id}"><b>${m.firstName} ${m.lastName}</b></a></td><td>${m.phone}</td></tr>`).join('');
-        res.send(renderPage(req.org, 'members', `<div class="card"><form><input name="q" placeholder="Search"><button class="btn">Search</button></form><br><table>${rows}</table></div>`));
-    });
-
-    // --- 🛡️ TEAM (RESTORED) ---
-    router.get('/admin/:code/team', checkSession, async (req, res) => {
-        try {
-            const admins = await prisma.admin.findMany({ where: { churchId: req.org.id } });
-            const rows = admins.map(a => `<tr><td>${a.name || 'Staff'}</td><td>${a.phone}</td></tr>`).join('');
-            res.send(renderPage(req.org, 'team', `<div class="card"><h3>Invite</h3><form method="POST" action="/admin/${req.org.code}/team/add"><input name="phone" placeholder="+27..." required><button class="btn">Add</button></form><table>${rows}</table></div>`));
-        } catch (e) { res.send(renderPage(req.org, 'team', `<div class="card"><h3>Team</h3><p>Not available.</p></div>`)); }
-    });
-
-    router.post('/admin/:code/team/add', checkSession, async (req, res) => {
-        try { await prisma.admin.create({ data: { ...req.body, churchId: req.org.id, role: 'STAFF' } }); } catch(e){}
-        res.redirect(`/admin/${req.org.code}/team`);
-    });
-
-    // --- ⚙️ SETTINGS & ADS (RESTORED) ---
     router.get('/admin/:code/settings', checkSession, (req, res) => res.send(renderPage(req.org, 'settings', `<div class="card"><h3>Settings</h3><p>${req.org.name}</p></div>`)));
     router.get('/admin/:code/ads', checkSession, (req, res) => res.send(renderPage(req.org, 'ads', `<div class="card"><h3>Ads</h3><p>Coming Soon</p></div>`)));
     router.get('/admin/:code/claims', checkSession, (req, res) => res.send(renderPage(req.org, 'claims', `<div class="card"><h3>Claims</h3><p>See Dashboard for Liability.</p></div>`)));
