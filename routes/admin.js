@@ -62,7 +62,7 @@ const renderPage = (org, activeTab, content) => {
 };
 
 // ==============================================
-// 🚀 MAIN MODULE EXPORT (The Fix!)
+// 🚀 MAIN MODULE EXPORT
 // ==============================================
 module.exports = (app, { prisma }) => {
 
@@ -96,23 +96,15 @@ module.exports = (app, { prisma }) => {
                 </form></body></html>`);
         }
 
-        // 2. Verify Admin Phone in Database
-        // Note: This requires an 'Admin' table linked to 'Church'
+        // 2. Verify Admin
         let admin = null;
         try {
             admin = await prisma.admin.findFirst({ where: { phone: phone.replace(/\D/g, ''), churchId: org.id } });
-        } catch(e) { console.log("Admin table might not exist yet"); }
-
-        // Fallback: Check if it's the Main Super Admin (optional)
-        if (!admin) {
-            // Check if phone matches the Organisation contact for fallback
-             // return res.send("<h3>❌ Unauthorized Phone Number. Ask your administrator to add you.</h3>");
-        }
+        } catch(e) { console.log("Admin table check failed"); }
 
         const otp = generateOTP();
         await prisma.church.update({ where: { id: org.id }, data: { otp, otpExpires: new Date(Date.now() + 300000) } });
         
-        // Send WhatsApp
         try {
             await sendWhatsApp(phone, `🔐 *${org.name} Admin Login*\nOTP: *${otp}*`);
         } catch (e) {
@@ -146,7 +138,7 @@ module.exports = (app, { prisma }) => {
             orderBy: { id: 'desc' } 
         });
         
-        // Safe check for Claims table existence
+        // Safe check for Claims
         let cl = [];
         try {
             if (!isChurch) cl = await prisma.claim.findMany({ where: { churchCode: req.org.code, status: 'PENDING' } });
@@ -172,13 +164,16 @@ module.exports = (app, { prisma }) => {
         res.send(renderPage(req.org, 'dashboard', cards + `<div class="card"><h3>Recent Activity</h3><table>${tx.slice(0, 5).map(t => `<tr><td>${t.phone}</td><td>${t.type}</td><td>R${t.amount}</td></tr>`).join('')}</table></div>`));
     });
 
-    // --- 🕵️ KYC VERIFICATION QUEUE ---
+    // --- 🕵️ KYC VERIFICATION QUEUE (FIXED) ---
     router.get('/admin/:code/verifications', checkSession, async (req, res) => {
         const { code } = req.params;
         const members = await prisma.member.findMany({
             where: { 
                 churchCode: code.toUpperCase(),
-                OR: [{ photoUrl: { not: null } }, { idNumber: { not: null } }]
+                OR: [
+                    { idPhotoUrl: { not: null } }, // 👈 FIXED: Was 'photoUrl'
+                    { idNumber: { not: null } }
+                ]
             }
         });
 
@@ -192,7 +187,7 @@ module.exports = (app, { prisma }) => {
                         <tr>
                             <td>${m.firstName} ${m.lastName}</td>
                             <td>${m.phone}</td>
-                            <td>${m.photoUrl ? '📷 Photo' : '📝 Data'}</td>
+                            <td>${m.idPhotoUrl ? '📷 Photo' : '📝 Data'}</td> 
                             <td><a href="/admin/${code}/member/${m.id}" class="btn" style="width:auto;padding:5px 10px;">View</a></td>
                         </tr>
                     `).join('')}
@@ -202,14 +197,14 @@ module.exports = (app, { prisma }) => {
         `));
     });
 
-    // --- 👤 MEMBER PROFILE (With Cloudinary Fix) ---
+    // --- 👤 MEMBER PROFILE (With Cloudinary Fix + Column Name Fix) ---
     router.get('/admin/:code/member/:id', checkSession, async (req, res) => {
         const { id } = req.params;
         const member = await prisma.member.findUnique({ where: { id: parseInt(id) } });
 
         if (!member) return res.send("Member not found");
 
-        let photoUrl = member.photoUrl || "";
+        let photoUrl = member.idPhotoUrl || ""; // 👈 FIXED: Was 'photoUrl'
         // Simple secure fix
         if (photoUrl && photoUrl.startsWith('http:')) photoUrl = photoUrl.replace('http:', 'https:');
 
