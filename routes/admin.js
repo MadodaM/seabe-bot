@@ -118,7 +118,7 @@ module.exports = (app, { prisma }) => {
         res.send(renderPage(req.org, 'dashboard', `<div class="card"><h3>💰 Collected (This Month)</h3><h1>R${total.toLocaleString()}</h1></div><div class="card"><h3>Recent Activity</h3><table>${tx.slice(0, 5).map(t => `<tr><td>${t.phone}</td><td>${t.type}</td><td>R${t.amount}</td></tr>`).join('')}</table></div>`));
     });
 
-    // --- 👥 MEMBERS LIST (FIXED: Added Upload Form) ---
+    // --- 👥 MEMBERS LIST ---
     router.get('/admin/:code/members', checkSession, async (req, res) => {
         const { q } = req.query;
         const members = await prisma.member.findMany({ 
@@ -127,7 +127,6 @@ module.exports = (app, { prisma }) => {
         });
         const rows = members.map(m => `<tr><td><a href="/admin/${req.org.code}/member/${m.id}"><b>${m.firstName} ${m.lastName}</b></a></td><td>${m.phone}</td></tr>`).join('');
         
-        // 🛠️ RE-ADDED UPLOAD FORM
         res.send(renderPage(req.org, 'members', `
             <div class="card">
                 <div style="display:flex;gap:10px;justify-content:space-between;">
@@ -143,7 +142,7 @@ module.exports = (app, { prisma }) => {
                         <input type="file" name="file" accept=".csv" required style="margin:0;background:white;">
                         <button class="btn" style="width:auto;background:#0984e3;">Upload</button>
                     </div>
-                    <small style="color:#666;">Columns: Name, Phone (e.g. 0831234567)</small>
+                    <small style="color:#666;">Columns: Name, Surname, Phone</small>
                 </form>
             </div>
             <div class="card">
@@ -153,31 +152,55 @@ module.exports = (app, { prisma }) => {
         `));
     });
 
-    // --- UPLOAD HANDLER (FIXED: Flexible Columns) ---
+    // --- UPLOAD HANDLER (FIXED: Handling Last Name) ---
     router.post('/admin/:code/members/upload', checkSession, (req, res, next) => {
         upload.single('file')(req, res, (err) => { if (err) return res.send(err.message); next(); });
     }, async (req, res) => {
         const results = [];
         fs.createReadStream(req.file.path).pipe(csv()).on('data', (d) => results.push(d)).on('end', async () => {
             let added = 0;
+            let errors = 0;
             for (const r of results) {
-                // 🛠️ Flexible Column Matching
+                // 1. Get Phone
                 const phone = r.phone || r.Phone || r.mobile || r.Mobile || r['Phone Number'];
-                const name = r.firstName || r.Name || r['First Name'] || r.name;
                 
-                if (phone && name) {
+                // 2. Get First Name
+                let firstName = r.firstName || r.Name || r['First Name'] || r.name || r.FirstName;
+                
+                // 3. Get Last Name (Or try to split the First Name if it has spaces)
+                let lastName = r.lastName || r.Surname || r['Last Name'] || r.LastName || "";
+
+                if (firstName && !lastName && firstName.trim().includes(' ')) {
+                    const parts = firstName.trim().split(' ');
+                    firstName = parts[0];
+                    lastName = parts.slice(1).join(' '); // Use rest as last name
+                }
+
+                // 4. Fallback for Last Name (Database requires it)
+                if (!lastName) lastName = "."; 
+
+                if (phone && firstName) {
                     try { 
-                        // Clean phone number
                         let cleanPhone = phone.replace(/\D/g, '');
                         if (cleanPhone.length === 10 && cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
                         
+                        // 🛠️ FIX: Added lastName to CREATE block
                         await prisma.member.upsert({ 
                             where: { phone: cleanPhone }, 
-                            update: { firstName: name }, 
-                            create: { firstName: name, phone: cleanPhone, churchCode: req.org.code } 
+                            update: { firstName: firstName, lastName: lastName }, 
+                            create: { 
+                                firstName: firstName, 
+                                lastName: lastName, // <--- The Missing Field!
+                                phone: cleanPhone, 
+                                churchCode: req.org.code,
+                                status: 'ACTIVE'
+                            } 
                         }); 
                         added++;
-                    } catch (e) { console.error("Import Error:", e.message); }
+                    } catch (e) { 
+                        console.error("Import Error:", e.message); 
+                        errors++;
+                    }
                 }
             }
             fs.unlinkSync(req.file.path);
@@ -185,13 +208,12 @@ module.exports = (app, { prisma }) => {
         });
     });
 
-    // --- 🛡️ TEAM (FIXED: Added Name Field) ---
+    // --- 🛡️ TEAM ---
     router.get('/admin/:code/team', checkSession, async (req, res) => {
         try {
             const admins = await prisma.admin.findMany({ where: { churchId: req.org.id } });
             const rows = admins.map(a => `<tr><td>${a.name || 'Staff'}</td><td>${a.phone}</td></tr>`).join('');
             
-            // 🛠️ RE-ADDED NAME INPUT
             res.send(renderPage(req.org, 'team', `
                 <div class="card">
                     <h3>Invite Team Member</h3>
@@ -208,7 +230,6 @@ module.exports = (app, { prisma }) => {
 
     router.post('/admin/:code/team/add', checkSession, async (req, res) => {
         try { 
-            // Normalize phone
             let p = req.body.phone.replace(/\D/g, '');
             if (p.length === 10 && p.startsWith('0')) p = '27' + p.substring(1);
 
