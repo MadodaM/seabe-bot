@@ -250,14 +250,6 @@ router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
         `);
     });
 
-    let html = `<h3>⏳ Pending Review (${pending.length})</h3>${pending.map(m => renderCard(m, 'pending')).join('') || '<p>None</p>'}`;
-    html += `<h3>✅ Verified (${verified.length})</h3>${verified.map(m => renderCard(m, 'verified')).join('') || '<p>None</p>'}`;
-    html += `<h3>❌ Rejected (${rejected.length})</h3>${rejected.map(m => renderCard(m, 'rejected')).join('') || '<p>None</p>'}`;
-    html += `<h3>⚪ Incomplete (${incomplete.length})</h3>${incomplete.map(m => renderCard(m, 'incomplete')).join('') || '<p>None</p>'}`;
-
-    res.send(renderPage(req.org, 'verifications', html));
-});
-
 router.post('/admin/:code/verifications/action', checkSession, async (req, res) => {
     if (req.org.type === 'CHURCH') return res.status(403).send("Unauthorized");
     const { memberId, action, reason } = req.body;
