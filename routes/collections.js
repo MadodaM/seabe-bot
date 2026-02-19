@@ -156,6 +156,7 @@ module.exports = (app) => {
     });
 
     // --- BLAST CAMPAIGN ---
+    // --- BLAST CAMPAIGN ---
     router.post('/admin/:code/collections/blast', checkAccess, async (req, res) => {
         const prisma = new (require('@prisma/client').PrismaClient)();
         const pendingDebts = await prisma.collection.findMany({
@@ -166,8 +167,8 @@ module.exports = (app) => {
         for (const debt of pendingDebts) {
             try {
                 // 💳 1. Call your existing Paystack Service
-                const email = debt.email || `${debt.phone}@seabe.local`;
-                const uniqueRef = `COL_${debt.reference}_${Date.now()}`; // Added timestamp to prevent duplicate reference errors
+                const email = debt.email || `${debt.phone}@seabe.co.za`; 
+                const uniqueRef = `COL_${debt.reference}_${Date.now()}`; 
                 
                 let payLink = await createPaymentLink(
                     debt.amount, 
@@ -187,8 +188,8 @@ module.exports = (app) => {
                 // ⏳ 3. Brief Delay for Cloudinary Propagation
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 
-                // 💬 4. Send Message
-                const message = `Dear ${debt.firstName},\n\nPlease find attached your outstanding statement (Ref: ${debt.reference}).\n\n💰 *Amount Due: R${debt.amount}*\n\n🔒 *Statement Password:* Your Phone Number (last 6 digits)\n\n👉 *Click here to pay securely via Paystack:* \n${payLink}`;
+                // 💬 4. Send Message (UPDATED WITH ORG NAME)
+                const message = `Dear ${debt.firstName},\n\nPlease find attached your outstanding statement for *${req.org.name}* (Ref: ${debt.reference}).\n\n💰 *Amount Due: R${debt.amount}*\n\n🔒 *Statement Password:* Your Phone Number (last 6 digits)\n\n👉 *Click here to pay securely via Paystack:* \n${payLink}`;
                 
                 const success = await sendWhatsApp(debt.phone, message, pdfUrl);
                 
