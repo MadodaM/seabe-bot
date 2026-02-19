@@ -47,6 +47,7 @@ model Member {
   dependents   Dependent[]
   transactions Transaction[]
   claims       Claim[]
+  collections Collection[]
 }
 
 model Dependent {
@@ -176,4 +177,20 @@ model Admin {
   church    Church   @relation(fields: [churchId], references: [id])
   churchId  Int
   createdAt DateTime @default(now())
+}
+
+model Collection {
+  id          Int      @id @default(autoincrement())
+  churchCode  String   
+  firstName   String
+  lastName    String?
+  phone       String
+  email       String?
+  amount      Float
+  reference   String
+  status      String   @default("PENDING") 
+  createdAt   DateTime @default(now())
+  
+  memberId    Int?
+  member      Member?  @relation(fields: [memberId], references: [id])
 }

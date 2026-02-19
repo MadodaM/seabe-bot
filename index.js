@@ -23,7 +23,7 @@ const { handleChurchMessage } = require('./churchBot');
 
 const adminRoutes = require('./routes/admin');
 const { router: kycRouter } = require('./routes/kyc');
-
+const collectionRoutes = require('./routes/collections'); 
 
 //app.use('/', adminRoutes);
 
@@ -55,6 +55,7 @@ const formatPhone = (phone) => {
 };
 
 app.use('/kyc', require('./routes/kyc').router);
+collectionRoutes(app);
 
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
