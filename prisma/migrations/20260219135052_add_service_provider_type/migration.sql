@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "OrgType" ADD VALUE 'SERVICE_PROVIDER';

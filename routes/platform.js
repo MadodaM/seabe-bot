@@ -59,6 +59,9 @@ function renderAdminPage(title, content, error = null) {
                 .tag-church { background:#eefdf5; color:green; border:1px solid green; }
                 .tag-society { background:#eefafc; color:#0984e3; border:1px solid #0984e3; }
                 .tag-npo { background:#fff8e1; color:#f39c12; border:1px solid #f39c12; }
+				.tag-npo { background:#fff8e1; color:#f39c12; border:1px solid #f39c12; }
+                .tag-provider { background:#f5eef8; color:#8e44ad; border:1px solid #8e44ad; }
+				
                 
                 /* Buttons */
                 .btn { padding: 8px 15px; border-radius: 4px; text-decoration: none; font-size: 13px; font-weight: bold; cursor: pointer; border: none; display: inline-block; transition: 0.2s; }
@@ -179,10 +182,17 @@ module.exports = function(app, { prisma }) {
                 orderBy: { createdAt: 'desc' } 
             });
 
-            const rows = items.map(c => `
+            const rows = items.map(c => {
+                // Assign Colors based on Type
+                let badgeClass = 'tag-church';
+                if (c.type === 'BURIAL_SOCIETY') badgeClass = 'tag-society';
+                if (c.type === 'NON_PROFIT') badgeClass = 'tag-npo';
+                if (c.type === 'SERVICE_PROVIDER') badgeClass = 'tag-provider'; // 👈 New Badge
+
+                return `
                 <tr>
                     <td><strong>${c.name}</strong><br><span style="font-size:11px; color:#999;">${c.email || 'No Email'}</span></td>
-                    <td><span class="tag tag-church">${c.type}</span></td>
+                    <td><span class="tag ${badgeClass}">${c.type.replace('_', ' ')}</span></td>
                     <td><code>${c.code}</code></td>
                     <td>${c.subaccountCode ? '✅ Linked' : '<span style="color:orange">Pending</span>'}</td>
                     <td style="text-align:right;">
@@ -190,7 +200,8 @@ module.exports = function(app, { prisma }) {
                         <a href="/admin/${c.code}/collections" target="_blank" class="btn btn-collection">💰 Collections</a>
                     </td>
                 </tr>
-            `).join('');
+                `;
+            }).join('');
 
             res.send(renderAdminPage('Manage Organizations', `
                 <div style="display:flex; justify-content:space-between; margin-bottom:20px; align-items:center;">
@@ -208,17 +219,25 @@ module.exports = function(app, { prisma }) {
         } catch (e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
+    // 2. ADD ORGANIZATION FORM
     app.get('/admin/churches/add', (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         res.send(renderAdminPage('Add New Organization', `
             <form method="POST" class="card-form">
-                <div class="form-group"><label>Type</label><select name="type"><option value="CHURCH">Church</option><option value="BURIAL_SOCIETY">Society</option><option value="NON_PROFIT">NGO</option></select></div>
+                <div class="form-group">
+                    <label>Type</label>
+                    <select name="type">
+                        <option value="CHURCH">Church</option>
+                        <option value="BURIAL_SOCIETY">Society</option>
+                        <option value="NON_PROFIT">NGO</option>
+                        <option value="SERVICE_PROVIDER">Service Provider 💼</option> </select>
+                </div>
                 <div class="form-group"><label>Name</label><input name="name" required></div>
                 <div class="form-group"><label>Email</label><input name="email" required></div>
                 <div class="form-group"><label>Admin WhatsApp</label><input name="adminPhone" required placeholder="2782..."></div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px;">
-                    <div class="form-group"><label>Premium (R)</label><input type="number" name="defaultPremium" value="150"></div>
-                    <div class="form-group"><label>Sub Fee (R)</label><input type="number" name="subscriptionFee" value="0"></div>
+                    <div class="form-group"><label>Premium/Fee (R)</label><input type="number" name="defaultPremium" value="150"></div>
+                    <div class="form-group"><label>Platform Sub Fee (R)</label><input type="number" name="subscriptionFee" value="0"></div>
                 </div>
                 <div class="form-group"><label>Paystack Code</label><input name="subaccount"></div>
                 <button class="btn btn-primary" style="width:100%">Create Organization</button>
