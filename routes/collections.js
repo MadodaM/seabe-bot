@@ -6,17 +6,12 @@ const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const cloudinary = require('cloudinary').v2;
 const { sendWhatsApp } = require('../services/whatsapp'); 
+const { createPaymentLink } = require('../services/paystack'); // 🔗 IMPORT EXISTING PAYSTACK LOGIC
 
 // 1. Configure Uploads
 const upload = multer({ dest: 'uploads/' });
 
-// 2. Helper: Generate Payment Link
-const generatePaymentLink = (amount, reference) => {
-    // Replace with actual Yoco/Netcash logic later
-    return `https://pay.seabe.co.za/pay?ref=${reference}&amt=${amount}`; 
-};
-
-// 3. Helper: Create & Encrypt PDF
+// 2. Helper: Create & Encrypt PDF
 const createAndUploadStatement = async (debtor, orgName) => {
     return new Promise((resolve, reject) => {
         const doc = new PDFDocument({
@@ -25,7 +20,6 @@ const createAndUploadStatement = async (debtor, orgName) => {
             permissions: { printing: 'highResolution', copying: false, modifying: false }
         });
 
-        // Clean Reference for Filename
         const cleanRef = debtor.reference.replace(/[^a-zA-Z0-9-_]/g, '');
         const pdfPath = `uploads/statement_${cleanRef}.pdf`;
         
@@ -42,16 +36,15 @@ const createAndUploadStatement = async (debtor, orgName) => {
         doc.text(`This is a reminder of your outstanding balance.`);
         doc.moveDown();
         doc.fontSize(16).text(`Amount Due: R${debtor.amount.toFixed(2)}`, { align: 'right' });
-        doc.fontSize(10).text(`* Please use the payment link sent via WhatsApp to settle immediately.`, { align: 'center', margin: 50 });
+        doc.fontSize(10).text(`* Please use the secure payment link sent via WhatsApp to settle immediately.`, { align: 'center', margin: 50 });
         doc.end();
 
         writeStream.on('finish', async () => {
             try {
-                // 🛠️ FIX: Force .pdf extension in Public ID
                 const result = await cloudinary.uploader.upload(pdfPath, {
                     resource_type: 'raw', 
                     folder: 'statements',
-                    public_id: `stmt_${cleanRef}.pdf`, // <--- CRITICAL FIX
+                    public_id: `stmt_${cleanRef}.pdf`,
                     use_filename: false,
                     unique_filename: false,
                     overwrite: true,
@@ -60,12 +53,8 @@ const createAndUploadStatement = async (debtor, orgName) => {
                 });
                 
                 fs.unlinkSync(pdfPath);
-                
-                // Ensure HTTPS
                 let secureUrl = result.secure_url;
                 if (secureUrl.startsWith('http:')) secureUrl = secureUrl.replace('http:', 'https:');
-                
-                console.log(`📂 PDF Uploaded: ${secureUrl}`);
                 resolve(secureUrl);
             } catch (e) {
                 console.error("Cloudinary Upload Error:", e);
@@ -93,6 +82,7 @@ module.exports = (app) => {
         if (phoneCookie) {
             const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
             const admin = await prisma.admin.findFirst({ where: { phone: phoneCookie, churchId: org.id } });
+            
             if (admin && admin.role === 'SUPER_ADMIN') {
                 req.org = org;
                 return next(); 
@@ -101,7 +91,7 @@ module.exports = (app) => {
         return res.status(403).send("<h1>🚫 Access Denied</h1><p>You must be a Super Admin to access Collections.</p>");
     };
 
-    // --- VIEW PAGE ---
+    // --- VIEW CAMPAIGN PAGE ---
     router.get('/admin/:code/collections', checkAccess, async (req, res) => {
         const prisma = new (require('@prisma/client').PrismaClient)();
         const debts = await prisma.collection.findMany({ 
@@ -113,22 +103,23 @@ module.exports = (app) => {
         const pending = debts.filter(d => d.status === 'PENDING').length;
 
         res.send(`
-            <html><head><title>Collections</title><meta name="viewport" content="width=device-width,initial-scale=1">
+            <html><head><title>Collections | ${req.org.name}</title><meta name="viewport" content="width=device-width,initial-scale=1">
             <style>body{font-family:sans-serif;padding:20px;background:#f4f7f6}.card{background:white;padding:20px;border-radius:8px;box-shadow:0 2px 5px rgba(0,0,0,0.1);margin-bottom:20px}table{width:100%;border-collapse:collapse}td,th{padding:10px;border-bottom:1px solid #eee;text-align:left}.btn{padding:10px;background:#1e272e;color:white;text-decoration:none;border-radius:5px;cursor:pointer;border:none}</style>
             </head><body>
             <div class="card">
-                <a href="/admin/churches">← Back</a>
+                <a href="/admin/churches">← Back to Platform</a>
                 <h2>💰 Collections: ${req.org.name}</h2>
-                <p>Outstanding: <strong>R${total.toLocaleString()}</strong></p>
+                <p>Total Outstanding: <strong>R${total.toLocaleString()}</strong></p>
                 <form method="POST" action="/admin/${req.params.code}/collections/upload" enctype="multipart/form-data" style="background:#eee;padding:15px;border-radius:5px;">
-                    <h4>1. Upload CSV</h4>
+                    <h4>1. Upload Debtor CSV</h4>
                     <input type="file" name="file" accept=".csv" required>
-                    <button class="btn">Upload</button>
+                    <button class="btn">Upload & Preview</button>
+                    <br><small>Columns: Name, Phone, Amount, Reference</small>
                 </form>
             </div>
             <div class="card">
-                <h4>2. Queue (${pending})</h4>
-                ${pending > 0 ? `<form method="POST" action="/admin/${req.params.code}/collections/blast"><button class="btn" style="background:#c0392b;width:100%">🚀 SEND MESSAGES</button></form>` : '<p>No pending items.</p>'}
+                <h4>2. Campaign Queue (${pending} Pending)</h4>
+                ${pending > 0 ? `<form method="POST" action="/admin/${req.params.code}/collections/blast"><button class="btn" style="background:#c0392b;width:100%">🚀 LAUNCH CAMPAIGN (SEND PDF + PAYSTACK LINK)</button></form>` : '<p>No pending messages.</p>'}
                 <br><table><thead><tr><th>Name</th><th>Phone</th><th>Amount</th><th>Status</th></tr></thead><tbody>${debts.map(d => `<tr><td>${d.firstName}</td><td>${d.phone}</td><td>R${d.amount}</td><td>${d.status}</td></tr>`).join('')}</tbody></table>
             </div></body></html>
         `);
@@ -143,7 +134,8 @@ module.exports = (app) => {
                 const phone = (r.Phone || r.Mobile || '').replace(/\D/g, '');
                 const amount = parseFloat(r.Amount || r.Balance || 0);
                 const name = r.Name || r.FirstName;
-                const cleanRef = (r.Reference || r.Ref || `INV-${Math.floor(Math.random()*10000)}`).replace(/[^a-zA-Z0-9-_]/g, '');
+                const rawRef = r.Reference || r.Ref || `INV-${Math.floor(Math.random()*10000)}`;
+                const ref = rawRef.replace(/[^a-zA-Z0-9-_]/g, '');
 
                 if (phone && amount > 0) {
                     await prisma.collection.create({
@@ -152,7 +144,7 @@ module.exports = (app) => {
                             firstName: name,
                             phone: phone.startsWith('0') ? '27'+phone.substring(1) : phone,
                             amount: amount,
-                            reference: cleanRef,
+                            reference: ref,
                             status: 'PENDING'
                         }
                     });
@@ -163,22 +155,47 @@ module.exports = (app) => {
         });
     });
 
-    // --- BLAST ---
+    // --- BLAST CAMPAIGN ---
     router.post('/admin/:code/collections/blast', checkAccess, async (req, res) => {
         const prisma = new (require('@prisma/client').PrismaClient)();
         const pendingDebts = await prisma.collection.findMany({
             where: { churchCode: req.params.code.toUpperCase(), status: 'PENDING' },
-            take: 10
+            take: 10 
         });
 
         for (const debt of pendingDebts) {
             try {
-                const payLink = generatePaymentLink(debt.amount, debt.reference);
+                // 💳 1. Call your existing Paystack Service
+                const email = debt.email || `${debt.phone}@seabe.local`;
+                const uniqueRef = `COL_${debt.reference}_${Date.now()}`; // Added timestamp to prevent duplicate reference errors
+                
+                let payLink = await createPaymentLink(
+                    debt.amount, 
+                    uniqueRef, 
+                    email, 
+                    req.org.subaccountCode, 
+                    debt.phone, 
+                    req.org.name
+                );
+                
+                // Fallback just in case Paystack API fails
+                if (!payLink) payLink = `https://pay.seabe.co.za/pay?ref=${uniqueRef}&amt=${debt.amount}`;
+
+                // 📄 2. Generate PDF
                 const pdfUrl = await createAndUploadStatement({ ...debt, idNumber: null }, req.org.name);
-                const message = `Dear ${debt.firstName},\n\nPlease find attached your outstanding statement (Ref: ${debt.reference}).\n\n💰 *Amount Due: R${debt.amount}*\n\n🔒 *Statement Password:* Your Phone Number (last 6 digits)\n\n👉 *Click here to pay:* ${payLink}`;
+                
+                // ⏳ 3. Brief Delay for Cloudinary Propagation
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // 💬 4. Send Message
+                const message = `Dear ${debt.firstName},\n\nPlease find attached your outstanding statement (Ref: ${debt.reference}).\n\n💰 *Amount Due: R${debt.amount}*\n\n🔒 *Statement Password:* Your Phone Number (last 6 digits)\n\n👉 *Click here to pay securely via Paystack:* \n${payLink}`;
                 
                 const success = await sendWhatsApp(debt.phone, message, pdfUrl);
-                if(success) await prisma.collection.update({ where: { id: debt.id }, data: { status: 'SENT' } });
+                
+                if (success) {
+                    await prisma.collection.update({ where: { id: debt.id }, data: { status: 'SENT' } });
+                }
+
             } catch (e) { console.error("Loop Error:", e); }
         }
         res.redirect(`/admin/${req.params.code}/collections`);
