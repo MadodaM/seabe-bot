@@ -5,31 +5,30 @@ const csv = require('csv-parser');
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const cloudinary = require('cloudinary').v2;
-const { sendWhatsApp } = require('../services/whatsapp'); // Ensure this supports media
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const { sendWhatsApp } = require('../services/whatsapp'); 
 
 // 1. Configure Uploads
 const upload = multer({ dest: 'uploads/' });
 
-// 2. Helper: Generate Payment Link (Placeholder for Yoco/Netcash/PayFast)
+// 2. Helper: Generate Payment Link
 const generatePaymentLink = (amount, reference) => {
-    // Replace this with your actual Payment Gateway Logic
-    // Example: https://pay.yoco.com/your-business?amount=${amount}&ref=${reference}
+    // Replace with your actual Payment Gateway Logic (Yoco/Netcash)
     return `https://pay.seabe.co.za/pay?ref=${reference}&amt=${amount}`; 
 };
 
-// 3. Helper: Create & Encrypt PDF, Upload to Cloudinary
+// 3. Helper: Create & Encrypt PDF
 const createAndUploadStatement = async (debtor, orgName) => {
     return new Promise((resolve, reject) => {
         const doc = new PDFDocument({
-            // 🔐 ENCRYPTION: User must enter their ID/Phone to open
             userPassword: debtor.idNumber || debtor.phone.slice(-6), 
             ownerPassword: process.env.ADMIN_PASSWORD || 'admin123',
             permissions: { printing: 'highResolution', copying: false, modifying: false }
         });
 
-        const pdfPath = `uploads/statement_${debtor.reference}.pdf`;
+        // 🛠️ FIX 1: Sanitize Filename (Remove spaces/special chars)
+        const cleanRef = debtor.reference.replace(/[^a-zA-Z0-9-_]/g, '');
+        const pdfPath = `uploads/statement_${cleanRef}.pdf`;
+        
         const writeStream = fs.createWriteStream(pdfPath);
         doc.pipe(writeStream);
 
@@ -48,17 +47,26 @@ const createAndUploadStatement = async (debtor, orgName) => {
 
         writeStream.on('finish', async () => {
             try {
-                // Upload to Cloudinary so WhatsApp can access it
+                // 🛠️ FIX 2: Explicit Public Access & Explicit Public ID
                 const result = await cloudinary.uploader.upload(pdfPath, {
-                    resource_type: 'raw', // Important for PDFs
+                    resource_type: 'raw', 
                     folder: 'statements',
-                    use_filename: true
+                    public_id: `stmt_${cleanRef}`, // Force clean name in Cloudinary
+                    use_filename: false, // Don't use local filename, use public_id
+                    type: 'upload', // 'upload' = Public, 'authenticated' = Private
+                    access_mode: 'public'
                 });
                 
-                // Cleanup local file
                 fs.unlinkSync(pdfPath);
-                resolve(result.secure_url);
+                
+                // 🛠️ FIX 3: Ensure HTTPS
+                let secureUrl = result.secure_url;
+                if (secureUrl.startsWith('http:')) secureUrl = secureUrl.replace('http:', 'https:');
+                
+                console.log(`📂 PDF Uploaded: ${secureUrl}`); // Log for debugging
+                resolve(secureUrl);
             } catch (e) {
+                console.error("Cloudinary Upload Error:", e);
                 reject(e);
             }
         });
@@ -66,61 +74,86 @@ const createAndUploadStatement = async (debtor, orgName) => {
 };
 
 module.exports = (app) => {
+    // 🛡️ SECURITY MIDDLEWARE
+    const checkAccess = async (req, res, next) => {
+        const { code } = req.params;
+        const prisma = new (require('@prisma/client').PrismaClient)();
+        
+        const list = {}, rc = req.headers.cookie;
+        rc && rc.split(';').forEach(c => { const p = c.split('='); list[p.shift().trim()] = decodeURI(p.join('=')); });
+
+        // 1. CHECK: Super User (Platform)
+        if (list['seabe_admin_session'] === (process.env.ADMIN_SECRET || 'secret_token_123')) {
+            req.org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
+            return next(); 
+        }
+
+        // 2. CHECK: Client Super Admin
+        const phoneCookie = list[`phone_${code}`];
+        if (phoneCookie) {
+            const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
+            const admin = await prisma.admin.findFirst({ where: { phone: phoneCookie, churchId: org.id } });
+            
+            if (admin && admin.role === 'SUPER_ADMIN') {
+                req.org = org;
+                return next(); 
+            }
+        }
+
+        return res.status(403).send("<h1>🚫 Access Denied</h1><p>You must be a Super Admin to access Collections.</p>");
+    };
 
     // --- A. VIEW CAMPAIGN PAGE ---
-    router.get('/admin/:code/collections', async (req, res) => {
-        const { code } = req.params;
+    router.get('/admin/:code/collections', checkAccess, async (req, res) => {
+        const prisma = new (require('@prisma/client').PrismaClient)();
         const debts = await prisma.collection.findMany({ 
-            where: { churchCode: code.toUpperCase() },
+            where: { churchCode: req.params.code.toUpperCase() },
             orderBy: { id: 'desc' }
         });
 
-        // Calculate Stats
         const total = debts.reduce((sum, d) => sum + d.amount, 0);
         const pending = debts.filter(d => d.status === 'PENDING').length;
 
         res.send(`
-            <html><head><title>Collections</title><meta name="viewport" content="width=device-width,initial-scale=1">
+            <html><head><title>Collections | ${req.org.name}</title><meta name="viewport" content="width=device-width,initial-scale=1">
             <style>body{font-family:sans-serif;padding:20px;background:#f4f7f6}.card{background:white;padding:20px;border-radius:8px;box-shadow:0 2px 5px rgba(0,0,0,0.1);margin-bottom:20px}table{width:100%;border-collapse:collapse}td,th{padding:10px;border-bottom:1px solid #eee;text-align:left}.btn{padding:10px;background:#1e272e;color:white;text-decoration:none;border-radius:5px;cursor:pointer;border:none}</style>
             </head><body>
             <div class="card">
-                <a href="/admin/${code}/dashboard">← Back</a>
-                <h2>💰 Early Collections Campaign</h2>
+                <a href="/admin/churches">← Back to Platform</a>
+                <h2>💰 Collections: ${req.org.name}</h2>
                 <p>Total Outstanding: <strong>R${total.toLocaleString()}</strong></p>
                 
-                <form method="POST" action="/admin/${code}/collections/upload" enctype="multipart/form-data" style="background:#eee;padding:15px;border-radius:5px;">
+                <form method="POST" action="/admin/${req.params.code}/collections/upload" enctype="multipart/form-data" style="background:#eee;padding:15px;border-radius:5px;">
                     <h4>1. Upload Debtor CSV</h4>
                     <input type="file" name="file" accept=".csv" required>
                     <button class="btn">Upload & Preview</button>
-                    <br><small>Columns: Name, Phone, Amount, Reference, IDNumber (Optional)</small>
+                    <br><small>Columns: Name, Phone, Amount, Reference</small>
                 </form>
             </div>
 
             <div class="card">
-                <h4>Campaign Queue (${pending} Pending)</h4>
-                ${pending > 0 ? `<form method="POST" action="/admin/${code}/collections/blast"><button class="btn" style="background:#c0392b;width:100%">🚀 LAUNCH CAMPAIGN (SEND WHATSAPP)</button></form>` : ''}
+                <h4>2. Campaign Queue (${pending} Pending)</h4>
+                ${pending > 0 ? `<form method="POST" action="/admin/${req.params.code}/collections/blast"><button class="btn" style="background:#c0392b;width:100%">🚀 LAUNCH CAMPAIGN (SEND PDF + LINK)</button></form>` : '<p>No pending messages.</p>'}
                 <br>
-                <table>
-                    <thead><tr><th>Name</th><th>Phone</th><th>Amount</th><th>Status</th></tr></thead>
-                    <tbody>
-                        ${debts.map(d => `<tr><td>${d.firstName}</td><td>${d.phone}</td><td>R${d.amount}</td><td>${d.status}</td></tr>`).join('')}
-                    </tbody>
-                </table>
-            </div>
-            </body></html>
+                <table><thead><tr><th>Name</th><th>Phone</th><th>Amount</th><th>Status</th></tr></thead><tbody>
+                    ${debts.map(d => `<tr><td>${d.firstName}</td><td>${d.phone}</td><td>R${d.amount}</td><td>${d.status}</td></tr>`).join('')}
+                </tbody></table>
+            </div></body></html>
         `);
     });
 
     // --- B. UPLOAD CSV ---
-    router.post('/admin/:code/collections/upload', upload.single('file'), (req, res) => {
+    router.post('/admin/:code/collections/upload', checkAccess, upload.single('file'), (req, res) => {
+        const prisma = new (require('@prisma/client').PrismaClient)();
         const results = [];
         fs.createReadStream(req.file.path).pipe(csv()).on('data', (data) => results.push(data)).on('end', async () => {
             for (const r of results) {
-                // Map CSV Columns (Flexible)
                 const phone = (r.Phone || r.Mobile || '').replace(/\D/g, '');
                 const amount = parseFloat(r.Amount || r.Balance || 0);
                 const name = r.Name || r.FirstName;
-                const ref = r.Reference || r.Ref || `INV-${Math.floor(Math.random()*10000)}`;
+                const rawRef = r.Reference || r.Ref || `INV-${Math.floor(Math.random()*10000)}`;
+                // Sanitize Ref for Database Consistency
+                const ref = rawRef.replace(/[^a-zA-Z0-9-_]/g, '');
 
                 if (phone && amount > 0) {
                     await prisma.collection.create({
@@ -129,7 +162,7 @@ module.exports = (app) => {
                             firstName: name,
                             phone: phone.startsWith('0') ? '27'+phone.substring(1) : phone,
                             amount: amount,
-                            reference: ref,
+                            reference: ref, // Store clean ref
                             status: 'PENDING'
                         }
                     });
@@ -140,45 +173,35 @@ module.exports = (app) => {
         });
     });
 
-    // --- C. BLAST CAMPAIGN (The Magic) ---
-    router.post('/admin/:code/collections/blast', async (req, res) => {
-        const { code } = req.params;
-        
-        // 1. Get Pending Debts
+    // --- C. BLAST CAMPAIGN ---
+    router.post('/admin/:code/collections/blast', checkAccess, async (req, res) => {
+        const prisma = new (require('@prisma/client').PrismaClient)();
         const pendingDebts = await prisma.collection.findMany({
-            where: { churchCode: code.toUpperCase(), status: 'PENDING' },
-            take: 50 // Process in batches to avoid timeout
+            where: { churchCode: req.params.code.toUpperCase(), status: 'PENDING' },
+            take: 10 // Reduce batch size to prevent timeouts
         });
 
-        // 2. Loop and Send
+        console.log(`🚀 Starting Blast for ${pendingDebts.length} users...`);
+
         for (const debt of pendingDebts) {
             try {
-                // A. Generate Payment Link
                 const payLink = generatePaymentLink(debt.amount, debt.reference);
-
-                // B. Generate & Encrypt PDF
-                // We mock an ID number if not in DB (Use phone as password fallback)
-                const pdfUrl = await createAndUploadStatement({ ...debt, idNumber: null }, "Medical Practice");
-
-                // C. Send WhatsApp with Media
-                const message = `Dear ${debt.firstName},\n\nPlease find attached your outstanding statement (Ref: ${debt.reference}).\n\n💰 *Amount Due: R${debt.amount}*\n\n🔒 *Statement Password:* Your Phone Number (last 6 digits)\n\n👉 *Click here to pay securely:* ${payLink}`;
+                const pdfUrl = await createAndUploadStatement({ ...debt, idNumber: null }, req.org.name);
                 
-                // Assuming your sendWhatsApp service handles mediaUrl as 3rd argument
-                // If not, we need to update services/whatsapp.js
-                await sendWhatsApp(debt.phone, message, pdfUrl);
+                // Construct Message
+                const message = `Dear ${debt.firstName},\n\nPlease find attached your outstanding statement (Ref: ${debt.reference}).\n\n💰 *Amount Due: R${debt.amount}*\n\n🔒 *Statement Password:* Your Phone Number (last 6 digits)\n\n👉 *Click here to pay:* ${payLink}`;
+                
+                const success = await sendWhatsApp(debt.phone, message, pdfUrl);
+                
+                if (success) {
+                    await prisma.collection.update({ where: { id: debt.id }, data: { status: 'SENT' } });
+                } else {
+                    console.log(`❌ Failed to send to ${debt.phone}`);
+                }
 
-                // D. Update Status
-                await prisma.collection.update({
-                    where: { id: debt.id },
-                    data: { status: 'SENT' }
-                });
-
-            } catch (e) {
-                console.error(`Failed to send to ${debt.phone}:`, e);
-            }
+            } catch (e) { console.error("Loop Error:", e); }
         }
-
-        res.redirect(`/admin/${code}/collections`);
+        res.redirect(`/admin/${req.params.code}/collections`);
     });
 
     app.use('/', router);
