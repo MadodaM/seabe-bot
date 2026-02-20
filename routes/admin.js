@@ -119,6 +119,68 @@ module.exports = (app, { prisma }) => {
         res.send(renderPage(req.org, 'dashboard', `<div class="card"><h3>💰 Collected (This Month)</h3><h1>R${total.toLocaleString()}</h1></div><div class="card"><h3>Recent Activity</h3><table>${tx.slice(0, 5).map(t => `<tr><td>${t.phone}</td><td>${t.type}</td><td>R${t.amount}</td></tr>`).join('')}</table></div>`));
     });
 
+    // --- 💰 REVENUE RECOVERY (UI) ---
+    router.get('/admin/:code/collections', checkSession, async (req, res) => {
+        const debts = await prisma.collection.findMany({ 
+            where: { churchCode: req.org.code },
+            orderBy: { id: 'desc' }
+        });
+
+        const total = debts.reduce((sum, d) => sum + d.amount, 0);
+        const pending = debts.filter(d => d.status === 'PENDING').length;
+
+        const content = `
+            <div class="card" style="display:flex; justify-content:space-between; align-items:center; background:#2d3436; color:white;">
+                <div>
+                    <h2 style="margin:0; color:#00d2d3;">Revenue Recovery</h2>
+                    <p style="margin:0; margin-top:5px; font-size:13px; color:#b2bec3;">Automate outstanding invoice collection via WhatsApp.</p>
+                </div>
+                <div style="text-align:right;">
+                    <p style="margin:0; font-size:12px; text-transform:uppercase; color:#b2bec3;">Total Outstanding</p>
+                    <h2 style="margin:0; font-size:28px;">R${total.toLocaleString()}</h2>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3 style="margin-top:0;">1. Upload Debtor CSV</h3>
+                <form method="POST" action="/admin/${req.org.code}/collections/upload" enctype="multipart/form-data" style="background:#f8f9fa; padding:15px; border-radius:6px; display:flex; gap:10px; align-items:center;">
+                    <input type="file" name="file" accept=".csv" required style="margin:0; background:white; flex:1;">
+                    <button class="btn" style="width:auto; background:#0984e3;">Upload Data</button>
+                </form>
+                <small style="color:#666; display:block; margin-top:10px;">Required columns: Name, Phone, Amount, Reference</small>
+            </div>
+
+            <div class="card">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0;">2. Campaign Queue (${pending} Pending)</h3>
+                    ${pending > 0 ? `<form method="POST" action="/admin/${req.org.code}/collections/blast" style="margin:0;"><button class="btn" style="width:auto; background:#d63031; padding:10px 20px;">🚀 LAUNCH CAMPAIGN</button></form>` : '<span style="color:#999; font-size:13px;">Queue is empty</span>'}
+                </div>
+                <hr style="margin:15px 0; border:0; border-top:1px solid #eee;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Debtor / Ref</th>
+                            <th>Phone</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${debts.length > 0 ? debts.map(d => `
+                        <tr>
+                            <td><b>${d.firstName}</b><br><span style="font-size:11px; color:#888;">Ref: ${d.reference}</span></td>
+                            <td>${d.phone}</td>
+                            <td><b>R${d.amount.toFixed(2)}</b></td>
+                            <td><span class="badge" style="background:${d.status === 'PENDING' ? '#e67e22' : '#27ae60'}; padding:5px 8px;">${d.status}</span></td>
+                        </tr>`).join('') : '<tr><td colspan="4" style="text-align:center; padding:30px; color:#999;">No active debtors found. Upload a CSV to begin.</td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+        `;
+
+        res.send(renderPage(req.org, 'collections', content));
+    });;
+
     // --- 👥 MEMBERS LIST ---
     router.get('/admin/:code/members', checkSession, async (req, res) => {
         const { q } = req.query;
