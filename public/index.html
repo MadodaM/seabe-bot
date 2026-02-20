@@ -3,35 +3,68 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Seabe Digital | Church Giving Simplified</title>
+    <title>Seabe Digital | The 2026 Playbook</title>
     <style>
-        :root { --primary: #25D366; --dark: #075E54; --text: #333; --light: #f4f4f4; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; color: var(--text); line-height: 1.6; }
+        :root { 
+            --primary: #25D366; 
+            --dark: #075E54; 
+            --text: #333; 
+            --light: #f4f7f6; 
+            --pay: #0984e3;
+            --surepol: #6c5ce7;
+            --collections: #d63031;
+        }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; color: var(--text); line-height: 1.6; background: var(--light); }
         .container { max-width: 1100px; margin: auto; padding: 0 20px; }
         
         /* Hero Section */
-        header { background: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), url('https://images.unsplash.com/photo-1438232992991-995b7058bbb3?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80'); background-size: cover; background-position: center; color: #fff; height: 90vh; display: flex; flex-direction: column; justify-content: center; text-align: center; }
-        header h1 { font-size: 3.5rem; margin-bottom: 10px; }
-        header p { font-size: 1.5rem; margin-bottom: 30px; opacity: 0.9; }
-        .btn { display: inline-block; background: var(--primary); color: #fff; padding: 15px 40px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 1.2rem; transition: 0.3s; }
-        .btn:hover { background: var(--dark); transform: scale(1.05); }
+        header { background: linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.7)), url('https://images.unsplash.com/photo-1438232992991-995b7058bbb3?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80'); background-size: cover; background-position: center; color: #fff; height: 90vh; display: flex; flex-direction: column; justify-content: center; text-align: center; }
+        header h1 { font-size: 3.5rem; margin-bottom: 10px; color: var(--primary); }
+        header p { font-size: 1.5rem; margin-bottom: 30px; opacity: 0.9; max-width: 700px; margin-left: auto; margin-right: auto; }
+        .btn { display: inline-block; background: var(--primary); color: #fff; padding: 15px 40px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 1.2rem; transition: 0.3s; border: none; }
+        .btn:hover { background: var(--dark); transform: scale(1.05); color: #fff; }
 
-        /* Features */
-        .features { padding: 80px 0; background: #fff; }
-        .features h2 { text-align: center; margin-bottom: 50px; font-size: 2.5rem; color: var(--dark); }
+        /* Products Section */
+        .product-section { padding: 80px 0; }
+        .bg-white { background: #fff; }
+        .bg-light { background: var(--light); }
+        
+        .product-header { text-align: center; margin-bottom: 50px; }
+        .product-header h2 { font-size: 2.5rem; margin: 0; color: var(--dark); }
+        .positioning { display: inline-block; padding: 8px 20px; border-radius: 50px; font-weight: bold; font-size: 0.9rem; margin-top: 15px; text-transform: uppercase; letter-spacing: 1px; }
+        
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 30px; }
-        .card { background: var(--light); padding: 30px; border-radius: 10px; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-        .card h3 { color: var(--dark); margin-top: 20px; }
-        .icon { font-size: 3rem; color: var(--primary); }
+        .card { background: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); transition: transform 0.2s; border-top: 4px solid var(--primary); }
+        .card:hover { transform: translateY(-5px); box-shadow: 0 8px 20px rgba(0,0,0,0.1); }
+        .card h3 { color: var(--dark); margin-top: 0; font-size: 1.3rem; }
+        .card p { color: #666; margin-bottom: 0; font-size: 0.95rem; }
+
+        /* Product Accents */
+        .border-pay { border-top-color: var(--pay); }
+        .tag-pay { background: #eef8ff; color: var(--pay); }
+        .border-surepol { border-top-color: var(--surepol); }
+        .tag-surepol { background: #f3f0ff; color: var(--surepol); }
+        .border-collections { border-top-color: var(--collections); }
+        .tag-collections { background: #ffefef; color: var(--collections); }
 
         /* How It Works */
-        .steps { padding: 80px 0; background: var(--light); }
-        .step-item { display: flex; align-items: center; margin-bottom: 40px; }
-        .step-num { font-size: 4rem; font-weight: bold; color: rgba(0,0,0,0.1); margin-right: 20px; }
-        .step-content h3 { font-size: 1.8rem; margin: 0; color: var(--dark); }
+        .steps { padding: 80px 0; background: var(--dark); color: white; }
+        .steps h2 { text-align: center; margin-bottom: 50px; font-size: 2.5rem; color: var(--primary); }
+        .step-item { display: flex; align-items: center; margin-bottom: 40px; background: rgba(255,255,255,0.05); padding: 20px; border-radius: 10px; }
+        .step-num { font-size: 4rem; font-weight: bold; color: rgba(255,255,255,0.1); margin-right: 30px; }
+        .step-content h3 { font-size: 1.8rem; margin: 0; color: #fff; }
+        .step-content p { color: #ccc; margin-bottom: 0; }
+
+        /* Demo Form */
+        #demo { padding: 80px 0; background: #e8f5e9; }
+        .form-container { max-width: 600px; margin: auto; text-align: center; }
+        .demo-form { text-align: left; background: white; padding: 40px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .demo-form label { font-weight: bold; display: block; margin-bottom: 5px; color: var(--text); }
+        .demo-form input { width: 100%; padding: 12px; margin-bottom: 20px; border: 1px solid #ddd; border-radius: 5px; box-sizing: border-box; }
+        .demo-form input:focus { outline: none; border-color: var(--primary); }
 
         /* Footer */
-        footer { background: #333; color: #fff; padding: 40px 0; text-align: center; }
+        footer { background: #1e272e; color: #fff; padding: 40px 0; text-align: center; }
         footer a { color: var(--primary); text-decoration: none; }
     </style>
 </head>
@@ -39,30 +72,88 @@
 
     <header>
         <div class="container">
-            <h1>Giving Made Simple.</h1>
-            <p>The WhatsApp-based financial companion for modern churches.</p>
+            <h1>The 2026 Playbook</h1>
+            <p>Three powerful engines. One seamless platform. Discover how we are redefining management, compliance, and revenue recovery for modern organizations.</p>
             <a href="#demo" class="btn">Request a Demo</a>
         </div>
     </header>
 
-    <section class="features">
+    <section class="product-section bg-white">
         <div class="container">
-            <h2>Why Seabe?</h2>
+            <div class="product-header">
+                <h2>💳 Seabe Pay</h2>
+                <span class="positioning tag-pay">The Frictionless Giving Engine</span>
+            </div>
             <div class="grid">
-                <div class="card">
-                    <div class="icon">📱</div>
-                    <h3>No App Needed</h3>
-                    <p>Works entirely within WhatsApp. No downloads, no passwords to forget.</p>
+                <div class="card border-pay">
+                    <h3>WhatsApp Native Bot</h3>
+                    <p>Meet them where they are. Your members don't need another app. They can give tithes, offerings, or buy event tickets directly through the world's most popular messaging tool.</p>
                 </div>
-                <div class="card">
-                    <div class="icon">🧾</div>
-                    <h3>Instant Receipts</h3>
-                    <p>Members receive a PDF receipt and Ticket instantly after every payment.</p>
+                <div class="card border-pay">
+                    <h3>Live Analytics Dashboard</h3>
+                    <p>Stewardship powered by data. Watch your collections grow in real-time with month-to-date stats and activity logs that keep your board informed and transparent.</p>
                 </div>
-                <div class="card">
-                    <div class="icon">🔒</div>
-                    <h3>Secure & Verified</h3>
-                    <p>Powered by Paystack. Bank-grade security for Tithes, Offerings, and Events.</p>
+                <div class="card border-pay">
+                    <h3>Integrated Event Ticketing</h3>
+                    <p>One platform, every event. From youth camps to conferences, manage your registrations and payments in the same place you manage your giving.</p>
+                </div>
+                <div class="card border-pay">
+                    <h3>Multi-Tenant Admin</h3>
+                    <p>Scale your impact. Whether you manage one church or a hundred branches, our Super Admin portal gives you the "God's eye view" of every cent processed.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="product-section bg-light">
+        <div class="container">
+            <div class="product-header">
+                <h2>🛡️ Surepol</h2>
+                <span class="positioning tag-surepol">The Trust & Compliance Shield</span>
+            </div>
+            <div class="grid">
+                <div class="card border-surepol">
+                    <h3>Automated ID Verification</h3>
+                    <p>Zero Fraud. Total Trust. Our AI-driven document verification allows you to approve or reject member IDs instantly. Members get a WhatsApp update the second they are verified.</p>
+                </div>
+                <div class="card border-surepol">
+                    <h3>Instant Bulk Migration</h3>
+                    <p>Digitalize your history in minutes. Moving from paper to digital? Our intelligent CSV importer handles thousands of records instantly, even cleaning and formatting names for you.</p>
+                </div>
+                <div class="card border-surepol">
+                    <h3>Secure Team Access</h3>
+                    <p>Delegation without risk. Invite staff and volunteers to help manage the dashboard with secure OTP logins and role-based permissions. You control who sees what.</p>
+                </div>
+                <div class="card border-surepol">
+                    <h3>Digital Member Directory</h3>
+                    <p>Your society, organized. A live, searchable directory that replaces the "black book." Access member profiles and dependent details anywhere, anytime.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="product-section bg-white">
+        <div class="container">
+            <div class="product-header">
+                <h2>💰 Seabe Collections</h2>
+                <span class="positioning tag-collections">The Revenue Recovery Assistant</span>
+            </div>
+            <div class="grid">
+                <div class="card border-collections">
+                    <h3>The Intelligent Nudge Bot</h3>
+                    <p>Stop chasing, start receiving. Our collection bot intercepts replies, handles disputes, and captures "Promises to Pay" without you ever having to pick up the phone.</p>
+                </div>
+                <div class="card border-collections">
+                    <h3>Automated Drip Campaigns</h3>
+                    <p>The assistant that never sleeps. Set up automated reminder cycles that gently nudge debtors on Day 7 and Day 14. Professional recovery that preserves the client relationship.</p>
+                </div>
+                <div class="card border-collections">
+                    <h3>Instant PDF Statements</h3>
+                    <p>Professionalism on demand. Automatically generate and host secure, HTTPS-protected PDF statements that clients can view and download instantly via WhatsApp.</p>
+                </div>
+                <div class="card border-collections">
+                    <h3>Color-Coded Status Tracking</h3>
+                    <p>Clarity at a glance. Our dynamic dashboard uses "Traffic Light" logic to show you exactly who has paid, who is disputing, and who is next in line for recovery.</p>
                 </div>
             </div>
         </div>
@@ -70,7 +161,7 @@
 
     <section class="steps">
         <div class="container">
-            <h2 style="text-align:center; margin-bottom:50px;">How It Works</h2>
+            <h2>How It Works</h2>
             <div class="step-item">
                 <div class="step-num">01</div>
                 <div class="step-content">
@@ -81,57 +172,49 @@
             <div class="step-item">
                 <div class="step-num">02</div>
                 <div class="step-content">
-                    <h3>Select Your Giving</h3>
-                    <p>Choose Tithe, Offering, or Event Tickets from the simple menu.</p>
+                    <h3>Select Your Goal</h3>
+                    <p>Choose to process a payment, submit compliance documents, or view an outstanding statement.</p>
                 </div>
             </div>
             <div class="step-item">
                 <div class="step-num">03</div>
                 <div class="step-content">
-                    <h3>Secure Payment</h3>
-                    <p>Tap the link to pay via Card or EFT. Receive your receipt in seconds.</p>
+                    <h3>Secure Processing</h3>
+                    <p>Tap the secure link to complete your action. Receive instant PDF receipts and automated dashboard updates.</p>
                 </div>
             </div>
         </div>
     </section>
-	<section id="demo" style="padding: 80px 0; background: #e8f5e9;">
-        <div class="container" style="max-width: 600px; text-align: center;">
-            <h2 style="color: #075E54; margin-bottom: 20px;">Schedule a Free Demo</h2>
-            <p style="margin-bottom: 30px;">See how Seabe can increase your church's giving by 30%.</p>
+
+    <section id="demo">
+        <div class="container form-container">
+            <h2 style="color: var(--dark); margin-bottom: 20px; font-size: 2.5rem;">Schedule a Free Demo</h2>
+            <p style="margin-bottom: 30px; color: #555;">See how the Seabe platform can transform your organization's daily operations.</p>
             
-            <form action="/request-demo" method="POST" style="text-align: left; background: white; padding: 40px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-                
-                <div style="margin-bottom: 20px;">
-                    <label style="font-weight: bold; display: block; margin-bottom: 5px;">Your Name</label>
-                    <input type="text" name="firstname" placeholder="Pastor John" required style="width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 5px;">
-                </div>
+            <form action="/request-demo" method="POST" class="demo-form">
+                <label>Your Name</label>
+                <input type="text" name="firstname" placeholder="Pastor John" required>
 
-                <div style="margin-bottom: 20px;">
-                    <label style="font-weight: bold; display: block; margin-bottom: 5px;">Email Address</label>
-                    <input type="email" name="email" placeholder="john@church.co.za" required style="width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 5px;">
-                </div>
+                <label>Email Address</label>
+                <input type="email" name="email" placeholder="john@church.co.za" required>
 
-                <div style="margin-bottom: 20px;">
-                    <label style="font-weight: bold; display: block; margin-bottom: 5px;">Phone Number</label>
-                    <input type="tel" name="phone" placeholder="082 123 4567" required style="width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 5px;">
-                </div>
+                <label>Phone Number</label>
+                <input type="tel" name="phone" placeholder="082 123 4567" required>
 
                 <button type="submit" class="btn" style="width: 100%; cursor: pointer;">Book My Demo</button>
             </form>
         </div>
     </section>
-	
-	<footer>
-		<div class="container">
-			<h3>Seabe Digital</h3>
-			<p>Empowering the Church with Technology.</p>
-			<p>Contact Support: <a href="mailto:support@seabe.co.za">support@seabe.co.za</a></p>
-        
-			<p><a href="/terms" style="color: #aaa; text-decoration: underline;">Terms of Service & Refund Policy</a></p>
-        
-			<small>&copy; 2026 Seabe Digital. Powered by TBC & Twilio.</small>
-		</div>
-	</footer>
+    
+    <footer>
+        <div class="container">
+            <h3>Seabe Digital</h3>
+            <p>Empowering organizations with frictionless technology.</p>
+            <p>Contact Support: <a href="mailto:support@seabe.co.za">support@seabe.co.za</a></p>
+            <p><a href="/terms" style="color: #aaa; text-decoration: underline;">Terms of Service & Refund Policy</a></p>
+            <small>&copy; 2026 Seabe Digital. Powered by TBC & Twilio.</small>
+        </div>
+    </footer>
 
 </body>
 </html>
