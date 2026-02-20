@@ -165,15 +165,23 @@ module.exports = (app, { prisma }) => {
                             <th>Status</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        ${debts.length > 0 ? debts.map(d => `
-                        <tr>
-                            <td><b>${d.firstName}</b><br><span style="font-size:11px; color:#888;">Ref: ${d.reference}</span></td>
-                            <td>${d.phone}</td>
-                            <td><b>R${d.amount.toFixed(2)}</b></td>
-                            <td><span class="badge" style="background:${d.status === 'PENDING' ? '#e67e22' : '#27ae60'}; padding:5px 8px;">${d.status}</span></td>
-                        </tr>`).join('') : '<tr><td colspan="4" style="text-align:center; padding:30px; color:#999;">No active debtors found. Upload a CSV to begin.</td></tr>'}
-                    </tbody>
+						<tbody>
+							${debts.length > 0 ? debts.map(d => {
+                            // Assign Badge Colors
+								let badgeColor = '#27ae60'; // Default Green for SENT
+								if (d.status === 'PENDING') badgeColor = '#e67e22'; // Orange
+								if (d.status === 'PROMISE_TO_PAY') badgeColor = '#0984e3'; // Blue
+								if (d.status === 'DISPUTED') badgeColor = '#d63031'; // Red
+                            
+								return `
+								<tr>
+									<td><b>${d.firstName}</b><br><span style="font-size:11px; color:#888;">Ref: ${d.reference}</span></td>
+									<td>${d.phone}</td>
+									<td><b>R${d.amount.toFixed(2)}</b></td>
+									<td><span class="badge" style="background:${badgeColor}; padding:5px 8px;">${d.status.replace(/_/g, ' ')}</span></td>
+								</tr>`;
+							}).join('') : '<tr><td colspan="4" style="text-align:center; padding:30px; color:#999;">No active debtors found. Upload a CSV to begin.</td></tr>'}
+						</tbody>
                 </table>
             </div>
         `;
