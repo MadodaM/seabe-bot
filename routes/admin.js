@@ -56,7 +56,7 @@ const renderPage = (org, activeTab, content) => {
         ${eventsTab}
         <a href="/admin/${org.code}/team" style="${navStyle('team')}">🛡️ Team</a>
         <a href="/admin/${org.code}/ads" style="${navStyle('ads')}">📢 Ads</a>
-		<a href="/admin/${code}/collections">💰 Revenue Recovery</a>
+		<a href="/admin/${req.params.code}/collections">💰 Revenue Recovery</a>
         <a href="/admin/${org.code}/settings" style="${navStyle('settings')}">⚙️ Settings</a>
     </div><div class="container">${content}</div></body></html>`;
 };
