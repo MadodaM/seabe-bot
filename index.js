@@ -24,6 +24,7 @@ const { handleChurchMessage } = require('./churchBot');
 const adminRoutes = require('./routes/admin');
 const { router: kycRouter } = require('./routes/kyc');
 const collectionRoutes = require('./routes/collections'); 
+const { startCronJobs } = require('./services/scheduler');
 
 //app.use('/', adminRoutes);
 
@@ -760,6 +761,10 @@ app.post('/payment-success', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+    startCronJobs(); // 👈 START THE AUTOMATION ENGINE
+});
 
 // Only start the server if we are NOT testing
 if (process.env.NODE_ENV !== 'test') {

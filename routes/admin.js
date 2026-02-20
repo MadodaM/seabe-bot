@@ -167,11 +167,13 @@ module.exports = (app, { prisma }) => {
                     </thead>
 						<tbody>
 							${debts.length > 0 ? debts.map(d => {
-                            // Assign Badge Colors
+								// Assign Badge Colors
 								let badgeColor = '#27ae60'; // Default Green for SENT
 								if (d.status === 'PENDING') badgeColor = '#e67e22'; // Orange
+								if (d.status === 'REMINDER_1') badgeColor = '#f39c12'; // Amber Warning
 								if (d.status === 'PROMISE_TO_PAY') badgeColor = '#0984e3'; // Blue
 								if (d.status === 'DISPUTED') badgeColor = '#d63031'; // Red
+								if (d.status === 'FINAL_NOTICE') badgeColor = '#2d3436'; // Black / Dark Grey
                             
 								return `
 								<tr>
