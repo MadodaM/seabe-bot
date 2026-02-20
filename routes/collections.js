@@ -148,14 +148,13 @@ for (const debt of pendingDebts) {
                 
                 const messageBody = `Dear ${debt.firstName},
 
-Please find attached your outstanding statement for *${req.org.name}* (Ref: ${debt.reference}).
+Please find attached your outstanding statement for ${req.org.name} (Ref: ${debt.reference}).
 
-💰 *Amount Due: R${debt.amount}*
+💰 Amount Due: R${debt.amount}
 
-🔒 *Statement Password:* Your Phone Number (last 6 digits)
+🔒 Statement Password: Your Phone Number (last 6 digits)
 
-👉 *Click here to pay securely via Paystack:*
-${payLink}
+👉 Click here to pay securely via Paystack: > ${payLink}
 
 Reply with "What is this bill?" to trigger a menu.`;
                 
