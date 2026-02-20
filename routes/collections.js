@@ -124,10 +124,20 @@ module.exports = (app) => {
         });
     });
 
-    // --- BLAST CAMPAIGN ---
-    // --- BLAST CAMPAIGN ---
-for (const debt of pendingDebts) {
+
+// --- BLAST CAMPAIGN ---
+    router.post('/admin/:code/collections/blast', checkAccess, async (req, res) => {
+        const prisma = new (require('@prisma/client').PrismaClient)();
+        
+        // Find the top 10 pending debts for this organization
+        const pendingDebts = await prisma.collection.findMany({
+            where: { churchCode: req.params.code.toUpperCase(), status: 'PENDING' },
+            take: 10 
+        });
+
+        for (const debt of pendingDebts) {
             try {
+                // 💳 1. Call your existing Paystack Service
                 const email = debt.email || `${debt.phone}@seabe.co.za`; 
                 const uniqueRef = `COL_${debt.reference}_${Date.now()}`; 
                 
@@ -140,12 +150,17 @@ for (const debt of pendingDebts) {
                     req.org.name
                 );
                 
+                // Fallback just in case Paystack API fails
                 if (!payLink) payLink = `https://pay.seabe.co.za/pay?ref=${uniqueRef}&amt=${debt.amount}`;
 
+                // 📄 2. Generate and Upload PDF to Cloudinary
                 const pdfUrl = await createAndUploadStatement({ ...debt, idNumber: null }, req.org.name);
                 
+                // ⏳ 3. Brief Delay for Cloudinary Propagation
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 
+                // 💬 4. The PERFECTLY formatted Meta Template 3
+                // ⚠️ DO NOT indent these lines to keep Meta happy!
                 const messageBody = `Dear ${debt.firstName},
 
 Please find attached your outstanding statement for ${req.org.name} (Ref: ${debt.reference}).
@@ -158,8 +173,10 @@ Please find attached your outstanding statement for ${req.org.name} (Ref: ${debt
 
 Reply with "What is this bill?" to trigger a menu.`;
                 
+                // 5. Send it via WhatsApp with the PDF attached!
                 await sendWhatsApp(debt.phone, messageBody, pdfUrl);
 
+                // 6. Update the database status
                 await prisma.collection.update({
                     where: { id: debt.id },
                     data: { status: 'SENT' }
@@ -167,8 +184,9 @@ Reply with "What is this bill?" to trigger a menu.`;
             } catch (error) {
                 console.error(`Error processing debt for ${debt.phone}:`, error);
             }
-        } // Loop ends here
+        } 
 
+        // Once the loop is done, go back to the dashboard
         res.redirect(`/admin/${req.params.code}/collections`);
     });
 
