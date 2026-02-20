@@ -100,6 +100,10 @@ try {
     console.log("✅ Payment Link Routes Loaded");
 } catch (e) { console.log("⚠️ Link routes missing"); }
 
+try {
+    require('./routes/collectionbot')(app, { prisma }); // 👈 ADD THIS LINE
+	console.log("✅ Collection Routes Loaded");
+} catch (e) { console.log("⚠️ Link routes missing"); }
 // ==========================================
 // 5. GENERAL WEB & UPLOADS
 // (Usually contains catch-all or home pages)
