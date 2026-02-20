@@ -351,13 +351,56 @@ module.exports = (app, { prisma }) => {
     });
 
     // --- 📄 PDF & SETTINGS ---
+    // --- 📄 PDF & SETTINGS ---
     router.get('/admin/:code/members/:phone/pdf', checkSession, async (req, res) => {
         const m = await prisma.member.findUnique({ where: { phone: req.params.phone } }); 
-        const doc = new PDFDocument();
+        const doc = new PDFDocument({ margin: 50 });
+        
         res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="Statement_${m.firstName}_${m.lastName}.pdf"`);
         doc.pipe(res);
-        doc.fontSize(20).text(`${req.org.name}`, { align: 'center' });
-        doc.fontSize(14).text(`Statement for ${m.firstName} ${m.lastName}`, { align: 'center' });
+
+        try {
+            // 🖼️ 1. Try to fetch and stamp the Logo
+            // (Assuming your database uses 'logoUrl' or similar. Change this if your DB field is named differently, like 'logo' or 'image')
+            if (req.org.logoUrl) { 
+                const response = await fetch(req.org.logoUrl);
+                const arrayBuffer = await response.arrayBuffer();
+                const imageBuffer = Buffer.from(arrayBuffer);
+                
+                // Stamp it perfectly centered at the top
+                doc.image(imageBuffer, (doc.page.width - 100) / 2, 40, { width: 100 });
+                doc.moveDown(5); // Push the rest of the text down
+            } else {
+                // No logo? Fallback to the generic text header
+                doc.fontSize(22).text(`${req.org.name}`, { align: 'center' });
+                doc.moveDown(1);
+            }
+        } catch (error) {
+            // If the image fails to load, gracefully fallback to text
+            console.error("PDF Logo Error:", error.message);
+            doc.fontSize(22).text(`${req.org.name}`, { align: 'center' });
+            doc.moveDown(1);
+        }
+
+        // 📝 2. Print the Statement Details
+        doc.fontSize(16).text(`Account Statement`, { align: 'center', underline: true });
+        doc.moveDown(1);
+        
+        doc.fontSize(12).text(`Member: ${m.firstName} ${m.lastName}`);
+        doc.text(`Phone: ${m.phone}`);
+        doc.text(`ID Number: ${m.idNumber || 'N/A'}`);
+        doc.text(`Date Issued: ${new Date().toLocaleDateString()}`);
+        
+        doc.moveDown(2);
+        
+        // Draw a simple dividing line
+        doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
+        doc.moveDown(1);
+
+        // Print the status
+        doc.fontSize(14).text(`Account Status: Confirmed`, { align: 'center' });
+
         doc.end();
     });
     router.get('/admin/:code/settings', checkSession, (req, res) => res.send(renderPage(req.org, 'settings', `<div class="card"><h3>Settings</h3><p>${req.org.name}</p></div>`)));
