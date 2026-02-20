@@ -70,25 +70,28 @@ module.exports = (app) => {
         const { code } = req.params;
         const prisma = new (require('@prisma/client').PrismaClient)();
         
-        const list = {}, rc = req.headers.cookie;
-        rc && rc.split(';').forEach(c => { const p = c.split('='); list[p.shift().trim()] = decodeURI(p.join('=')); });
+        // Parse cookies
+        const list = {};
+        const rc = req.headers.cookie;
+        rc && rc.split(';').forEach(c => { 
+            const p = c.split('='); 
+            if (p.length >= 2) list[p.shift().trim()] = decodeURI(p.join('=')); 
+        });
 
+        // 1. Allow global Super Admin master token (Seabe Tech Staff)
         if (list['seabe_admin_session'] === (process.env.ADMIN_SECRET || 'secret_token_123')) {
             req.org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
             return next(); 
         }
 
-        const phoneCookie = list[`phone_${code}`];
-        if (phoneCookie) {
-            const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
-            const admin = await prisma.admin.findFirst({ where: { phone: phoneCookie, churchId: org.id } });
-            
-            if (admin && admin.role === 'SUPER_ADMIN') {
-                req.org = org;
-                return next(); 
-            }
+        // 2. Allow logged-in Client Dashboard users (The Fix!)
+        if (list[`session_${code}`] === 'active') {
+            req.org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
+            if (req.org) return next();
         }
-        return res.status(403).send("<h1>🚫 Access Denied</h1><p>You must be a Super Admin to access Collections.</p>");
+
+        // 3. Kick out anyone else
+        return res.status(403).send("<h1>🚫 Access Denied</h1><p>Your session has expired or you do not have permission. <a href='/admin/${code}'>Click here to log in.</a></p>");
     };
 
     // --- UPLOAD CSV ---
