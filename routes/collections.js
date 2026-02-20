@@ -92,8 +92,15 @@ module.exports = (app) => {
     };
 
     // --- VIEW CAMPAIGN PAGE ---
+    // --- VIEW CAMPAIGN PAGE (CLIENT-FACING UI) ---
     router.get('/admin/:code/collections', checkAccess, async (req, res) => {
         const prisma = new (require('@prisma/client').PrismaClient)();
+        
+        // Check if this is the Platform Admin so we can give them a back button
+        const list = {}, rc = req.headers.cookie;
+        rc && rc.split(';').forEach(c => { const p = c.split('='); list[p.shift().trim()] = decodeURI(p.join('=')); });
+        const isPlatformAdmin = list['seabe_admin_session'] === (process.env.ADMIN_SECRET || 'secret_token_123');
+
         const debts = await prisma.collection.findMany({ 
             where: { churchCode: req.params.code.toUpperCase() },
             orderBy: { id: 'desc' }
@@ -103,25 +110,92 @@ module.exports = (app) => {
         const pending = debts.filter(d => d.status === 'PENDING').length;
 
         res.send(`
-            <html><head><title>Collections | ${req.org.name}</title><meta name="viewport" content="width=device-width,initial-scale=1">
-            <style>body{font-family:sans-serif;padding:20px;background:#f4f7f6}.card{background:white;padding:20px;border-radius:8px;box-shadow:0 2px 5px rgba(0,0,0,0.1);margin-bottom:20px}table{width:100%;border-collapse:collapse}td,th{padding:10px;border-bottom:1px solid #eee;text-align:left}.btn{padding:10px;background:#1e272e;color:white;text-decoration:none;border-radius:5px;cursor:pointer;border:none}</style>
-            </head><body>
-            <div class="card">
-                <a href="/admin/churches">← Back to Platform</a>
-                <h2>💰 Collections: ${req.org.name}</h2>
-                <p>Total Outstanding: <strong>R${total.toLocaleString()}</strong></p>
-                <form method="POST" action="/admin/${req.params.code}/collections/upload" enctype="multipart/form-data" style="background:#eee;padding:15px;border-radius:5px;">
-                    <h4>1. Upload Debtor CSV</h4>
-                    <input type="file" name="file" accept=".csv" required>
-                    <button class="btn">Upload & Preview</button>
-                    <br><small>Columns: Name, Phone, Amount, Reference</small>
-                </form>
-            </div>
-            <div class="card">
-                <h4>2. Campaign Queue (${pending} Pending)</h4>
-                ${pending > 0 ? `<form method="POST" action="/admin/${req.params.code}/collections/blast"><button class="btn" style="background:#c0392b;width:100%">🚀 LAUNCH CAMPAIGN (SEND PDF + PAYSTACK LINK)</button></form>` : '<p>No pending messages.</p>'}
-                <br><table><thead><tr><th>Name</th><th>Phone</th><th>Amount</th><th>Status</th></tr></thead><tbody>${debts.map(d => `<tr><td>${d.firstName}</td><td>${d.phone}</td><td>R${d.amount}</td><td>${d.status}</td></tr>`).join('')}</tbody></table>
-            </div></body></html>
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Revenue Recovery | ${req.org.name}</title>
+                <meta name="viewport" content="width=device-width,initial-scale=1">
+                <style>
+                    body { font-family: 'Segoe UI', sans-serif; background: #f4f7f6; margin: 0; display: flex; color: #333; }
+                    /* Client Sidebar */
+                    .sidebar { width: 250px; background: #2d3436; color: white; min-height: 100vh; padding: 20px; box-sizing: border-box; position: fixed; }
+                    .sidebar h2 { color: #00d2d3; margin-top: 0; font-size: 18px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; }
+                    .sidebar a { display: block; color: #ccc; text-decoration: none; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.05); transition: 0.2s; }
+                    .sidebar a:hover { color: #00d2d3; padding-left: 5px; }
+                    .active-tab { color: #00d2d3 !important; font-weight: bold; border-left: 3px solid #00d2d3; padding-left: 10px !important; }
+                    
+                    /* Main Content */
+                    .main { margin-left: 250px; flex: 1; padding: 40px; }
+                    .card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom: 25px; }
+                    table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+                    th { background: #f0f2f5; padding: 12px; text-align: left; font-size: 13px; text-transform: uppercase; color: #636e72; }
+                    td { padding: 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+                    .btn { padding: 10px 15px; background: #00d2d3; color: #2d3436; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; transition: 0.2s; }
+                    .btn:hover { background: #00b894; color: white; }
+                    .btn-danger { background: #d63031; color: white; width: 100%; font-size: 16px; padding: 15px; }
+                    .btn-danger:hover { background: #c0392b; }
+                    .status-pending { color: #e67e22; font-weight: bold; }
+                    .status-sent { color: #27ae60; font-weight: bold; }
+                </style>
+            </head>
+            <body>
+                <div class="sidebar">
+                    <h2>${req.org.name}</h2>
+                    <a href="/admin/${req.params.code}">📊 Dashboard</a>
+                    <a href="/admin/${req.params.code}/members">👥 Directory</a>
+                    <a href="/admin/${req.params.code}/collections" class="active-tab">💰 Revenue Recovery</a>
+                    <br><br>
+                    <a href="/admin/${req.params.code}/logout" style="color:#ff7675;">🚪 Logout</a>
+                </div>
+                
+                <div class="main">
+                    ${isPlatformAdmin ? `<a href="/admin/churches" style="display:inline-block; margin-bottom:20px; color:#636e72; text-decoration:none;">⬅ Back to Super Admin Platform</a>` : ''}
+                    
+                    <h1 style="margin-top:0;">Revenue Recovery Engine</h1>
+                    <p style="color:#636e72;">Upload your outstanding invoices and automate your collections via WhatsApp.</p>
+                    
+                    <div style="display:grid; grid-template-columns: 1fr 2fr; gap: 20px;">
+                        <div class="card">
+                            <h3 style="margin-top:0;">1. Upload Debtor CSV</h3>
+                            <form method="POST" action="/admin/${req.params.code}/collections/upload" enctype="multipart/form-data">
+                                <div style="border: 2px dashed #ddd; padding: 20px; text-align: center; border-radius: 5px; margin-bottom: 15px; background: #fafafa;">
+                                    <input type="file" name="file" accept=".csv" required style="width: 100%;">
+                                </div>
+                                <button class="btn" style="width: 100%;">Upload Data</button>
+                                <p style="font-size: 12px; color: #999; margin-top: 10px;">Required columns: Name, Phone, Amount, Reference</p>
+                            </form>
+                        </div>
+
+                        <div class="card" style="display: flex; flex-direction: column; justify-content: center; align-items: center; background: #2d3436; color: white;">
+                            <h4 style="margin:0; color: #b2bec3; text-transform: uppercase; letter-spacing: 1px;">Total Outstanding</h4>
+                            <h2 style="font-size: 3rem; margin: 10px 0; color: #00d2d3;">R${total.toLocaleString()}</h2>
+                            <p style="margin:0;">Pending Messages: <strong>${pending}</strong></p>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <h3 style="margin:0;">2. Campaign Queue</h3>
+                            ${pending > 0 ? `<form method="POST" action="/admin/${req.params.code}/collections/blast" style="margin:0;"><button class="btn btn-danger">🚀 LAUNCH CAMPAIGN</button></form>` : '<span style="color:#999;">Queue is empty</span>'}
+                        </div>
+                        
+                        <table>
+                            <thead><tr><th>Debtor Name</th><th>WhatsApp Number</th><th>Amount Due</th><th>Status</th></tr></thead>
+                            <tbody>
+                                ${debts.map(d => `
+                                <tr>
+                                    <td><strong>${d.firstName}</strong><br><small style="color:#999;">Ref: ${d.reference}</small></td>
+                                    <td>${d.phone}</td>
+                                    <td><strong>R${d.amount.toFixed(2)}</strong></td>
+                                    <td class="${d.status === 'PENDING' ? 'status-pending' : 'status-sent'}">${d.status}</td>
+                                </tr>`).join('')}
+                                ${debts.length === 0 ? '<tr><td colspan="4" style="text-align:center; padding:30px; color:#999;">No active debtors found. Upload a CSV to begin.</td></tr>' : ''}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </body>
+            </html>
         `);
     });
 
