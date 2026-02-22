@@ -120,7 +120,7 @@ try {
 	// Add this line to mount your new Surepol endpoints
 	app.use('/api/surepol', require('./routes/surepol'));
 	console.log("✅ Surepol Routes Loaded");
-catch (e) { console.log("⚠️ Surepol routes missing"); }
+} catch (e) { console.log("⚠️ Surepol routes missing"); }
 
 
 // --- MEMORY ---
