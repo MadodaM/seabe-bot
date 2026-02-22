@@ -195,3 +195,18 @@ model Collection {
   memberId    Int?
   member      Member?  @relation(fields: [memberId], references: [id])
 }
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  adminId     String   // The ID of the admin or system process making the change
+  action      String   // e.g., 'CREATE', 'UPDATE', 'DELETE'
+  modelName   String   // The table being modified (e.g., 'Collection', 'Member', 'Policy')
+  recordId    String   // The specific ID of the row being altered
+  oldData     Json?    // A complete snapshot of the row BEFORE the change
+  newData     Json?    // A complete snapshot of the row AFTER the change
+  ipAddress   String?  // (Optional) Track the network location of the admin
+  createdAt   DateTime @default(now())
+
+  @@index([adminId])
+  @@index([modelName, recordId])
+}

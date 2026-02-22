@@ -19,8 +19,9 @@
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "@sendgrid/mail": "^8.1.6",
-    "axios": "^1.13.4",
+    "axios": "^1.13.5",
     "body-parser": "^2.2.2",
+    "cheerio": "^1.2.0",
     "cloudinary": "^2.9.0",
     "csv-parser": "^3.2.0",
     "dotenv": "^17.2.3",
@@ -47,5 +48,16 @@
   },
   "prisma": {
     "seed": "node prisma/seed.js"
-  }
+  },
+  "directories": {
+    "test": "tests"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MadodaM/seabe-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MadodaM/seabe-bot/issues"
+  },
+  "homepage": "https://github.com/MadodaM/seabe-bot#readme"
 }

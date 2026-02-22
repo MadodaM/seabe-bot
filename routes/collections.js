@@ -68,7 +68,7 @@ module.exports = (app) => {
     // 🛡️ SECURITY MIDDLEWARE
     const checkAccess = async (req, res, next) => {
         const { code } = req.params;
-        const prisma = new (require('@prisma/client').PrismaClient)();
+        const prisma = require('../services/prisma');
         
         // Parse cookies
         const list = {};
@@ -96,7 +96,7 @@ module.exports = (app) => {
 
     // --- UPLOAD CSV ---
     router.post('/admin/:code/collections/upload', checkAccess, upload.single('file'), (req, res) => {
-        const prisma = new (require('@prisma/client').PrismaClient)();
+        const prisma = require('../services/prisma');
         const results = [];
         fs.createReadStream(req.file.path).pipe(csv()).on('data', (data) => results.push(data)).on('end', async () => {
             for (const r of results) {
@@ -127,7 +127,7 @@ module.exports = (app) => {
 
 // --- BLAST CAMPAIGN ---
     router.post('/admin/:code/collections/blast', checkAccess, async (req, res) => {
-        const prisma = new (require('@prisma/client').PrismaClient)();
+        const prisma = require('../services/prisma');
         
         // Find the top 10 pending debts for this organization
         const pendingDebts = await prisma.collection.findMany({
