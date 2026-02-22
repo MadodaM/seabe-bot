@@ -57,6 +57,7 @@ const renderPage = (org, activeTab, content) => {
         <a href="/admin/${org.code}/team" style="${navStyle('team')}">🛡️ Team</a>
         <a href="/admin/${org.code}/ads" style="${navStyle('ads')}">📢 Ads</a>
 		<a href="/admin/${org.code}/collections" style="${navStyle('collections')}">💰 Revenue Recovery</a>
+		<a href="/admin/${org.code}/surepol" style="${navStyle('surepol')}">⚰️ Surepol (Burial)</a>
         <a href="/admin/${org.code}/settings" style="${navStyle('settings')}">⚙️ Settings</a>
     </div><div class="container">${content}</div></body></html>`;
 };
@@ -190,6 +191,365 @@ module.exports = (app, { prisma }) => {
 
         res.send(renderPage(req.org, 'collections', content));
     });;
+	
+	// --- ⚰️ SUREPOL (BURIAL ADMIN UI) ---
+    router.get('/admin/:code/surepol', checkSession, async (req, res) => {
+        const content = `
+            <div class="card" style="background:#1e272e; color:white;">
+                <h2 style="margin:0; color:#00d2d3;">Surepol Burial Administration</h2>
+                <p style="margin:5px 0 0 0; font-size:13px; color:#b2bec3;">Manage policyholders, dependents, and verify 6-month waiting periods.</p>
+            </div>
+
+            <div class="card">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                    <h3 style="margin:0;">🔍 Policy Search</h3>
+                    <button class="btn" style="width:auto; background:#27ae60;" onclick="document.getElementById('addPolicyModal').style.display='flex'">+ Add New Policy</button>
+                </div>
+                
+                <div style="display:flex; gap:10px; margin-bottom:20px;">
+                    <input type="text" id="searchIdInput" placeholder="Enter 13-digit SA ID Number..." style="margin:0; flex:1;">
+                    <button id="searchMemberBtn" class="btn" style="width:auto; background:#0984e3;">Search</button>
+                </div>
+
+                <div id="policyResultArea"></div>
+            </div>
+			<div id="addPolicyModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+                <div style="background:white; width:90%; max-width:600px; border-radius:10px; padding:20px; max-height:90vh; overflow-y:auto;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                        <h3 style="margin:0;">Add New Surepol Policy</h3>
+                        <button onclick="document.getElementById('addPolicyModal').style.display='none'" style="background:none; border:none; font-size:20px; cursor:pointer;">&times;</button>
+                    </div>
+
+                    <form id="newPolicyForm">
+                        <h4 style="margin:0 0 10px 0; color:#7f8c8d; border-bottom:1px solid #eee; padding-bottom:5px;">Main Member Details</h4>
+                        <div style="display:flex; gap:10px;">
+                            <input type="text" id="pmFirstName" placeholder="First Name" required style="flex:1;">
+                            <input type="text" id="pmLastName" placeholder="Surname" required style="flex:1;">
+                        </div>
+                        <div style="display:flex; gap:10px;">
+                            <input type="text" id="pmIdNumber" placeholder="13-Digit SA ID Number" required style="flex:1;">
+                            <input type="text" id="pmPhone" placeholder="Phone (e.g. 082...)" required style="flex:1;">
+                        </div>
+
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px;">
+                            <h4 style="margin:0; color:#7f8c8d;">Covered Dependents</h4>
+                            <button type="button" id="addDependentBtn" class="btn-del" style="background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd;">+ Add Dependent</button>
+                        </div>
+                        <hr style="margin:10px 0; border:0; border-top:1px solid #eee;">
+                        
+                        <div id="dependentsContainer">
+                            </div>
+
+                        <div id="formErrorMsg" style="color:#d63031; margin-top:10px; font-weight:bold; display:none;"></div>
+
+                        <button type="submit" id="savePolicyBtn" class="btn" style="background:#27ae60; margin-top:20px;">Save Policy & Start Waiting Period</button>
+                    </form>
+                </div>
+            </div>
+			<div id="logPaymentModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+                <div style="background:white; width:90%; max-width:400px; border-radius:10px; padding:20px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                        <h3 style="margin:0;">Log Premium Payment</h3>
+                        <button onclick="document.getElementById('logPaymentModal').style.display='none'" style="background:none; border:none; font-size:20px; cursor:pointer;">&times;</button>
+                    </div>
+
+                    <form id="paymentForm">
+                        <p style="margin-top:0; color:#555; font-size:14px;">Receiving payment for: <strong id="payeeNameDisplay"></strong></p>
+                        
+                        <input type="hidden" id="payeePhone">
+                        
+                        <label>Amount (ZAR)</label>
+                        <input type="number" id="payAmount" placeholder="e.g. 150" required style="width:100%; padding:10px; margin-bottom:15px;">
+
+                        <label>Payment Method</label>
+                        <select id="payMethod" style="width:100%; padding:10px; margin-bottom:15px;">
+                            <option value="CASH">Cash</option>
+                            <option value="EFT">EFT / Bank Transfer</option>
+                            <option value="CARD">Card Swipe</option>
+                        </select>
+
+                        <label>Reference (Optional)</label>
+                        <input type="text" id="payReference" placeholder="Receipt or Trace ID" style="width:100%; padding:10px; margin-bottom:15px;">
+
+                        <div id="payErrorMsg" style="color:#d63031; margin-bottom:10px; font-weight:bold; display:none;"></div>
+
+                        <button type="submit" id="savePaymentBtn" class="btn" style="background:#27ae60; width:100%;">Confirm Payment</button>
+                    </form>
+                </div>
+            </div>
+			<div id="logClaimModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+                <div style="background:white; width:90%; max-width:450px; border-radius:10px; padding:20px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                        <h3 style="margin:0; color:#c0392b;">Log Death Claim</h3>
+                        <button onclick="document.getElementById('logClaimModal').style.display='none'" style="background:none; border:none; font-size:20px; cursor:pointer;">&times;</button>
+                    </div>
+
+                    <form id="claimForm">
+                        <label>ID Number of Deceased</label>
+                        <input type="text" id="claimIdNumber" placeholder="13-Digit SA ID" required style="width:100%; padding:10px; margin-bottom:15px;">
+
+                        <label>Date of Death</label>
+                        <input type="date" id="claimDate" required style="width:100%; padding:10px; margin-bottom:15px;">
+
+                        <label>Cause of Death</label>
+                        <select id="claimCause" style="width:100%; padding:10px; margin-bottom:15px;">
+                            <option value="NATURAL">Natural Causes (6-Month Rule Applies)</option>
+                            <option value="UNNATURAL">Accidental / Unnatural Causes (No Waiting Period)</option>
+                        </select>
+                        
+                        <label>Claimant Phone (Family Contact)</label>
+                        <input type="text" id="claimantPhone" placeholder="082..." required style="width:100%; padding:10px; margin-bottom:15px;">
+
+                        <div id="claimErrorMsg" style="color:#d63031; margin-bottom:10px; font-weight:bold; display:none;"></div>
+
+                        <button type="submit" id="saveClaimBtn" class="btn" style="background:#e74c3c; width:100%;">Verify & Submit Claim</button>
+                    </form>
+                </div>
+            </div>
+            <script>
+                document.getElementById('searchMemberBtn').addEventListener('click', async () => {
+                    const btn = document.getElementById('searchMemberBtn');
+                    const input = document.getElementById('searchIdInput');
+                    const resultArea = document.getElementById('policyResultArea');
+                    const idNumber = input.value.trim();
+
+                    if (!idNumber) {
+                        resultArea.innerHTML = '<div style="padding:15px; background:#fee2e2; color:#991b1b; border-radius:5px;">Please enter an ID number.</div>';
+                        return;
+                    }
+
+                    btn.innerText = "Searching...";
+                    resultArea.innerHTML = ""; 
+
+                    try {
+                        const response = await fetch('/api/surepol/members/search?idNumber=' + idNumber);
+                        const data = await response.json();
+
+                        if (!response.ok) throw new Error(data.error || "Policy not found.");
+
+                        const isWaiting = data.policyStatus.waitingPeriod.isActive;
+                        const headerBg = isWaiting ? "#ffedd5" : "#dcfce7"; 
+                        const headerColor = isWaiting ? "#9a3412" : "#166534";
+
+                        // Format Dependents List
+                        let depsHtml = "<p style='color:#7f8c8d; font-style:italic; font-size:13px;'>No dependents registered.</p>";
+                        if (data.memberData.dependents && data.memberData.dependents.length > 0) {
+                            depsHtml = data.memberData.dependents.map(dep => 
+                                '<div style="background:#f1f2f6; padding:8px 12px; margin-bottom:5px; border-radius:4px; display:flex; justify-content:space-between;">' +
+                                    '<strong>' + dep.firstName + ' ' + dep.lastName + '</strong>' +
+                                    '<span class="badge" style="background:#bdc3c7; color:#333;">' + dep.relation + '</span>' +
+                                '</div>'
+                            ).join('');
+                        }
+
+                        // Paint the Results Card
+                        resultArea.innerHTML = 
+                            '<div style="border:1px solid #dfe4ea; border-radius:8px; overflow:hidden; margin-top:20px;">' +
+                                '<div style="background:' + headerBg + '; color:' + headerColor + '; padding:15px; font-weight:bold; border-bottom:1px solid #dfe4ea;">' +
+                                    data.policyStatus.waitingPeriod.adminMessage +
+                                '</div>' +
+                                '<div style="padding:20px; display:flex; gap:20px; flex-wrap:wrap;">' +
+                                    
+                                    '<div style="flex:1; min-width:250px;">' +
+                                        '<h4 style="color:#7f8c8d; margin:0 0 10px 0; font-size:11px; text-transform:uppercase;">Main Member</h4>' +
+                                        '<h2 style="margin:0 0 5px 0;">' + data.memberData.firstName + ' ' + data.memberData.lastName + '</h2>' +
+                                        '<p style="margin:0 0 5px 0; font-size:14px;"><strong>ID:</strong> ' + data.memberData.idNumber + '</p>' +
+                                        '<p style="margin:0 0 15px 0; font-size:14px;"><strong>Phone:</strong> ' + data.memberData.phone + '</p>' +
+                                        '<span class="badge" style="background:#3498db; font-size:12px; padding:6px 10px;">Status: ' + data.policyStatus.accountStatus + '</span>' +
+											'<div style="margin-top:15px; display:flex; gap:10px;">' +
+												'<button class="btn" style="flex:1; background:#2ecc71; padding:8px 15px;" onclick="openPaymentModal(\'' + data.memberData.phone + '\', \'' + data.memberData.firstName + '\')">💰 Log Payment</button>' +
+												'<button class="btn" style="flex:1; background:#e74c3c; padding:8px 15px;" onclick="document.getElementById(\'logClaimModal\').style.display=\'flex\'">📑 Log Death Claim</button>' +
+											'</div>' +
+										'</div>' +
+
+                                    '<div style="flex:1; min-width:250px; border-left:1px solid #eee; padding-left:20px;">' +
+                                        '<h4 style="color:#7f8c8d; margin:0 0 10px 0; font-size:11px; text-transform:uppercase;">Covered Dependents</h4>' +
+                                        depsHtml +
+                                    '</div>' +
+
+                                '</div>' +
+                            '</div>';
+
+                    } catch (error) {
+                        resultArea.innerHTML = '<div style="padding:15px; background:#fee2e2; border-left:4px solid #e74c3c; color:#c0392b; font-weight:bold; border-radius:0 5px 5px 0;">' + error.message + '</div>';
+                    } finally {
+                        btn.innerText = "Search";
+                    }
+                });
+				// --- LOG PAYMENT LOGIC ---
+                // Helper function called by the green button to open the modal
+                window.openPaymentModal = function(phone, name) {
+                    document.getElementById('payeeNameDisplay').innerText = name;
+                    document.getElementById('payeePhone').value = phone;
+                    document.getElementById('logPaymentModal').style.display = 'flex';
+                };
+
+                document.getElementById('paymentForm').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const btn = document.getElementById('savePaymentBtn');
+                    const errorBox = document.getElementById('payErrorMsg');
+                    
+                    btn.innerText = "Processing...";
+                    errorBox.style.display = "none";
+
+                    const payload = {
+                        phone: document.getElementById('payeePhone').value,
+                        amount: document.getElementById('payAmount').value,
+                        paymentMethod: document.getElementById('payMethod').value,
+                        reference: document.getElementById('payReference').value || ('CASH-' + Math.floor(Math.random() * 10000))
+                    };
+
+                    try {
+                        const response = await fetch('/api/surepol/payments', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.error || "Failed to log payment.");
+
+                        // Success! Close modal and reset
+                        document.getElementById('logPaymentModal').style.display = 'none';
+                        document.getElementById('paymentForm').reset();
+                        
+                        // Let the admin know it worked, and click the search button again to refresh the policy status
+                        alert("✅ Payment of R" + payload.amount + " logged successfully!");
+                        document.getElementById('searchMemberBtn').click(); 
+
+                    } catch (error) {
+                        errorBox.innerText = error.message;
+                        errorBox.style.display = "block";
+                    } finally {
+                        btn.innerText = "Confirm Payment";
+                    }
+                });
+				// --- ADD NEW POLICY LOGIC ---
+                const depsContainer = document.getElementById('dependentsContainer');
+                let depCount = 0;
+
+                // 1. Logic to add a new dependent row
+                document.getElementById('addDependentBtn').addEventListener('click', () => {
+                    const div = document.createElement('div');
+                    div.style.cssText = "display:flex; gap:5px; margin-bottom:10px; background:#f8f9fa; padding:10px; border-radius:5px;";
+                    div.innerHTML = `
+                        <input type="text" class="dep-fname" placeholder="First Name" required style="margin:0; flex:1; padding:8px;">
+                        <input type="text" class="dep-lname" placeholder="Surname" required style="margin:0; flex:1; padding:8px;">
+                        <input type="text" class="dep-id" placeholder="ID Number" required style="margin:0; flex:1; padding:8px;">
+                        <select class="dep-rel" style="margin:0; flex:1; padding:8px;">
+                            <option value="SPOUSE">Spouse</option>
+                            <option value="CHILD">Child</option>
+                            <option value="EXTENDED">Extended Family</option>
+                        </select>
+                        <button type="button" onclick="this.parentElement.remove()" style="background:#ff7675; color:white; border:none; border-radius:4px; cursor:pointer; padding:0 10px;">X</button>
+                    `;
+                    depsContainer.appendChild(div);
+                });
+
+                // 2. Logic to submit the entire form
+                document.getElementById('newPolicyForm').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const btn = document.getElementById('savePolicyBtn');
+                    const errorBox = document.getElementById('formErrorMsg');
+                    
+                    btn.innerText = "Saving...";
+                    errorBox.style.display = "none";
+
+                    // Gather Dependents
+                    const dependents = [];
+                    const depRows = depsContainer.children;
+                    for (let i = 0; i < depRows.length; i++) {
+                        dependents.push({
+                            firstName: depRows[i].querySelector('.dep-fname').value.trim(),
+                            lastName: depRows[i].querySelector('.dep-lname').value.trim(),
+                            idNumber: depRows[i].querySelector('.dep-id').value.trim(),
+                            relation: depRows[i].querySelector('.dep-rel').value
+                        });
+                    }
+
+                    // Build Payload
+                    const payload = {
+                        firstName: document.getElementById('pmFirstName').value.trim(),
+                        lastName: document.getElementById('pmLastName').value.trim(),
+                        idNumber: document.getElementById('pmIdNumber').value.trim(),
+                        phone: document.getElementById('pmPhone').value.trim(),
+                        churchCode: "${req.org.code}", 
+                        dependents: dependents
+                    };
+
+                    try {
+                        const response = await fetch('/api/surepol/members', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (!response.ok) throw new Error(data.error || "Failed to save policy.");
+
+                        // Success! Close modal, clear form, and alert user
+                        document.getElementById('addPolicyModal').style.display = 'none';
+                        document.getElementById('newPolicyForm').reset();
+                        depsContainer.innerHTML = ''; // clear dependents
+                        alert("✅ Policy created successfully! 6-Month waiting period has begun.");
+
+                    } catch (error) {
+                        errorBox.innerText = error.message;
+                        errorBox.style.display = "block";
+                    } finally {
+                        btn.innerText = "Save Policy & Start Waiting Period";
+                    }
+                });
+				
+				// --- LOG DEATH CLAIM LOGIC ---
+                document.getElementById('claimForm').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const btn = document.getElementById('saveClaimBtn');
+                    const errorBox = document.getElementById('claimErrorMsg');
+                    
+                    btn.innerText = "Verifying Waiting Period...";
+                    errorBox.style.display = "none";
+
+                    const payload = {
+                        deceasedIdNumber: document.getElementById('claimIdNumber').value.trim(),
+                        dateOfDeath: document.getElementById('claimDate').value,
+                        causeOfDeath: document.getElementById('claimCause').value,
+                        claimantPhone: document.getElementById('claimantPhone').value.trim()
+                    };
+
+                    try {
+                        const response = await fetch('/api/surepol/claims', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        
+                        const data = await response.json();
+                        
+                        // If the backend 6-month math rejects it, it throws an error here!
+                        if (!response.ok) throw new Error(data.error || "Failed to log claim.");
+
+                        // Success!
+                        document.getElementById('logClaimModal').style.display = 'none';
+                        document.getElementById('claimForm').reset();
+                        
+                        alert("⚠️ Claim logged successfully. Awaiting official Home Affairs documentation (DHA-1663).");
+                        document.getElementById('searchMemberBtn').click(); // Refresh to show DECEASED status
+
+                    } catch (error) {
+                        errorBox.innerText = error.message;
+                        errorBox.style.display = "block";
+                    } finally {
+                        btn.innerText = "Verify & Submit Claim";
+                    }
+                });
+			
+			</script>
+        `;
+
+        res.send(renderPage(req.org, 'surepol', content));
+    });
 
     // --- 👥 MEMBERS LIST ---
     router.get('/admin/:code/members', checkSession, async (req, res) => {

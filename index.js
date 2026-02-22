@@ -75,6 +75,7 @@ app.get('/ping', (req, res) => {
 app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacy.html')));
 app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
 
+
 // ==========================================
 // 2. SUPER ADMIN CONSOLE (Routes: /login, /admin/churches)
 // ⚠️ MUST be before Client Admin!
@@ -114,6 +115,12 @@ try {
     require('./routes/web')(app, upload, { prisma });
     console.log("✅ Web Routes Loaded");
 } catch (e) { console.log("⚠️ Web routes missing"); }
+
+try {
+	// Add this line to mount your new Surepol endpoints
+	app.use('/api/surepol', require('./routes/surepol'));
+	console.log("✅ Surepol Routes Loaded");
+catch (e) { console.log("⚠️ Surepol routes missing"); }
 
 
 // --- MEMORY ---
