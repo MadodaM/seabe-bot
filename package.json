@@ -17,6 +17,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@prisma/client": "^5.22.0",
     "@sendgrid/mail": "^8.1.6",
     "axios": "^1.13.5",
@@ -44,7 +45,7 @@
     "eslint": "^10.0.0",
     "globals": "^17.3.0",
     "husky": "^9.1.7",
-    "jest": "^25.0.0",
+    "jest": "^19.0.2",
     "supertest": "^7.2.2"
   },
   "prisma": {
