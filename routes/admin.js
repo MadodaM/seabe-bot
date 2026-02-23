@@ -511,17 +511,17 @@ module.exports = (app, { prisma }) => {
                 document.getElementById('addDependentBtn').addEventListener('click', () => {
                     const div = document.createElement('div');
                     div.style.cssText = "display:flex; gap:5px; margin-bottom:10px; background:#f8f9fa; padding:10px; border-radius:5px;";
-                    div.innerHTML = 
-                        '<input type="text" class="dep-fname" placeholder="First Name" required style="margin:0; flex:1; padding:8px;">' +
-                        '<input type="text" class="dep-lname" placeholder="Surname" required style="margin:0; flex:1; padding:8px;">' +
-                        '<input type="text" class="dep-id" placeholder="ID Number" required style="margin:0; flex:1; padding:8px;">' +
-                        '<select class="dep-rel" style="margin:0; flex:1; padding:8px;">' +
-                            '<option value="SPOUSE">Spouse</option>' +
-                            '<option value="CHILD">Child</option>' +
-                            '<option value="EXTENDED">Extended Family</option>' +
-                        '</select>' +
-                        '<button type="button" onclick="this.parentElement.remove()" style="background:#ff7675; color:white; border:none; border-radius:4px; cursor:pointer; padding:0 10px;">X</button>';
-                    depsContainer.appendChild(div);
+                    // Inside the 'addDependentBtn' click listener in admin.js
+					div.innerHTML = 
+						'<input type="text" class="dep-fname" placeholder="First Name" required style="margin:0; flex:1; padding:8px;">' +
+						'<input type="text" class="dep-lname" placeholder="Surname" required style="margin:0; flex:1; padding:8px;">' +
+						'<input type="date" class="dep-dob" required style="margin:0; flex:1; padding:8px;">' + // 👈 Changed to type="date"
+						'<select class="dep-rel" style="margin:0; flex:1; padding:8px;">' +
+							'<option value="SPOUSE">Spouse</option>' +
+							'<option value="CHILD">Child</option>' +
+							'<option value="EXTENDED">Extended Family</option>' +
+						'</select>' +
+						'<button type="button" onclick="this.parentElement.remove()" ...>X</button>';
                 });
 
                 document.getElementById('newPolicyForm').addEventListener('submit', async (e) => {
@@ -534,14 +534,15 @@ module.exports = (app, { prisma }) => {
 
                     const dependents = [];
                     const depRows = depsContainer.children;
-                    for (let i = 0; i < depRows.length; i++) {
-                        dependents.push({
-                            firstName: depRows[i].querySelector('.dep-fname').value.trim(),
-                            lastName: depRows[i].querySelector('.dep-lname').value.trim(),
-                            idNumber: depRows[i].querySelector('.dep-id').value.trim(),
-                            relation: depRows[i].querySelector('.dep-rel').value
-                        });
-                    }
+                    // Inside the 'newPolicyForm' submit listener
+					for (let i = 0; i < depRows.length; i++) {
+						dependents.push({
+							firstName: depRows[i].querySelector('.dep-fname').value.trim(),
+							lastName: depRows[i].querySelector('.dep-lname').value.trim(),
+							dateOfBirth: depRows[i].querySelector('.dep-dob').value, // 👈 Updated
+							relation: depRows[i].querySelector('.dep-rel').value
+						});
+					}
 
                     const payload = {
                         firstName: document.getElementById('pmFirstName').value.trim(),

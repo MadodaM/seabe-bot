@@ -107,14 +107,13 @@ router.post('/members', async (req, res) => {
                 status: 'ACTIVE', // Default status for a new policy
                 // 3. Prisma Nested Write: Automatically creates linked rows in the Dependent table
                 dependents: {
-                    create: dependents && dependents.length > 0 ? dependents.map(dep => ({
-                        firstName: dep.firstName,
-                        lastName: dep.lastName,
-                        idNumber: dep.idNumber,
-                        relation: dep.relation // e.g., 'Spouse', 'Child', 'Extended'
-                    })) : []
-                }
-            },
+						create: dependents && dependents.length > 0 ? dependents.map(dep => ({
+							firstName: dep.firstName,
+							lastName: dep.lastName,
+							dateOfBirth: dep.dateOfBirth, // 👈 Updated mapping
+							relation: dep.relation 
+						})) : []
+					}            },
             // 4. Return the newly created dependents in the response to confirm
             include: {
                 dependents: true 
