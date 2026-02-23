@@ -67,8 +67,7 @@ router.post('/register-church', upload.fields([
             data: {
                 code: tempCode, 
                 name: churchName,
-                email: officialEmail,          // Required by your original schema
-                officialEmail: officialEmail,  // Added for the KYB process
+                email: officialEmail,         // Required by your original schema
                 pastorIdUrl: pastorIdUpload.secure_url,
                 proofOfBankUrl: bankUpload.secure_url,
                 ficaStatus: 'LEVEL_1_PENDING',
