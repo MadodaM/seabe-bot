@@ -137,9 +137,12 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                     body { font-family: 'Segoe UI', sans-serif; background: #f4f7f6; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
                     .card { background: white; padding: 40px; border-radius: 15px; width: 100%; max-width: 450px; box-shadow:0 10px 30px rgba(0,0,0,0.05); }
                     h2 { color: #0a4d3c; text-align: center; margin-bottom:5px; }
-                    input[type="text"], input[type="email"], input[type="file"] { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
-                    button { width: 100%; padding: 15px; background: #0a4d3c; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; transition:0.3s; }
-                    button:hover { background: #07382c; }
+                    .form-group { margin-bottom: 15px; }
+                    .form-group label { display: block; font-size: 12px; font-weight: bold; margin-bottom: 5px; color: #333; }
+                    input[type="text"], input[type="email"], input[type="file"], select { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
+                    button { width: 100%; padding: 15px; background: #0a4d3c; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; transition:0.3s; font-size: 16px; }
+                    button:hover:not(:disabled) { background: #07382c; }
+                    button:disabled { background: #95a5a6; cursor: not-allowed; }
                     a { color: #D4AF37; text-decoration: none; }
                 </style>
             </head>
@@ -147,35 +150,111 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 <div class="card">
                     <h2>Register Your Ministry</h2>
                     <p style="text-align:center; color:#888; margin-bottom:30px;">Complete KYC to activate automated giving.</p>
-                    <form action="/register-church" method="POST" enctype="multipart/form-data">
-                        <label style="font-size:12px; font-weight:bold;">Church Name</label>
-                        <input type="text" name="churchName" placeholder="e.g. Grace Family Church" required>
-                        <label style="font-size:12px; font-weight:bold;">Official Email</label>
-                        <input type="email" name="email" placeholder="admin@church.co.za" required>
-                        
-                        <div style="background:#eefdf5; padding:15px; border-radius:6px; margin-bottom:20px;">
-                            <strong style="color:#0a4d3c; font-size:13px;">KYC Documents:</strong><br><br>
-                            <label style="font-size:12px;">1. Admin ID (PDF/JPG)</label>
-                            <input type="file" name="idDoc" accept=".pdf,.jpg,.png" required style="background:white;">
-                            <label style="font-size:12px;">2. Bank Letter</label>
-                            <input type="file" name="bankDoc" accept=".pdf,.jpg,.png" required style="background:white;">
+                    
+                    <form id="kybRegistrationForm" enctype="multipart/form-data">
+                        <div class="form-group">
+                            <label>Organization Name</label>
+                            <input type="text" id="churchName" name="churchName" required placeholder="e.g., Grace Community Church">
                         </div>
                         
+                        <div class="form-group">
+                            <label>Official Email</label>
+                            <input type="email" id="officialEmail" name="officialEmail" required placeholder="admin@church.co.za">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Organization Type</label>
+                            <select id="orgType" name="type" required>
+                                <option value="CHURCH">Church</option>
+                                <option value="BURIAL_SOCIETY">Burial Society</option>
+                                <option value="NON_PROFIT">Non-Profit (NGO)</option>
+                            </select>
+                        </div>
+
+                        <hr style="border:0; border-top:1px solid #eee; margin:20px 0;">
+                        <h4 style="color:#2c3e50; margin-top:0;">🛡️ Level 1 FICA Verification</h4>
+                        <p style="font-size:12px; color:#7f8c8d; margin-bottom:15px;">To comply with South African financial regulations, please upload the primary leader's ID and a recent proof of bank account.</p>
+
+                        <div class="form-group">
+                            <label>Upload Pastor / Leader ID (Green Book or Smart Card)</label>
+                            <input type="file" id="pastorId" name="pastorId" accept="image/*,.pdf" required style="border:1px dashed #bdc3c7; background:#f9f9f9;">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Proof of Bank Account (Letter or Statement)</label>
+                            <input type="file" id="proofOfBank" name="proofOfBank" accept="image/*,.pdf" required style="border:1px dashed #bdc3c7; background:#f9f9f9;">
+                        </div>
+
                         <div style="margin-bottom:20px; font-size:13px; color:#555; display:flex; align-items:start; gap:8px;">
-                            <input type="checkbox" name="tos" required style="width:auto; margin-top:3px;"> 
+                            <input type="checkbox" id="tos" required style="width:auto; margin-top:3px;"> 
                             <span>I accept the <a href="/terms" target="_blank">Master Service Agreement</a>.</span>
                         </div>
-                        <button type="submit">Complete Registration</button>
+
+                        <div id="regError" style="color:#c0392b; font-size:13px; font-weight:bold; margin-bottom:15px; display:none;"></div>
+                        <div id="regSuccess" style="color:#27ae60; font-size:13px; font-weight:bold; margin-bottom:15px; display:none;"></div>
+
+                        <button type="submit" id="submitBtn">Submit FICA & Register</button>
                     </form>
                     <p style="text-align:center; margin-top:20px;"><a href="/" style="color:#999; font-size:13px;">Cancel</a></p>
                 </div>
+
+                <script>
+                document.getElementById('kybRegistrationForm').addEventListener('submit', async (e) => {
+                    e.preventDefault(); 
+                    
+                    const btn = document.getElementById('submitBtn');
+                    const errorBox = document.getElementById('regError');
+                    const successBox = document.getElementById('regSuccess');
+                    
+                    // UI Loading State
+                    btn.innerText = "⏳ Uploading & AI Verifying...";
+                    btn.disabled = true;
+                    errorBox.style.display = 'none';
+                    successBox.style.display = 'none';
+
+                    // Package the text and files together
+                    const formData = new FormData();
+                    formData.append('churchName', document.getElementById('churchName').value);
+                    formData.append('officialEmail', document.getElementById('officialEmail').value);
+                    formData.append('type', document.getElementById('orgType').value);
+                    formData.append('pastorId', document.getElementById('pastorId').files[0]);
+                    formData.append('proofOfBank', document.getElementById('proofOfBank').files[0]);
+
+                    try {
+                        // Pointing to the new FICA Engine Route
+                        const response = await fetch('/api/prospect/register-church', {
+                            method: 'POST',
+                            body: formData 
+                        });
+
+                        const data = await response.json();
+
+                        if (!response.ok) {
+                            throw new Error(data.error || "Failed to process registration.");
+                        }
+
+                        // Success!
+                        successBox.innerText = "✅ " + data.message + " (AI Confidence: " + (data.aiExtractedData?.confidenceScore || 'High') + "%)";
+                        successBox.style.display = 'block';
+                        document.getElementById('kybRegistrationForm').reset();
+                        btn.innerText = "Registration Complete";
+                        
+                    } catch (error) {
+                        errorBox.innerText = "❌ " + error.message;
+                        errorBox.style.display = 'block';
+                        btn.innerText = "Submit FICA & Register";
+                        btn.disabled = false;
+                    }
+                });
+                </script>
             </body>
             </html>
         `);
     });
 
+    // FALLBACK/LEGACY REGISTRATION ROUTE (Patched with the 'type' fix)
     app.post('/register-church', upload.fields([{ name: 'idDoc', maxCount: 1 }, { name: 'bankDoc', maxCount: 1 }]), async (req, res) => {
-        const { churchName, email, tos } = req.body;
+        const { churchName, email, tos, type } = req.body;
         if (!tos) return res.send("⚠️ You must accept the Master Service Agreement.");
 
         try {
@@ -192,7 +271,17 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             const prefix = churchName.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
             const newCode = `${prefix}${Math.floor(100 + Math.random() * 900)}`;
             
-            await prisma.church.create({ data: { name: churchName, code: newCode, email: email, subaccountCode: 'PENDING_KYC', tosAcceptedAt: new Date() } });
+            // 🚨 FIX APPLIED: 'type' is now explicitly set, defaulting to CHURCH
+            await prisma.church.create({ 
+                data: { 
+                    name: churchName, 
+                    code: newCode, 
+                    email: email, 
+                    subaccountCode: 'PENDING_KYC', 
+                    tosAcceptedAt: new Date(),
+                    type: type || 'CHURCH' 
+                } 
+            });
 
             if (process.env.SENDGRID_KEY) {
                 // Email Admin
