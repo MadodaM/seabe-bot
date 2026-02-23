@@ -121,13 +121,15 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
             if (numMedia > 0) {
                 const twilioImageUrl = req.body.MediaUrl0;
                 
-                reply = "⏳ *Document Received.*\n\nOur system is verifying the details... An admin will be notified shortly.\n\nReply *menu* to return to the main menu.";
+                reply = "⏳ *Document Received.*\n\nOur AI is reading the details and verifying waiting periods... An admin will be notified shortly.\n\nReply *menu* to return to the main menu.";
                 
                 // Reset them so they aren't stuck
                 session.step = 'SOCIETY_MENU'; 
 
-                // Note: We will handle the AI worker logic in the background later!
-            } else {
+                // 🚀 TRIGGER THE BACKGROUND AI WORKER
+                require('./services/aiClaimWorker').processTwilioClaim(cleanPhone, twilioImageUrl, session.orgCode);
+            } 
+			else {
                 reply = "❌ We didn't detect an image. Please attach a clear photo of the document, or reply *menu* to cancel.";
             }
         }
