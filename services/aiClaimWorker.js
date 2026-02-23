@@ -50,9 +50,9 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
         const vaultUrl = uploadResult.secure_url;
 
         // 3️⃣ ASK GEMINI TO READ THE DOCUMENT
-        // We use gemini-1.5-flash because it is incredibly fast and cheap/free
+        // We use gemini-2.5-flash because it is Google's current lightning-fast, active model
         const model = genAI.getGenerativeModel({ 
-            model: "gemini-1.5-flash",
+            model: "gemini-2.5-flash",
             generationConfig: { responseMimeType: "application/json" } // Force strict JSON
         });
 
