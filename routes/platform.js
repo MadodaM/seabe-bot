@@ -1,8 +1,8 @@
 // routes/platform.js
-// VERSION: 7.0 (Full UI Restored + Collections Bridge + Global Stats)
+// VERSION: 8.0 (Added SuperAdmin FICA & KYB Dashboard)
 require('dotenv').config();
 
-const express = require('express'); // Ensure express is used if router is split, otherwise we use app directly below.
+const express = require('express');
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'seabe123';
 const COOKIE_NAME = 'seabe_admin_session';
@@ -25,7 +25,7 @@ function safeDate(d) {
     return new Date(d);
 }
 
-// --- UI LAYOUT (The Good Looking One) ---
+// --- UI LAYOUT ---
 function renderAdminPage(title, content, error = null) {
     return `
         <!DOCTYPE html>
@@ -55,13 +55,11 @@ function renderAdminPage(title, content, error = null) {
                 tr:hover { background-color: #f9f9f9; }
                 
                 /* Tags */
-                .tag { padding:4px 8px; border-radius:4px; font-weight:bold; font-size:11px; text-transform:uppercase; display:inline-block; }
+                .tag { padding:4px 8px; border-radius:4px; font-weight:bold; font-size:11px; text-transform:uppercase; display:inline-block; margin-bottom:2px; }
                 .tag-church { background:#eefdf5; color:green; border:1px solid green; }
                 .tag-society { background:#eefafc; color:#0984e3; border:1px solid #0984e3; }
                 .tag-npo { background:#fff8e1; color:#f39c12; border:1px solid #f39c12; }
-				.tag-npo { background:#fff8e1; color:#f39c12; border:1px solid #f39c12; }
                 .tag-provider { background:#f5eef8; color:#8e44ad; border:1px solid #8e44ad; }
-				
                 
                 /* Buttons */
                 .btn { padding: 8px 15px; border-radius: 4px; text-decoration: none; font-size: 13px; font-weight: bold; cursor: pointer; border: none; display: inline-block; transition: 0.2s; }
@@ -85,7 +83,7 @@ function renderAdminPage(title, content, error = null) {
                 <h2>SEABE PLATFORM</h2>
                 <a href="/admin">📊 Dashboard</a>
                 <a href="/admin/churches">🏢 Organizations</a>
-                <a href="/admin/global-collections">💰 Global Collections</a>
+                <a href="/admin/fica">🛡️ FICA & KYB</a> <a href="/admin/global-collections">💰 Global Collections</a>
                 <a href="/admin/events">🎟️ Events & Projects</a>
                 <a href="/admin/ads">📢 Advertising</a>
                 <a href="/admin/news">📰 News Feed</a>
@@ -133,7 +131,7 @@ module.exports = function(app, { prisma }) {
         res.redirect('/login');
     });
 
-    // --- DASHBOARD (With Collections Stats) ---
+    // --- DASHBOARD ---
     app.get('/admin', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         
@@ -142,7 +140,6 @@ module.exports = function(app, { prisma }) {
                 orgs: await prisma.church.count(),
                 events: await prisma.event.count().catch(() => 0),
                 ads: await prisma.ad.count().catch(() => 0),
-                // 🆕 New Collection Stats
                 debtRows: await prisma.collection.count().catch(() => 0),
                 debtSum: await prisma.collection.aggregate({ _sum: { amount: true } }).catch(() => ({ _sum: { amount: 0 } }))
             };
@@ -170,6 +167,122 @@ module.exports = function(app, { prisma }) {
     });
 
     // ============================================================
+    // 🛡️ NEW: FICA & KYB COMPLIANCE DASHBOARD
+    // ============================================================
+    app.get('/admin/fica', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+
+        try {
+            const allChurches = await prisma.church.findMany({ orderBy: { createdAt: 'desc' } });
+
+            const docLink = (url, label) => url 
+                ? `<a href="${url}" target="_blank" style="background:#ecf0f1; padding:4px 8px; border-radius:4px; font-size:11px; font-weight:bold; text-decoration:none; color:#2c3e50; margin-right:5px; display:inline-block; margin-bottom:4px;">📄 ${label}</a>` 
+                : `<span style="color:#bdc3c7; font-size:11px; margin-right:5px;">No ${label}</span>`;
+
+            const rowsHtml = allChurches.map(c => {
+                let actionBtn = '';
+                let statusBadge = '';
+                
+                if (c.ficaStatus === 'LEVEL_1_PENDING') {
+                    statusBadge = `<span class="tag" style="background:#fff3e0; color:#e67e22; border:1px solid #e67e22;">Level 1 Pending</span>`;
+                    actionBtn = `<button onclick="approveLevel1(${c.id})" class="btn" style="background:#e67e22; color:white; font-size:11px;">Approve L1 (Email)</button>`;
+                } 
+                else if (c.ficaStatus === 'AWAITING_LEVEL_2') {
+                    statusBadge = `<span class="tag" style="background:#e3f2fd; color:#3498db; border:1px solid #3498db;">Awaiting L2 Docs</span>`;
+                    actionBtn = `<span style="font-size:11px; color:#7f8c8d; font-style:italic;">Waiting on Client</span>`;
+                }
+                else if (c.ficaStatus === 'LEVEL_2_PENDING') {
+                    statusBadge = `<span class="tag" style="background:#f3e5f5; color:#8e44ad; border:1px solid #8e44ad;">Level 2 Pending</span>`;
+                    actionBtn = `<button onclick="approveFinal(${c.id})" class="btn" style="background:#8e44ad; color:white; font-size:11px;">Approve Final (NetCash)</button>`;
+                }
+                else if (c.ficaStatus === 'ACTIVE') {
+                    statusBadge = `<span class="tag" style="background:#e8f5e9; color:#27ae60; border:1px solid #27ae60;">✅ Active</span>`;
+                    actionBtn = `<span style="font-size:12px; color:#27ae60; font-weight:bold;">Verified</span>`;
+                } else {
+                    statusBadge = `<span class="tag" style="background:#f1f2f6; color:#7f8c8d;">${c.ficaStatus || 'UNKNOWN'}</span>`;
+                }
+
+                return `
+                <tr>
+                    <td>
+                        <strong>${c.name}</strong><br>
+                        <span style="font-size:11px; color:#7f8c8d;">${c.code} | ${c.officialEmail || c.email || 'No Email'}</span>
+                    </td>
+                    <td>${statusBadge}</td>
+                    <td>
+                        <div style="margin-bottom:5px;">
+                            <strong style="font-size:10px; color:#95a5a6; text-transform:uppercase;">Level 1:</strong><br>
+                            ${docLink(c.pastorIdUrl, 'Pastor ID')}
+                            ${docLink(c.proofOfBankUrl, 'Bank Proof')}
+                        </div>
+                        <div>
+                            <strong style="font-size:10px; color:#95a5a6; text-transform:uppercase;">Level 2:</strong><br>
+                            ${docLink(c.npcRegUrl, 'NPC Cert')}
+                            ${docLink(c.cipcDocUrl, 'CIPC')}
+                            ${docLink(c.directorIdsUrl, 'Directors')}
+                        </div>
+                    </td>
+                    <td style="text-align:right;">${actionBtn}</td>
+                </tr>`;
+            }).join('');
+
+            const content = `
+                <p style="color:#7f8c8d; margin-top:-20px; margin-bottom:20px;">Review organizational documents and trigger NetCash KYB onboarding.</p>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Organization</th>
+                            <th>FICA Status</th>
+                            <th>Vaulted Documents</th>
+                            <th style="text-align:right;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rowsHtml || '<tr><td colspan="4" style="text-align:center; padding:30px; color:#95a5a6;">No organizations found.</td></tr>'}
+                    </tbody>
+                </table>
+
+                <script>
+                    async function approveLevel1(churchId) {
+                        if(!confirm("Approve Level 1 FICA? This will trigger an email asking them for their corporate documents.")) return;
+                        try {
+                            const res = await fetch('/api/prospect/admin/approve-level-1', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ churchId })
+                            });
+                            const data = await res.json();
+                            if(!res.ok) throw new Error(data.error);
+                            alert("✅ " + data.message);
+                            window.location.reload();
+                        } catch (e) { alert("❌ Error: " + e.message); }
+                    }
+
+                    async function approveFinal(churchId) {
+                        if(!confirm("Approve Final FICA? This will authorize the NetCash Sub-Account creation.")) return;
+                        try {
+                            const res = await fetch('/api/prospect/admin/approve-final', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ churchId })
+                            });
+                            const data = await res.json();
+                            if(!res.ok) throw new Error(data.error);
+                            alert("🚀 " + data.message + "\\nNetCash ID: " + data.netCashAccountId);
+                            window.location.reload();
+                        } catch (e) { alert("❌ Error: " + e.message); }
+                    }
+                </script>
+            `;
+
+            res.send(renderAdminPage('FICA Verifications', content));
+
+        } catch (error) {
+            res.send(renderAdminPage('FICA Verifications', '', error.message));
+        }
+    });
+
+    // ============================================================
     // 1. ORGANIZATIONS (Churches, Societies, NPOs)
     // ============================================================
     app.get('/admin/churches', async (req, res) => {
@@ -183,16 +296,15 @@ module.exports = function(app, { prisma }) {
             });
 
             const rows = items.map(c => {
-                // Assign Colors based on Type
                 let badgeClass = 'tag-church';
                 if (c.type === 'BURIAL_SOCIETY') badgeClass = 'tag-society';
                 if (c.type === 'NON_PROFIT') badgeClass = 'tag-npo';
-                if (c.type === 'SERVICE_PROVIDER') badgeClass = 'tag-provider'; // 👈 New Badge
+                if (c.type === 'SERVICE_PROVIDER') badgeClass = 'tag-provider';
 
                 return `
                 <tr>
                     <td><strong>${c.name}</strong><br><span style="font-size:11px; color:#999;">${c.email || 'No Email'}</span></td>
-                    <td><span class="tag ${badgeClass}">${c.type.replace('_', ' ')}</span></td>
+                    <td><span class="tag ${badgeClass}">${c.type ? c.type.replace('_', ' ') : 'UNKNOWN'}</span></td>
                     <td><code>${c.code}</code></td>
                     <td>${c.subaccountCode ? '✅ Linked' : '<span style="color:orange">Pending</span>'}</td>
                     <td style="text-align:right;">
@@ -287,7 +399,7 @@ module.exports = function(app, { prisma }) {
         } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
-    // --- 🆕 GLOBAL COLLECTIONS (New View) ---
+    // --- GLOBAL COLLECTIONS ---
     app.get('/admin/global-collections', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         try {
