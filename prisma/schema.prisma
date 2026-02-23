@@ -51,14 +51,13 @@ model Member {
 }
 
 model Dependent {
-  id          Int       @id @default(autoincrement())
-  firstName   String
-  lastName    String
-  relation    String
-  dateOfBirth DateTime?
-  memberId    Int
-  member      Member    @relation(fields: [memberId], references: [id])
-  createdAt   DateTime  @default(now())
+  id         Int    @id @default(autoincrement())
+  firstName  String
+  lastName   String
+  idNumber   String // ✅ Add this line
+  relation   String
+  memberId   Int
+  member     Member @relation(fields: [memberId], references: [id])
 }
 
 // --- ORGANIZATIONS ---
