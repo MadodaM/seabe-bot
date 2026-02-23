@@ -22,7 +22,7 @@ router.post('/register-church', upload.fields([
     { name: 'pastorId', maxCount: 1 },
     { name: 'proofOfBank', maxCount: 1 }
 ]), async (req, res) => {
-    const { churchName, officialEmail } = req.body;
+    const { churchName, officialEmail, type } = req.body;
 
     try {
         if (!req.files['pastorId'] || !req.files['proofOfBank']) {
@@ -67,11 +67,13 @@ router.post('/register-church', upload.fields([
             data: {
                 code: tempCode, 
                 name: churchName,
-                officialEmail: officialEmail,
+                email: officialEmail,          // Required by your original schema
+                officialEmail: officialEmail,  // Added for the KYB process
                 pastorIdUrl: pastorIdUpload.secure_url,
                 proofOfBankUrl: bankUpload.secure_url,
-                ficaStatus: 'LEVEL_1_PENDING'
-                // Note: Ensure your schema has a way to store the pastor's extracted name/ID if needed!
+                ficaStatus: 'LEVEL_1_PENDING',
+                type: type || 'CHURCH',        // 🚨 THE FIX 🚨
+                subaccountCode: 'PENDING_KYC'  // Added to match web.js
             }
         });
 
