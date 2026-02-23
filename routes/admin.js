@@ -192,12 +192,81 @@ module.exports = (app, { prisma }) => {
         res.send(renderPage(req.org, 'collections', content));
     });;
 	
-	// --- ⚰️ SUREPOL (BURIAL ADMIN UI) ---
+// --- ⚰️ SUREPOL (BURIAL ADMIN UI) ---
     router.get('/admin/:code/surepol', checkSession, async (req, res) => {
+        
+        // 1. Fetch all pending claims for this specific church/society
+        const pendingClaims = await prisma.claim.findMany({
+            where: {
+                churchCode: req.org.code,
+                status: {
+                    in: ['MANUAL_REVIEW_NEEDED', 'FLAGGED_WAITING_PERIOD', 'PENDING_REVIEW', 'PENDING_DOCUMENTATION']
+                }
+            },
+            orderBy: { id: 'desc' }
+        });
+
+        // 2. Build the HTML rows for the claims table
+        let claimsHtml = '';
+        if (pendingClaims.length === 0) {
+            claimsHtml = '<tr><td colspan="5" style="text-align:center; padding:30px; color:#999;">🎉 Queue is empty! No pending claims to review.</td></tr>';
+        } else {
+            claimsHtml = pendingClaims.map(c => {
+                // Assign Badge Colors based on the AI's status
+                let badgeColor = '#f39c12'; // Default Warning Orange
+                if (c.status === 'FLAGGED_WAITING_PERIOD') badgeColor = '#e74c3c'; // Danger Red
+                if (c.status === 'PENDING_REVIEW') badgeColor = '#3498db'; // Info Blue
+                if (c.status === 'MANUAL_REVIEW_NEEDED') badgeColor = '#e67e22'; // Action Orange
+                
+                const docLink = c.documentUrl 
+                    ? `<a href="${c.documentUrl}" target="_blank" style="background:#ecf0f1; padding:5px 10px; border-radius:4px; font-size:12px; font-weight:bold;">🖼️ View Doc</a>` 
+                    : '<span style="color:#999; font-size:12px;">No Doc</span>';
+                
+                return `
+                <tr style="background: ${c.status === 'MANUAL_REVIEW_NEEDED' ? '#fffbeb' : 'transparent'};">
+                    <td><b>${c.deceasedIdNumber === 'UNREADABLE' ? '⚠️ UNREADABLE' : c.deceasedIdNumber}</b><br><span style="font-size:11px; color:#888;">Claimant: ${c.claimantPhone}</span></td>
+                    <td>${new Date(c.dateOfDeath).toLocaleDateString()}</td>
+                    <td>
+                        <span class="badge" style="background:${badgeColor}; padding:5px 8px;">${c.status.replace(/_/g, ' ')}</span>
+                        <div style="font-size:11px; color:#555; margin-top:5px; max-width:250px;">${c.adminNotes || ''}</div>
+                    </td>
+                    <td>${docLink}</td>
+                    <td><button class="btn" style="width:auto; padding:6px 12px; font-size:12px; background:#2c3e50;" onclick="alert('Review action coming next!')">Review</button></td>
+                </tr>`;
+            }).join('');
+        }
+
         const content = `
             <div class="card" style="background:#1e272e; color:white;">
-                <h2 style="margin:0; color:#00d2d3;">Surepol Burial Administration</h2>
-                <p style="margin:5px 0 0 0; font-size:13px; color:#b2bec3;">Manage policyholders, dependents, and verify 6-month waiting periods.</p>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <h2 style="margin:0; color:#00d2d3;">Surepol Burial Administration</h2>
+                        <p style="margin:5px 0 0 0; font-size:13px; color:#b2bec3;">Manage policyholders, dependents, and verify claims.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="border-left: 4px solid #e67e22;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                    <h3 style="margin:0; color:#d35400;">📑 Action Required: Pending Claims</h3>
+                    <span class="badge" style="background:#e67e22; font-size:14px;">${pendingClaims.length} Pending</span>
+                </div>
+                <div style="overflow-x:auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Deceased ID / Claimant</th>
+                                <th>Date of Death</th>
+                                <th>Status / AI Notes</th>
+                                <th>Document</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${claimsHtml}
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             <div class="card">
@@ -213,7 +282,8 @@ module.exports = (app, { prisma }) => {
 
                 <div id="policyResultArea"></div>
             </div>
-			<div id="addPolicyModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+            
+            <div id="addPolicyModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
                 <div style="background:white; width:90%; max-width:600px; border-radius:10px; padding:20px; max-height:90vh; overflow-y:auto;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
                         <h3 style="margin:0;">Add New Surepol Policy</h3>
@@ -237,8 +307,7 @@ module.exports = (app, { prisma }) => {
                         </div>
                         <hr style="margin:10px 0; border:0; border-top:1px solid #eee;">
                         
-                        <div id="dependentsContainer">
-                            </div>
+                        <div id="dependentsContainer"></div>
 
                         <div id="formErrorMsg" style="color:#d63031; margin-top:10px; font-weight:bold; display:none;"></div>
 
@@ -246,7 +315,8 @@ module.exports = (app, { prisma }) => {
                     </form>
                 </div>
             </div>
-			<div id="logPaymentModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+
+            <div id="logPaymentModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
                 <div style="background:white; width:90%; max-width:400px; border-radius:10px; padding:20px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
                         <h3 style="margin:0;">Log Premium Payment</h3>
@@ -277,7 +347,8 @@ module.exports = (app, { prisma }) => {
                     </form>
                 </div>
             </div>
-			<div id="logClaimModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+
+            <div id="logClaimModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
                 <div style="background:white; width:90%; max-width:450px; border-radius:10px; padding:20px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
                         <h3 style="margin:0; color:#c0392b;">Log Death Claim</h3>
@@ -315,7 +386,9 @@ module.exports = (app, { prisma }) => {
                     </form>
                 </div>
             </div>
+
             <script>
+                // (Leave all your existing scripts inside here untouched!)
                 document.getElementById('searchMemberBtn').addEventListener('click', async () => {
                     const btn = document.getElementById('searchMemberBtn');
                     const input = document.getElementById('searchIdInput');
@@ -365,11 +438,11 @@ module.exports = (app, { prisma }) => {
                                         '<p style="margin:0 0 5px 0; font-size:14px;"><strong>ID:</strong> ' + data.memberData.idNumber + '</p>' +
                                         '<p style="margin:0 0 15px 0; font-size:14px;"><strong>Phone:</strong> ' + data.memberData.phone + '</p>' +
                                         '<span class="badge" style="background:#3498db; font-size:12px; padding:6px 10px;">Status: ' + data.policyStatus.accountStatus + '</span>' +
-											'<div style="margin-top:15px; display:flex; gap:10px;">' +
-												'<button class="btn" style="flex:1; background:#2ecc71; padding:8px 15px;" onclick="openPaymentModal(\'' + data.memberData.phone + '\', \'' + data.memberData.firstName + '\')">💰 Log Payment</button>' +
-												'<button class="btn" style="flex:1; background:#e74c3c; padding:8px 15px;" onclick="document.getElementById(\'logClaimModal\').style.display=\'flex\'">📑 Log Death Claim</button>' +
-											'</div>' +
-										'</div>' +
+                                        '<div style="margin-top:15px; display:flex; gap:10px;">' +
+                                            '<button class="btn" style="flex:1; background:#2ecc71; padding:8px 15px;" onclick="openPaymentModal(\\'' + data.memberData.phone + '\\', \\'' + data.memberData.firstName + '\\')">💰 Log Payment</button>' +
+                                            '<button class="btn" style="flex:1; background:#e74c3c; padding:8px 15px;" onclick="document.getElementById(\\'logClaimModal\\').style.display=\\'flex\\'">📑 Log Death Claim</button>' +
+                                        '</div>' +
+                                    '</div>' +
 
                                     '<div style="flex:1; min-width:250px; border-left:1px solid #eee; padding-left:20px;">' +
                                         '<h4 style="color:#7f8c8d; margin:0 0 10px 0; font-size:11px; text-transform:uppercase;">Covered Dependents</h4>' +
@@ -385,8 +458,8 @@ module.exports = (app, { prisma }) => {
                         btn.innerText = "Search";
                     }
                 });
-				// --- LOG PAYMENT LOGIC ---
-                // Helper function called by the green button to open the modal
+
+                // --- LOG PAYMENT LOGIC ---
                 window.openPaymentModal = function(phone, name) {
                     document.getElementById('payeeNameDisplay').innerText = name;
                     document.getElementById('payeePhone').value = phone;
@@ -418,11 +491,9 @@ module.exports = (app, { prisma }) => {
                         const data = await response.json();
                         if (!response.ok) throw new Error(data.error || "Failed to log payment.");
 
-                        // Success! Close modal and reset
                         document.getElementById('logPaymentModal').style.display = 'none';
                         document.getElementById('paymentForm').reset();
                         
-                        // Let the admin know it worked, and click the search button again to refresh the policy status
                         alert("✅ Payment of R" + payload.amount + " logged successfully!");
                         document.getElementById('searchMemberBtn').click(); 
 
@@ -433,11 +504,10 @@ module.exports = (app, { prisma }) => {
                         btn.innerText = "Confirm Payment";
                     }
                 });
-				// --- ADD NEW POLICY LOGIC ---
-                const depsContainer = document.getElementById('dependentsContainer');
-                let depCount = 0;
 
-                // 1. Logic to add a new dependent row
+                // --- ADD NEW POLICY LOGIC ---
+                const depsContainer = document.getElementById('dependentsContainer');
+                
                 document.getElementById('addDependentBtn').addEventListener('click', () => {
                     const div = document.createElement('div');
                     div.style.cssText = "display:flex; gap:5px; margin-bottom:10px; background:#f8f9fa; padding:10px; border-radius:5px;";
@@ -454,7 +524,6 @@ module.exports = (app, { prisma }) => {
                     depsContainer.appendChild(div);
                 });
 
-                // 2. Logic to submit the entire form
                 document.getElementById('newPolicyForm').addEventListener('submit', async (e) => {
                     e.preventDefault();
                     const btn = document.getElementById('savePolicyBtn');
@@ -463,7 +532,6 @@ module.exports = (app, { prisma }) => {
                     btn.innerText = "Saving...";
                     errorBox.style.display = "none";
 
-                    // Gather Dependents
                     const dependents = [];
                     const depRows = depsContainer.children;
                     for (let i = 0; i < depRows.length; i++) {
@@ -475,7 +543,6 @@ module.exports = (app, { prisma }) => {
                         });
                     }
 
-                    // Build Payload
                     const payload = {
                         firstName: document.getElementById('pmFirstName').value.trim(),
                         lastName: document.getElementById('pmLastName').value.trim(),
@@ -496,10 +563,9 @@ module.exports = (app, { prisma }) => {
                         
                         if (!response.ok) throw new Error(data.error || "Failed to save policy.");
 
-                        // Success! Close modal, clear form, and alert user
                         document.getElementById('addPolicyModal').style.display = 'none';
                         document.getElementById('newPolicyForm').reset();
-                        depsContainer.innerHTML = ''; // clear dependents
+                        depsContainer.innerHTML = ''; 
                         alert("✅ Policy created successfully! 6-Month waiting period has begun.");
 
                     } catch (error) {
@@ -509,9 +575,8 @@ module.exports = (app, { prisma }) => {
                         btn.innerText = "Save Policy & Start Waiting Period";
                     }
                 });
-				
-				// --- LOG DEATH CLAIM LOGIC ---
-				// --- ✨ AI DOCUMENT EXTRACTION LOGIC ---
+                
+                // --- ✨ AI DOCUMENT EXTRACTION LOGIC ---
                 document.getElementById('aiExtractBtn').addEventListener('click', async () => {
                     const fileInput = document.getElementById('claimDocument');
                     const statusText = document.getElementById('aiStatus');
@@ -531,23 +596,20 @@ module.exports = (app, { prisma }) => {
                     try {
                         const response = await fetch('/api/surepol/claims/extract-ocr', {
                             method: 'POST',
-                            body: formData // No Content-Type header; browser handles multipart/form-data
+                            body: formData
                         });
                         
                         const result = await response.json();
                         if (!response.ok) throw new Error(result.error);
 
-                        // 🎯 THE MAGIC: Auto-fill the form with AI data
                         const ai = result.extractedData;
                         if (ai.deceasedIdNumber) document.getElementById('claimIdNumber').value = ai.deceasedIdNumber;
                         if (ai.dateOfDeath) document.getElementById('claimDate').value = ai.dateOfDeath;
                         if (ai.causeOfDeath) document.getElementById('claimCause').value = ai.causeOfDeath;
                         
-                        // Save the permanent Cloudinary Vault link to the hidden input
                         document.getElementById('vaultUrl').value = result.vaultUrl;
 
-                        // ✅ THE SAFE LINE:
-						statusText.innerText = '✅ AI Confidence: ' + ai.confidenceScore + '% (' + ai.documentType + ')';
+                        statusText.innerText = '✅ AI Confidence: ' + (ai.confidenceScore || 'High') + '% (' + (ai.documentType || 'Doc') + ')';
                         statusText.style.color = "#16a34a";
 
                     } catch (error) {
@@ -557,7 +619,7 @@ module.exports = (app, { prisma }) => {
                         document.getElementById('aiExtractBtn').disabled = false;
                     }
                 });
-				
+                
                 document.getElementById('claimForm').addEventListener('submit', async (e) => {
                     e.preventDefault();
                     const btn = document.getElementById('saveClaimBtn');
@@ -582,15 +644,13 @@ module.exports = (app, { prisma }) => {
                         
                         const data = await response.json();
                         
-                        // If the backend 6-month math rejects it, it throws an error here!
                         if (!response.ok) throw new Error(data.error || "Failed to log claim.");
 
-                        // Success!
                         document.getElementById('logClaimModal').style.display = 'none';
                         document.getElementById('claimForm').reset();
                         
                         alert("⚠️ Claim logged successfully. Awaiting official Home Affairs documentation (DHA-1663).");
-                        document.getElementById('searchMemberBtn').click(); // Refresh to show DECEASED status
+                        document.getElementById('searchMemberBtn').click(); 
 
                     } catch (error) {
                         errorBox.innerText = error.message;
@@ -599,8 +659,7 @@ module.exports = (app, { prisma }) => {
                         btn.innerText = "Verify & Submit Claim";
                     }
                 });
-			
-			</script>
+            </script>
         `;
 
         res.send(renderPage(req.org, 'surepol', content));
