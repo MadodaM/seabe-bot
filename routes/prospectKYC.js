@@ -7,6 +7,9 @@ const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const fs = require('fs');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const sgMail = require('@sendgrid/mail');
+const EMAIL_FROM = process.env.EMAIL_FROM;
+if (process.env.SENDGRID_KEY) sgMail.setApiKey(process.env.SENDGRID_KEY);
 
 // Use your global Prisma instance
 const prisma = require('../services/prisma'); 
@@ -88,8 +91,8 @@ router.post('/register-church', upload.fields([
     }
 });
 
-// ---------------------------------------------------------
-// STAGE 2: ADMIN APPROVES LEVEL 1 (Triggers Email)
+/// ---------------------------------------------------------
+// STAGE 2: ADMIN APPROVES LEVEL 1 (Triggers Live Email)
 // ---------------------------------------------------------
 router.post('/admin/approve-level-1', async (req, res) => {
     const { churchId } = req.body;
@@ -100,10 +103,48 @@ router.post('/admin/approve-level-1', async (req, res) => {
             data: { ficaStatus: 'AWAITING_LEVEL_2' }
         });
 
-        // 📧 TRIGGER EMAIL TO CHURCH LEADER
-        console.log(`📧 MOCK EMAIL SENT TO: ${church.officialEmail}`);
-        console.log(`Subject: Action Required - FICA Level 2 for ${church.name}`);
-        console.log(`Body: Please upload your CIPC/NPC docs at https://seabe-bot-test.onrender.com/kyb-upload/${church.code}`);
+        // 📧 SEND LIVE EMAIL VIA SENDGRID
+        if (process.env.SENDGRID_KEY && church.email) {
+            // Generates a dynamic link based on your live server URL
+            const uploadLink = `https://${req.get('host')}/kyb-upload/${church.code}`;
+
+            const emailHtml = `
+                <div style="font-family: 'Segoe UI', sans-serif; color: #333; line-height: 1.6;">
+                    <div style="background-color: #0a4d3c; color: #ffffff; padding: 30px; text-align: center; border-bottom: 4px solid #D4AF37;">
+                        <h1 style="margin:0;">SEABE.</h1>
+                        <p>Compliance & Verification</p>
+                    </div>
+                    <div style="padding: 30px; background: #fff; max-width: 600px; margin: 0 auto;">
+                        <h2 style="color: #0a4d3c;">Level 1 FICA Approved ✅</h2>
+                        <p>Dear ${church.name} Administrator,</p>
+                        <p>Your initial registration and identity verification have been successfully approved.</p>
+                        <p>To finalize your organizational account and activate payment collections, please upload your <strong>Level 2 Corporate FICA Documents</strong>:</p>
+                        
+                        <div style="background: #f4f7f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                            <ul style="margin: 0; padding-left: 20px; color: #2c3e50;">
+                                <li style="margin-bottom: 8px;"><strong>NPC / NPO Registration Certificate</strong></li>
+                                <li style="margin-bottom: 8px;"><strong>CIPC Registration Document</strong></li>
+                                <li><strong>Director / Board Member IDs</strong></li>
+                            </ul>
+                        </div>
+
+                        <a href="${uploadLink}" style="display: inline-block; background-color: #D4AF37; color: #0a4d3c; padding: 12px 25px; text-decoration: none; font-weight: bold; border-radius: 4px; margin-top: 10px;">Upload Corporate Documents</a>
+                        
+                        <p style="margin-top: 30px; font-size: 12px; color: #888;">If the button does not work, copy and paste this link into your browser:<br><a href="${uploadLink}" style="color:#3498db;">${uploadLink}</a></p>
+                    </div>
+                </div>
+            `;
+
+            await sgMail.send({
+                to: church.email,
+                from: EMAIL_FROM,
+                subject: `Action Required: FICA Level 2 Verification for ${church.name}`,
+                html: emailHtml
+            });
+            console.log(`✅ Real SendGrid Email sent to: ${church.email}`);
+        } else {
+            console.log(`⚠️ Could not send email. Missing SENDGRID_KEY or Church Email.`);
+        }
 
         res.status(200).json({ message: "Level 1 Approved. Email sent requesting corporate documents." });
 
