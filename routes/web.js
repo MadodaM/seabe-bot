@@ -308,6 +308,134 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
         } catch (e) { console.error(e); res.send("<h1>Error</h1><p>Please try again.</p>"); }
     });
 
+// ---------------------------------------------------------
+    // 🛡️ LEVEL 2 FICA UPLOAD PORTAL (Triggered by Email Link)
+    // ---------------------------------------------------------
+    app.get('/kyb-upload/:code', async (req, res) => {
+        const { code } = req.params;
+
+        try {
+            // 1. Verify the Church exists and needs Level 2 docs
+            const church = await prisma.church.findUnique({ where: { code } });
+
+            if (!church) {
+                return res.send(`<div style="font-family:sans-serif; text-align:center; padding:50px;"><h2>❌ Invalid Link</h2><p>This organization could not be found.</p></div>`);
+            }
+
+            if (church.ficaStatus === 'LEVEL_2_PENDING' || church.ficaStatus === 'ACTIVE') {
+                return res.send(`<div style="font-family:sans-serif; text-align:center; padding:50px; color:#27ae60;"><h2>✅ Documents Received</h2><p>Your Level 2 documents have already been submitted and are under review or approved.</p></div>`);
+            }
+
+            if (church.ficaStatus === 'LEVEL_1_PENDING') {
+                return res.send(`<div style="font-family:sans-serif; text-align:center; padding:50px; color:#e67e22;"><h2>⏳ Pending Level 1</h2><p>Your initial registration is still being reviewed. You will receive an email when it's time to upload corporate documents.</p></div>`);
+            }
+
+            // 2. Render the Secure Upload Form
+            res.send(`
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Upload Corporate Docs | Seabe KYB</title>
+                    <style>
+                        body { font-family: 'Segoe UI', sans-serif; background: #f4f7f6; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
+                        .card { background: white; padding: 40px; border-radius: 15px; width: 100%; max-width: 500px; box-shadow:0 10px 30px rgba(0,0,0,0.05); }
+                        h2 { color: #0a4d3c; text-align: center; margin-bottom:5px; }
+                        .form-group { margin-bottom: 20px; }
+                        .form-group label { display: block; font-size: 13px; font-weight: bold; margin-bottom: 8px; color: #333; }
+                        .form-group p { font-size: 11px; color: #7f8c8d; margin-top: -5px; margin-bottom: 8px; }
+                        input[type="file"] { width: 100%; padding: 12px; border: 1px dashed #bdc3c7; border-radius: 6px; box-sizing: border-box; background: #f9f9f9; }
+                        button { width: 100%; padding: 15px; background: #D4AF37; color: #0a4d3c; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; transition:0.3s; font-size: 16px; margin-top: 10px; }
+                        button:hover:not(:disabled) { background: #b5952f; }
+                        button:disabled { background: #e0e0e0; color: #999; cursor: not-allowed; }
+                        .badge { display: inline-block; background: #eefdf5; color: #27ae60; padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-bottom: 20px; text-align: center; width: 100%; box-sizing: border-box; }
+                    </style>
+                </head>
+                <body>
+                    <div class="card">
+                        <h2>Corporate Verification</h2>
+                        <div class="badge">${church.name} (${church.code})</div>
+                        <p style="text-align:center; color:#555; font-size: 14px; margin-bottom:30px;">Please upload your official registration documents to activate your payment collections account.</p>
+                        
+                        <form id="level2UploadForm" enctype="multipart/form-data">
+                            
+                            <div class="form-group">
+                                <label>1. NPC / NPO Registration Certificate</label>
+                                <p>Official certificate showing your non-profit status.</p>
+                                <input type="file" id="npcReg" name="npcReg" accept="image/*,.pdf" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label>2. CIPC Registration Document</label>
+                                <p>COR14.3 or equivalent showing enterprise details.</p>
+                                <input type="file" id="cipcDoc" name="cipcDoc" accept="image/*,.pdf" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label>3. Director / Board Member IDs</label>
+                                <p>Merge IDs into a single PDF, or upload the primary director's ID.</p>
+                                <input type="file" id="directorIds" name="directorIds" accept="image/*,.pdf" required>
+                            </div>
+
+                            <div id="uploadError" style="color:#c0392b; font-size:13px; font-weight:bold; margin-bottom:15px; display:none; text-align:center;"></div>
+                            <div id="uploadSuccess" style="color:#27ae60; font-size:14px; font-weight:bold; margin-bottom:15px; display:none; text-align:center; background: #eefdf5; padding: 15px; border-radius: 6px;"></div>
+
+                            <button type="submit" id="submitDocsBtn">Securely Upload Documents</button>
+                        </form>
+                    </div>
+
+                    <script>
+                    document.getElementById('level2UploadForm').addEventListener('submit', async (e) => {
+                        e.preventDefault(); 
+                        
+                        const btn = document.getElementById('submitDocsBtn');
+                        const errorBox = document.getElementById('uploadError');
+                        const successBox = document.getElementById('uploadSuccess');
+                        
+                        btn.innerText = "⏳ Vaulting Documents securely...";
+                        btn.disabled = true;
+                        errorBox.style.display = 'none';
+
+                        const formData = new FormData();
+                        formData.append('npcReg', document.getElementById('npcReg').files[0]);
+                        formData.append('cipcDoc', document.getElementById('cipcDoc').files[0]);
+                        formData.append('directorIds', document.getElementById('directorIds').files[0]);
+
+                        try {
+                            const response = await fetch('/api/prospect/upload-level-2/${church.code}', {
+                                method: 'POST',
+                                body: formData 
+                            });
+
+                            const data = await response.json();
+
+                            if (!response.ok) {
+                                throw new Error(data.error || "Failed to upload documents.");
+                            }
+
+                            // Success
+                            successBox.innerHTML = "✅ <strong>Upload Complete!</strong><br>Your documents have been encrypted and saved. Our team will finalize your account shortly.";
+                            successBox.style.display = 'block';
+                            document.getElementById('level2UploadForm').style.display = 'none'; // Hide form
+                            
+                        } catch (error) {
+                            errorBox.innerText = "❌ " + error.message;
+                            errorBox.style.display = 'block';
+                            btn.innerText = "Securely Upload Documents";
+                            btn.disabled = false;
+                        }
+                    });
+                    </script>
+                </body>
+                </html>
+            `);
+
+        } catch (error) {
+            console.error("KYB Upload Page Error:", error);
+            res.send("<h2>System Error</h2><p>Could not load the verification portal.</p>");
+        }
+    });
+
     // 3. DEMO PAGE
     app.get('/demo', (req, res) => {
         res.send(`
