@@ -20,12 +20,32 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
     try {
         console.log(`🚀 Starting background AI Claim processing for ${userPhone}...`);
 
-        // 1️⃣ UPLOAD TO CLOUDINARY
-        // We grab Twilio's temporary image URL and permanently back it up to your secure vault.
-        const uploadResult = await cloudinary.uploader.upload(twilioImageUrl, {
-            folder: `surepol_claims/${orgCode}`,
-            resource_type: 'image'
+        // 1️⃣ SECURELY DOWNLOAD IMAGE FROM TWILIO
+        // We use your Twilio credentials to authenticate and grab the private image
+        const twilioAuth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64');
+        
+        const mediaResponse = await fetch(twilioImageUrl, {
+            headers: { 'Authorization': `Basic ${twilioAuth}` }
         });
+
+        if (!mediaResponse.ok) throw new Error(`Twilio download failed: ${mediaResponse.statusText}`);
+        
+        const arrayBuffer = await mediaResponse.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        // 2️⃣ UPLOAD BUFFER TO CLOUDINARY
+        // Instead of giving Cloudinary a URL, we directly stream the downloaded file to the vault
+        const uploadResult = await new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+                { folder: `surepol_claims/${orgCode}`, resource_type: 'image' },
+                (error, result) => {
+                    if (error) reject(error);
+                    else resolve(result);
+                }
+            );
+            stream.end(buffer);
+        });
+
         const vaultUrl = uploadResult.secure_url;
 
         // 2️⃣ ASK AI TO READ THE DOCUMENT
