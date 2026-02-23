@@ -26,6 +26,7 @@ const { router: kycRouter } = require('./routes/kyc');
 const collectionRoutes = require('./routes/collections'); 
 const { startCronJobs } = require('./services/scheduler');
 const prospectKYCRoutes = require('./routes/prospectKYC');
+const surepolRoutes = require('./routes/surepol');
 
 //app.use('/', adminRoutes);
 
@@ -58,6 +59,7 @@ const formatPhone = (phone) => {
 
 app.use('/kyc', require('./routes/kyc').router);
 collectionRoutes(app);
+app.use('/api/surepol', surepolRoutes);
 
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
