@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
-const { OpenAI } = require('openai');
 const fs = require('fs');
 
 // Configure temporary upload storage
@@ -108,13 +107,13 @@ router.post('/members', async (req, res) => {
                 status: 'ACTIVE', // Default status for a new policy
                 // 3. Prisma Nested Write: Automatically creates linked rows in the Dependent table
                 dependents: {
-						create: dependents && dependents.length > 0 ? dependents.map(dep => ({
-							firstName: dep.firstName,
-							lastName: dep.lastName,
-							dateOfBirth: dep.dateOfBirth, // 👈 Updated mapping
-							relation: dep.relation 
-						})) : []
-					}            },
+                        create: dependents && dependents.length > 0 ? dependents.map(dep => ({
+                            firstName: dep.firstName,
+                            lastName: dep.lastName,
+                            dateOfBirth: dep.dateOfBirth, // 👈 Updated mapping
+                            relation: dep.relation 
+                        })) : []
+                    }            },
             // 4. Return the newly created dependents in the response to confirm
             include: {
                 dependents: true 
@@ -288,8 +287,7 @@ router.post('/claims/extract-ocr', upload.single('document'), async (req, res) =
         // 2. Delete the temporary file from your server to save space
         fs.unlinkSync(req.file.path);
 
-        // // 3. Ask Gemini 2.5 Flash to read the SA Government form
-        // First, fetch the image from Cloudinary to pass it to Gemini
+        // 3. Ask Gemini 2.5 Flash to read the SA Government form
         const imageResponse = await fetch(uploadResult.secure_url);
         const imageArrayBuffer = await imageResponse.arrayBuffer();
         
@@ -321,11 +319,8 @@ router.post('/claims/extract-ocr', upload.single('document'), async (req, res) =
         const result = await model.generateContent([prompt, imagePart]);
         const responseText = result.response.text();
         
-        // Parse the JSON exactly as GPT-4o would have returned it
-        const aiData = JSON.parse(responseText);
-
-        // 4. Parse the AI response
-        const extractedData = JSON.parse(aiResponse.choices[0].message.content);
+        // 4. Parse the JSON exactly as Gemini returned it
+        const extractedData = JSON.parse(responseText);
 
         // 5. Send the permanent Cloudinary link AND the AI data back to the frontend
         res.status(200).json({
