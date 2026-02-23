@@ -285,7 +285,16 @@ module.exports = (app, { prisma }) => {
                     </div>
 
                     <form id="claimForm">
-                        <label>ID Number of Deceased</label>
+                        <div style="background:#f0f9ff; border:1px dashed #bae6fd; padding:15px; border-radius:8px; margin-bottom:20px; text-align:center;">
+                            <label style="color:#0369a1;">Upload Death Certificate / DHA-1663</label>
+                            <input type="file" id="claimDocument" accept="image/*,.pdf" style="width:100%; margin:10px 0; background:white;">
+                            <button type="button" id="aiExtractBtn" class="btn" style="background:#0284c7; width:100%; font-size:13px;">
+                                ✨ Auto-Fill with AI
+                            </button>
+                            <div id="aiStatus" style="font-size:12px; color:#555; margin-top:5px; font-style:italic;"></div>
+                        </div>
+
+                        <input type="hidden" id="vaultUrl"> <label>ID Number of Deceased</label>
                         <input type="text" id="claimIdNumber" placeholder="13-Digit SA ID" required style="width:100%; padding:10px; margin-bottom:15px;">
 
                         <label>Date of Death</label>
@@ -293,16 +302,16 @@ module.exports = (app, { prisma }) => {
 
                         <label>Cause of Death</label>
                         <select id="claimCause" style="width:100%; padding:10px; margin-bottom:15px;">
-                            <option value="NATURAL">Natural Causes (6-Month Rule Applies)</option>
-                            <option value="UNNATURAL">Accidental / Unnatural Causes (No Waiting Period)</option>
+                            <option value="NATURAL">Natural Causes</option>
+                            <option value="UNNATURAL">Accidental / Unnatural</option>
                         </select>
                         
-                        <label>Claimant Phone (Family Contact)</label>
+                        <label>Claimant Phone</label>
                         <input type="text" id="claimantPhone" placeholder="082..." required style="width:100%; padding:10px; margin-bottom:15px;">
 
                         <div id="claimErrorMsg" style="color:#d63031; margin-bottom:10px; font-weight:bold; display:none;"></div>
 
-                        <button type="submit" id="saveClaimBtn" class="btn" style="background:#e74c3c; width:100%;">Verify & Submit Claim</button>
+                        <button type="submit" id="saveClaimBtn" class="btn" style="background:#e74c3c; width:100%;">Verify & Log Claim</button>
                     </form>
                 </div>
             </div>
@@ -502,6 +511,52 @@ module.exports = (app, { prisma }) => {
                 });
 				
 				// --- LOG DEATH CLAIM LOGIC ---
+				// --- ✨ AI DOCUMENT EXTRACTION LOGIC ---
+                document.getElementById('aiExtractBtn').addEventListener('click', async () => {
+                    const fileInput = document.getElementById('claimDocument');
+                    const statusText = document.getElementById('aiStatus');
+                    
+                    if (!fileInput.files[0]) {
+                        alert("Please select a document image first.");
+                        return;
+                    }
+
+                    statusText.innerText = "Processing document with AI... ⏳";
+                    statusText.style.color = "#d97706";
+                    document.getElementById('aiExtractBtn').disabled = true;
+
+                    const formData = new FormData();
+                    formData.append('document', fileInput.files[0]);
+
+                    try {
+                        const response = await fetch('/api/surepol/claims/extract-ocr', {
+                            method: 'POST',
+                            body: formData // No Content-Type header; browser handles multipart/form-data
+                        });
+                        
+                        const result = await response.json();
+                        if (!response.ok) throw new Error(result.error);
+
+                        // 🎯 THE MAGIC: Auto-fill the form with AI data
+                        const ai = result.extractedData;
+                        if (ai.deceasedIdNumber) document.getElementById('claimIdNumber').value = ai.deceasedIdNumber;
+                        if (ai.dateOfDeath) document.getElementById('claimDate').value = ai.dateOfDeath;
+                        if (ai.causeOfDeath) document.getElementById('claimCause').value = ai.causeOfDeath;
+                        
+                        // Save the permanent Cloudinary Vault link to the hidden input
+                        document.getElementById('vaultUrl').value = result.vaultUrl;
+
+                        statusText.innerText = `✅ AI Confidence: ${ai.confidenceScore}% (${ai.documentType})`;
+                        statusText.style.color = "#16a34a";
+
+                    } catch (error) {
+                        statusText.innerText = "❌ AI Extraction failed: " + error.message;
+                        statusText.style.color = "#dc2626";
+                    } finally {
+                        document.getElementById('aiExtractBtn').disabled = false;
+                    }
+                });
+				
                 document.getElementById('claimForm').addEventListener('submit', async (e) => {
                     e.preventDefault();
                     const btn = document.getElementById('saveClaimBtn');
