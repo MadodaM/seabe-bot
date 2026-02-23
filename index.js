@@ -25,6 +25,7 @@ const adminRoutes = require('./routes/admin');
 const { router: kycRouter } = require('./routes/kyc');
 const collectionRoutes = require('./routes/collections'); 
 const { startCronJobs } = require('./services/scheduler');
+const prospectKYCRoutes = require('./routes/prospectKYC');
 
 //app.use('/', adminRoutes);
 
@@ -122,6 +123,10 @@ try {
 	console.log("✅ Surepol Routes Loaded");
 } catch (e) { console.log("⚠️ Surepol routes missing"); }
 
+try {
+	// Add this line to mount your new Corporate KYC  endpoints
+	app.use('/api/prospect', prospectKYCRoutes);
+} catch (e)  { console.log("⚠️ Corporate KYC routes missing"); }
 
 // --- MEMORY ---
 let userSession = {}; 
