@@ -9,7 +9,6 @@ const fs = require('fs');
 const upload = multer({ dest: 'uploads/' });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-
 // Use the global Prisma instance we set up with the AuditLog extension!
 const prisma = require('../services/prisma'); 
 
@@ -73,7 +72,6 @@ router.get('/members/search', async (req, res) => {
         res.status(500).json({ error: "Internal server error while searching for policyholder." });
     }
 });
-
 
 // POST: Create a new Member and their Dependents
 router.post('/members', async (req, res) => {
@@ -271,63 +269,6 @@ router.post('/claims', async (req, res) => {
     } catch (error) {
         console.error("❌ Error processing claim:", error);
         res.status(500).json({ error: "Internal server error while processing the claim." });
-    }
-});
-
-const { OpenAI } = require('openai');
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); // Make sure this is in your .env
-
-// POST: AI Document Extraction
-// Using your existing 'upload' multer middleware
-router.post('/claims/extract-ocr', upload.single('document'), async (req, res) => {
-    try {
-        if (!req.file) return res.status(400).json({ error: "No document uploaded" });
-
-        // 1. Send the file to the Cloudinary Vault
-        const uploadResult = await cloudinary.uploader.upload(req.file.path, {
-            folder: 'surepol_claims_vault',
-            resource_type: 'image'
-        });
-
-        // 2. Ask the VLM (Vision-Language Model) to read the SA Government Form
-        const aiResponse = await openai.chat.completions.create({
-            model: "gpt-4o",
-            response_format: { type: "json_object" }, // Forces strict JSON output
-            messages: [
-                {
-                    role: "system",
-                    content: `You are an expert AI data extractor for a South African InsurTech platform. 
-                    Analyze the uploaded Home Affairs document (DHA-1663 or Death Certificate).
-                    Extract the data and return EXACTLY this JSON structure:
-                    {
-                        "documentType": "String (e.g., 'DHA-1663', 'Death Certificate')",
-                        "deceasedIdNumber": "13-digit string",
-                        "dateOfDeath": "YYYY-MM-DD",
-                        "causeOfDeath": "NATURAL" or "UNNATURAL",
-                        "confidenceScore": Number between 0-100
-                    }
-                    If a field is unreadable, leave it as null.`
-                },
-                {
-                    role: "user",
-                    content: [
-                        { type: "image_url", image_url: { url: uploadResult.secure_url } }
-                    ]
-                }
-            ]
-        });
-
-        const extractedData = JSON.parse(aiResponse.choices[0].message.content);
-
-        // 3. Return the AI data AND the vault link to the frontend
-        res.status(200).json({
-            vaultUrl: uploadResult.secure_url,
-            extractedData: extractedData
-        });
-
-    } catch (error) {
-        console.error("❌ AI Extraction Failed:", error);
-        res.status(500).json({ error: "Failed to process document with AI." });
     }
 });
 
