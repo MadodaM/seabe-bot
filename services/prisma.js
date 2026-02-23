@@ -24,7 +24,7 @@ const prisma = basePrisma.$extends({
                          adminId: args.ctx?.adminId || 'SYSTEM', 
                          action: operation.toUpperCase(),
                          modelName: model,
-                         recordId: result.id,
+                         recordId: result.id ? String(result.id) : "UNKNOWN",
                          // Store the new resulting data (you can expand this to fetch oldData too)
                          newData: result 
                      }

@@ -111,6 +111,7 @@ model Transaction {
   amount     Float
   reference  String   @unique
   status     String // 👈 Is the default 'pending' or 'PENDING'?
+  method     String?  // 👈 Add this line!
   date       DateTime @default(now())
 }
 
