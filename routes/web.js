@@ -323,8 +323,8 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             }
 
             if (church.ficaStatus === 'LEVEL_2_PENDING' || church.ficaStatus === 'ACTIVE') {
-                return res.send(`<div style="font-family:sans-serif; text-align:center; padding:50px; color:#27ae60;"><h2>✅ Documents Received</h2><p>Your Level 2 documents have already been submitted and are under review or approved.</p></div>`);
-            }
+				return res.send(`<div style="font-family:sans-serif; text-align:center; padding:50px; color:#27ae60;"><h2>✅ Documents Under Verification</h2><p>Your corporate documents have been successfully received and are currently being reviewed by our compliance team. <strong>Please wait for feedback via email.</strong></p></div>`);
+			}
 
             if (church.ficaStatus === 'LEVEL_1_PENDING') {
                 return res.send(`<div style="font-family:sans-serif; text-align:center; padding:50px; color:#e67e22;"><h2>⏳ Pending Level 1</h2><p>Your initial registration is still being reviewed. You will receive an email when it's time to upload corporate documents.</p></div>`);
