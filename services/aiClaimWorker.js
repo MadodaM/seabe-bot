@@ -11,9 +11,9 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Cloudinary config (will automatically use your .env variables)
 cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
+    cloud_name: process.env.CLOUDINARY_NAME,
+    api_key: process.env.CLOUDINARY_KEY,
+    api_secret: process.env.CLOUDINARY_SECRET
 });
 
 async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
