@@ -434,7 +434,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             console.error("KYB Upload Page Error:", error);
             res.send("<h2>System Error</h2><p>Could not load the verification portal.</p>");
         }
-    });
+    }); 
 
     // 3. DEMO PAGE
     app.get('/demo', (req, res) => {
