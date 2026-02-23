@@ -3,7 +3,8 @@
 // ==========================================
 const { createPaymentLink } = require('./services/paystack');
 
-async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, twiml, res) {
+// ⚠️ NOTICE: Added 'req' at the end of the parameters so we can process Twilio images
+async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, twiml, res, req) {
     let reply = "";
 
     try {
@@ -16,23 +17,24 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
                     `3. KYC Compliance 🏦\n` +
                     `4. Digital Card 🪪\n` +
                     `5. Pay Premium 💳\n` +
-                    `6. Exit to Church ⛪\n\n` +
+                    `6. Log a Death Claim 📑\n` +
+                    `7. Exit to lobby ⛪\n\n` +
                     `Reply with a number:`;
         }
 
         // 2. MAIN MENU NAVIGATION
         else if (session.step === 'SOCIETY_MENU') {
             
-			// 🚀 ADD THIS: EXIT TO CHURCH MODE
-			if (incomingMsg === '6') {
-				session.mode = 'CHURCH';
-				session.step = 'START';
-				session.orgCode = null; // Optional: Clear code so they have to re-enter it
-				reply = "⛪ *Switching to Church Mode.*\n\nPlease enter your Church Code (e.g., *AFM01*) to continue.";
-    }
-			
+            // EXIT TO CHURCH MODE (Moved from 6 to 7)
+            if (incomingMsg === '7') {
+                session.mode = 'CHURCH';
+                session.step = 'START';
+                session.orgCode = null; // Optional: Clear code so they have to re-enter it
+                reply = "⛪ *Switching to Church Mode.*\n\nPlease enter your Church Code (e.g., *AFM01*) to continue.";
+            }
+            
             // POLICY STATUS
-            if (incomingMsg === '1') {
+            else if (incomingMsg === '1') {
                 const dbLookupPhone = cleanPhone.startsWith('+') ? cleanPhone.slice(1) : cleanPhone;
                 const member = await prisma.member.findUnique({ 
                     where: { phone: dbLookupPhone } 
@@ -64,8 +66,8 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
             // KYC Compliance
             else if (incomingMsg === '3') {
                 const { generateKYCLink } = require('./routes/kyc');
-				const link = await generateKYCLink(cleanPhone, res.req.get('host'));
-				reply = `👤 *KYC Compliance*\n\nPlease verify your identity here:\n\n${link}`;
+                const link = await generateKYCLink(cleanPhone, res.req.get('host'));
+                reply = `👤 *KYC Compliance*\n\nPlease verify your identity here:\n\n${link}`;
             }
 
             // PREMIUM PAYMENT
@@ -93,7 +95,7 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
                                 reference: ref,
                                 status: 'PENDING',
                                 type: 'SOCIETY_PREMIUM',
-								//member: { connect: { phone: cleanPhone } }
+                                //member: { connect: { phone: cleanPhone } }
                             }
                         });
                         reply = `💳 *Pay Premium*\nDue: R${amount}.00\n\n👉 ${link}`;
@@ -102,12 +104,35 @@ async function handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, tw
                     }
                 }
             }
-			
-			
-			
+
+            // 🚀 NEW: LOG A DEATH CLAIM (Option 6)
+            else if (incomingMsg === '6') {
+                session.step = 'AWAITING_CLAIM_DOCUMENT';
+                reply = `📑 *Log a Death Claim*\n\nPlease take a clear photo of the *DHA-1663 (Notification of Death)* or the official *Death Certificate* and send it here.\n\n_Make sure the 13-digit ID number is visible._\n\nReply *menu* at any time to cancel.`;
+            }
+            
         } // End of SOCIETY_MENU
 
-        // 3. DEPENDENT LOGIC (These should be separate 'else if' branches for their specific steps)
+        // 3. 📸 NEW: PROCESS CLAIM DOCUMENT UPLOAD
+        else if (session.step === 'AWAITING_CLAIM_DOCUMENT') {
+            // Check if the user attached an image using Twilio's NumMedia parameter
+            const numMedia = req.body.NumMedia ? parseInt(req.body.NumMedia) : 0;
+
+            if (numMedia > 0) {
+                const twilioImageUrl = req.body.MediaUrl0;
+                
+                reply = "⏳ *Document Received.*\n\nOur system is verifying the details... An admin will be notified shortly.\n\nReply *menu* to return to the main menu.";
+                
+                // Reset them so they aren't stuck
+                session.step = 'SOCIETY_MENU'; 
+
+                // Note: We will handle the AI worker logic in the background later!
+            } else {
+                reply = "❌ We didn't detect an image. Please attach a clear photo of the document, or reply *menu* to cancel.";
+            }
+        }
+
+        // 4. DEPENDENT LOGIC
         else if (session.step === 'DEPENDENT_VIEW' && incomingMsg.toLowerCase() === 'add') {
             reply = "📝 Type Dependent's First Name:";
             session.step = 'ADD_DEP_NAME';

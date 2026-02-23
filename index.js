@@ -424,7 +424,7 @@ await sendMessage(cleanPhone, "🤔 I didn't quite catch that. Reply *Menu* to s
                 session.subaccount = member.society.subaccountCode;
                 session.churchCode = member.society.id; // For ID-based logic
 
-                return handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, twiml, res);
+                return handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, twiml, res, req);
             } 
             else if (incomingMsg === 'society') {
                 twiml.message("⚠️ You are not linked to a Burial Society. Reply *Join* to find one.");

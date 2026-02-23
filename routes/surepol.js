@@ -1,5 +1,15 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const cloudinary = require('cloudinary').v2;
+const { OpenAI } = require('openai');
+const fs = require('fs');
+
+// Configure temporary upload storage
+const upload = multer({ dest: 'uploads/' });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+
 // Use the global Prisma instance we set up with the AuditLog extension!
 const prisma = require('../services/prisma'); 
 
@@ -261,6 +271,129 @@ router.post('/claims', async (req, res) => {
     } catch (error) {
         console.error("❌ Error processing claim:", error);
         res.status(500).json({ error: "Internal server error while processing the claim." });
+    }
+});
+
+const { OpenAI } = require('openai');
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); // Make sure this is in your .env
+
+// POST: AI Document Extraction
+// Using your existing 'upload' multer middleware
+router.post('/claims/extract-ocr', upload.single('document'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: "No document uploaded" });
+
+        // 1. Send the file to the Cloudinary Vault
+        const uploadResult = await cloudinary.uploader.upload(req.file.path, {
+            folder: 'surepol_claims_vault',
+            resource_type: 'image'
+        });
+
+        // 2. Ask the VLM (Vision-Language Model) to read the SA Government Form
+        const aiResponse = await openai.chat.completions.create({
+            model: "gpt-4o",
+            response_format: { type: "json_object" }, // Forces strict JSON output
+            messages: [
+                {
+                    role: "system",
+                    content: `You are an expert AI data extractor for a South African InsurTech platform. 
+                    Analyze the uploaded Home Affairs document (DHA-1663 or Death Certificate).
+                    Extract the data and return EXACTLY this JSON structure:
+                    {
+                        "documentType": "String (e.g., 'DHA-1663', 'Death Certificate')",
+                        "deceasedIdNumber": "13-digit string",
+                        "dateOfDeath": "YYYY-MM-DD",
+                        "causeOfDeath": "NATURAL" or "UNNATURAL",
+                        "confidenceScore": Number between 0-100
+                    }
+                    If a field is unreadable, leave it as null.`
+                },
+                {
+                    role: "user",
+                    content: [
+                        { type: "image_url", image_url: { url: uploadResult.secure_url } }
+                    ]
+                }
+            ]
+        });
+
+        const extractedData = JSON.parse(aiResponse.choices[0].message.content);
+
+        // 3. Return the AI data AND the vault link to the frontend
+        res.status(200).json({
+            vaultUrl: uploadResult.secure_url,
+            extractedData: extractedData
+        });
+
+    } catch (error) {
+        console.error("❌ AI Extraction Failed:", error);
+        res.status(500).json({ error: "Failed to process document with AI." });
+    }
+});
+
+// POST: AI Document OCR Extraction
+router.post('/claims/extract-ocr', upload.single('document'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: "No document image provided." });
+        }
+
+        // 1. Upload the image to Cloudinary (Permanent Vault)
+        const uploadResult = await cloudinary.uploader.upload(req.file.path, {
+            folder: 'surepol_claims_vault',
+            resource_type: 'image'
+        });
+
+        // 2. Delete the temporary file from your server to save space
+        fs.unlinkSync(req.file.path);
+
+        // 3. Ask GPT-4o to read the SA Government form
+        const aiResponse = await openai.chat.completions.create({
+            model: "gpt-4o",
+            response_format: { type: "json_object" }, // Strict JSON mode
+            messages: [
+                {
+                    role: "system",
+                    content: `You are an expert InsurTech AI data extractor for South Africa. 
+                    Analyze this document (like a DHA-1663 or Death Certificate). 
+                    Extract the details and return EXACTLY this JSON structure. If you cannot read a field, return null for that field.
+                    {
+                        "documentType": "string",
+                        "deceasedIdNumber": "13-digit string",
+                        "dateOfDeath": "YYYY-MM-DD",
+                        "causeOfDeath": "NATURAL" or "UNNATURAL",
+                        "confidenceScore": number between 0 and 100
+                    }
+                    Note: If the cause of death is an accident, murder, or suicide, classify as UNNATURAL. Otherwise, NATURAL.`
+                },
+                {
+                    role: "user",
+                    content: [
+                        { 
+                            type: "image_url", 
+                            image_url: { url: uploadResult.secure_url } 
+                        }
+                    ]
+                }
+            ]
+        });
+
+        // 4. Parse the AI response
+        const extractedData = JSON.parse(aiResponse.choices[0].message.content);
+
+        // 5. Send the permanent Cloudinary link AND the AI data back to the frontend
+        res.status(200).json({
+            message: "Document successfully analyzed.",
+            vaultUrl: uploadResult.secure_url,
+            extractedData: extractedData
+        });
+
+    } catch (error) {
+        console.error("❌ AI OCR Error:", error);
+        // Clean up temp file just in case it failed before deletion
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        
+        res.status(500).json({ error: "Failed to process the document with AI." });
     }
 });
 
