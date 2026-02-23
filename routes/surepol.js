@@ -7,7 +7,8 @@ const fs = require('fs');
 
 // Configure temporary upload storage
 const upload = multer({ dest: 'uploads/' });
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Use the global Prisma instance we set up with the AuditLog extension!
 const prisma = require('../services/prisma'); 
@@ -287,36 +288,41 @@ router.post('/claims/extract-ocr', upload.single('document'), async (req, res) =
         // 2. Delete the temporary file from your server to save space
         fs.unlinkSync(req.file.path);
 
-        // 3. Ask GPT-4o to read the SA Government form
-        const aiResponse = await openai.chat.completions.create({
-            model: "gpt-4o",
-            response_format: { type: "json_object" }, // Strict JSON mode
-            messages: [
-                {
-                    role: "system",
-                    content: `You are an expert InsurTech AI data extractor for South Africa. 
-                    Analyze this document (like a DHA-1663 or Death Certificate). 
-                    Extract the details and return EXACTLY this JSON structure. If you cannot read a field, return null for that field.
-                    {
-                        "documentType": "string",
-                        "deceasedIdNumber": "13-digit string",
-                        "dateOfDeath": "YYYY-MM-DD",
-                        "causeOfDeath": "NATURAL" or "UNNATURAL",
-                        "confidenceScore": number between 0 and 100
-                    }
-                    Note: If the cause of death is an accident, murder, or suicide, classify as UNNATURAL. Otherwise, NATURAL.`
-                },
-                {
-                    role: "user",
-                    content: [
-                        { 
-                            type: "image_url", 
-                            image_url: { url: uploadResult.secure_url } 
-                        }
-                    ]
-                }
-            ]
+        // // 3. Ask Gemini 2.5 Flash to read the SA Government form
+        // First, fetch the image from Cloudinary to pass it to Gemini
+        const imageResponse = await fetch(uploadResult.secure_url);
+        const imageArrayBuffer = await imageResponse.arrayBuffer();
+        
+        const imagePart = {
+            inlineData: {
+                data: Buffer.from(imageArrayBuffer).toString("base64"),
+                mimeType: "image/jpeg" // You can also dynamically grab this from the fetch headers if needed
+            }
+        };
+
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-2.5-flash",
+            generationConfig: { responseMimeType: "application/json" } // Strict JSON mode
         });
+
+        const prompt = `You are an expert InsurTech AI data extractor for South Africa. 
+        Analyze this document (like a DHA-1663 or Death Certificate). 
+        Extract the details and return EXACTLY this JSON structure. If you cannot read a field, return null for that field.
+        {
+            "documentType": "string",
+            "deceasedIdNumber": "13-digit string",
+            "dateOfDeath": "YYYY-MM-DD",
+            "causeOfDeath": "NATURAL" or "UNNATURAL",
+            "confidenceScore": number between 0 and 100
+        }
+        Note: If the cause of death is an accident, murder, or suicide, classify as UNNATURAL. Otherwise, NATURAL.`;
+
+        // Execute the AI call
+        const result = await model.generateContent([prompt, imagePart]);
+        const responseText = result.response.text();
+        
+        // Parse the JSON exactly as GPT-4o would have returned it
+        const aiData = JSON.parse(responseText);
 
         // 4. Parse the AI response
         const extractedData = JSON.parse(aiResponse.choices[0].message.content);
