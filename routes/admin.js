@@ -546,7 +546,8 @@ module.exports = (app, { prisma }) => {
                         // Save the permanent Cloudinary Vault link to the hidden input
                         document.getElementById('vaultUrl').value = result.vaultUrl;
 
-                        statusText.innerText = `✅ AI Confidence: ${ai.confidenceScore}% (${ai.documentType})`;
+                        // ✅ THE SAFE LINE:
+						statusText.innerText = '✅ AI Confidence: ' + ai.confidenceScore + '% (' + ai.documentType + ')';
                         statusText.style.color = "#16a34a";
 
                     } catch (error) {
