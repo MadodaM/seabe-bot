@@ -66,9 +66,22 @@ model Church {
   id              Int      @id @default(autoincrement())
   code            String   @unique
   name            String
-  type            String   // "CHURCH" or "SOCIETY"
+  type            String   // "CHURCH" or "BURIAL_SOCIETY"
   adminPhone      String?
   email           String?  // ✅ Fixed
+  
+  // FICA Level 1 (Initial FICA)
+  pastorIdUrl        String?  // Cloudinary Vault Link
+  proofOfBankUrl     String?  // Cloudinary Vault Link
+  
+  // FICA Level 2 (Corporate FICA)
+  npcRegUrl          String?  
+  cipcDocUrl         String?
+  directorIdsUrl     String?  // Can be an array or single merged PDF link
+  
+  // State Machine for FICA Flow
+  ficaStatus         String   @default("LEVEL_1_PENDING") 
+  // Statuses: LEVEL_1_PENDING -> AWAITING_LEVEL_2 -> LEVEL_2_PENDING -> NETCASH_READY -> ACTIVE
   
   // Financial Fields
   defaultPremium  Float?   @default(150.0)
@@ -78,6 +91,7 @@ model Church {
   otp             String?
   otpExpires      DateTime?
   createdAt       DateTime @default(now())
+  tosAcceptedAt   DateTime? // 👈 Add this so web.js can save the Terms agreement
 
   // Relations
   admins          Admin[]
