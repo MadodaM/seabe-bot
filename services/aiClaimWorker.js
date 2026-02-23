@@ -78,9 +78,38 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
         const responseText = result.response.text();
         const aiData = JSON.parse(responseText);
 
-        if (!aiData.deceasedIdNumber) {
-            return await sendWhatsApp(userPhone, "❌ *Document Unreadable*\n\nWe couldn't clearly read the 13-digit ID number. Please take a closer, clearer photo and try again (Option 6).");
+        // 🚨 THE HUMAN FALLBACK LOGIC 🚨
+        if (!aiData.deceasedIdNumber || aiData.deceasedIdNumber.length < 13) {
+            console.log(`⚠️ AI could not read ID for ${userPhone}. Routing to Human Admin.`);
+            
+            // Try to find the policy using the sender's phone number instead
+            const senderPolicy = await prisma.member.findFirst({
+                where: { phone: userPhone, churchCode: orgCode }
+            });
+
+            if (senderPolicy) {
+                // Log a partial claim under the sender's policy for an admin to fix
+                await prisma.claim.create({
+                    data: {
+                        churchCode: orgCode,
+                        policyId: senderPolicy.id,
+                        deceasedIdNumber: 'UNREADABLE',
+                        dateOfDeath: new Date(), // Placeholder date
+                        causeOfDeath: 'UNKNOWN',
+                        claimantPhone: userPhone,
+                        status: 'MANUAL_REVIEW_NEEDED',
+                        documentUrl: vaultUrl,
+                        adminNotes: '⚠️ AI OCR FAILED: Could not read document. Manual data entry required by Admin.'
+                    }
+                });
+                return await sendWhatsApp(userPhone, "⚠️ *Manual Review Required*\n\nWe received your document, but our automated system couldn't read the text clearly. \n\nDon't worry, your document has been saved securely and forwarded to an admin for manual review. We will contact you shortly.");
+            } else {
+                // We can't read the ID AND we don't recognize the sender's phone number. Hard fail.
+                return await sendWhatsApp(userPhone, "❌ *Document Unreadable*\n\nWe couldn't read the ID number, and this WhatsApp number is not linked to an active policy. Please take a clearer photo and try again, or contact support.");
+            }
         }
+
+        // 4️⃣ DATABASE VERIFICATION & 6-MONTH RULE (If AI successfully read the ID)
 
         // 4️⃣ DATABASE VERIFICATION & 6-MONTH RULE
         const mainMember = await prisma.member.findFirst({
