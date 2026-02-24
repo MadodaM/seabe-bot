@@ -27,6 +27,7 @@ const collectionRoutes = require('./routes/collections');
 const { startCronJobs } = require('./services/scheduler');
 const prospectKYCRoutes = require('./routes/prospectKYC');
 const surepolRoutes = require('./routes/surepol');
+const whatsappRoutes = require('./routes/whatsapp');
 
 //app.use('/', adminRoutes);
 
@@ -129,6 +130,13 @@ try {
 	// Add this line to mount your new Corporate KYC  endpoints
 	app.use('/api/prospect', prospectKYCRoutes);
 } catch (e)  { console.log("⚠️ Corporate KYC routes missing"); }
+
+try {
+	app.use(express.urlencoded({ extended: true })); // 👈 Required to read Twilio Webhooks
+	
+	app.use('/api/whatsapp', whatsappRoutes);
+} catch (e)  { console.log("⚠️ Twilio Webhooks routes missing"); }
+
 
 // --- MEMORY ---
 let userSession = {}; 
