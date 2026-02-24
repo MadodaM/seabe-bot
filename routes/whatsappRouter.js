@@ -9,7 +9,7 @@ const axios = require('axios');
 // Bot & AI Imports
 const { getAISupportReply } = require('../services/aiSupport');
 const { handleSocietyMessage } = require('../societyBot');
-const { handleChurchMessage } = require('../churchBot');
+const { handleChurchMessage } = require('../bots/churchBot');
 
 // Safely initialize Twilio for background messaging
 let twilioClient;
