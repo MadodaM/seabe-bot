@@ -291,18 +291,19 @@ app.post('/paystack/webhook', async (req, res) => {
 		return;
 	}
 
-	// 5. Default Fallback (AI Support)
+// 5. Default Fallback (AI Support)
+console.log("👉 1. Reached the fallback block. Sending to AI...");
+
 try {
-    // Let Gemini think about what the user just said
     const aiResponse = await getAISupportReply(incomingMsg, cleanPhone, member?.firstName);
+    console.log("👉 2. Received response from Gemini:", aiResponse);
     
-    // Send Gemini's answer back using your existing function!
     await sendMessage(cleanPhone, aiResponse);
+    console.log("👉 3. Twilio successfully sent the message to the phone!");
 } catch (error) {
-    console.error("AI Fallback Error:", error);
+    console.error("❌ Fallback Error:", error);
     await sendMessage(cleanPhone, "🤔 I didn't quite catch that. Reply *Menu* to see available options.");
 }
-
 // --- [END OF BOT BRAIN] ---
 				
 			} catch (error) {
