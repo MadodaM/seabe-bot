@@ -646,9 +646,17 @@ app.get('/payment-success', async (req, res) => {
     }
 });
 
+// 📦 Ensure your gateway toggle is defined at the top of the file
+const ozow = require('./services/ozow');
+const netcash = require('./services/netcash');
+
 app.get('/admin/sync-payments', async (req, res) => {
-    console.log("🔄 Starting Global Payment Sync...");
+    console.log("🔄 Starting Global Payment Sync via Dynamic Gateway...");
     
+    // 🎛️ Determine which gateway logic to use for verification
+    const ACTIVE_GATEWAY_NAME = process.env.ACTIVE_GATEWAY || 'OZOW'; 
+    const gateway = ACTIVE_GATEWAY_NAME === 'NETCASH' ? netcash : ozow;
+
     try {
         // 1. Find all transactions that are still PENDING
         const pendingTransactions = await prisma.transaction.findMany({
@@ -657,34 +665,34 @@ app.get('/admin/sync-payments', async (req, res) => {
 
         let updatedCount = 0;
 
-        // 2. Loop through and check each one with Paystack
+        // 2. Loop through and check each one with the Active Gateway
         for (const tx of pendingTransactions) {
             try {
-                const resp = await axios.get(`https://api.paystack.co/transaction/verify/${tx.reference}`, {
-                    headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
-                });
+                // ✨ MAGIC: Uses the verifyPayment function we built in ozow.js/netcash.js
+                const verifyData = await gateway.verifyPayment(tx.reference);
 
-                // 3. If Paystack says it was successful, update our DB
-                if (resp.data.data.status === 'success') {
+                // 3. If the gateway confirms completion, update our DB
+                if (verifyData && (verifyData.status === 'Complete' || verifyData.status === 'success')) {
                     await prisma.transaction.update({
                         where: { id: tx.id },
                         data: { status: 'SUCCESS' }
                     });
                     updatedCount++;
-                    console.log(`✅ Fixed Ref: ${tx.reference}`);
+                    console.log(`✅ [${ACTIVE_GATEWAY_NAME}] Fixed Ref: ${tx.reference}`);
                 }
             } catch (err) {
-                console.error(`⚠️ Could not verify ${tx.reference}: ${err.message}`);
+                console.error(`⚠️ Could not verify ${tx.reference} via ${ACTIVE_GATEWAY_NAME}: ${err.message}`);
             }
         }
 
         res.send({
-            message: "Sync Complete",
+            message: `Sync Complete via ${ACTIVE_GATEWAY_NAME}`,
             checked: pendingTransactions.length,
             updated: updatedCount
         });
 
     } catch (error) {
+        console.error("❌ Global Sync Error:", error.message);
         res.status(500).send({ error: error.message });
     }
 });
