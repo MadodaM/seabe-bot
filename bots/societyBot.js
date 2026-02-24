@@ -80,8 +80,13 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
 
             // OPTION 3: KYC COMPLIANCE
             else if (incomingMsg === '3') {
-                const link = `https://seabe.tech/kyc-verify?phone=${cleanPhone}`;
-                reply = `👤 *KYC Compliance*\n\nPlease verify your identity to ensure your policy remains active:\n\n👉 ${link}`;
+                onst host = process.env.HOST_URL || 'seabe-bot-test.onrender.com';
+    
+				// ✨ This creates the unique token in the DB and returns the full URL
+				const link = await generateKYCLink(cleanPhone, host);
+				
+				reply = `👤 *KYC Compliance*\n\nPlease verify your identity using this secure link (valid for 24h):\n\n👉 ${link}`;
+}
             }
 
             // OPTION 5: PREMIUM PAYMENT

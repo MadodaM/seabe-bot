@@ -189,4 +189,11 @@ router.post('/:token', (req, res) => {
     });
 });
 
+// routes/kyc.js
+
+// Add this so /kyc (no token) doesn't show a blank page
+router.get('/', (req, res) => {
+    res.send("<h3>👋 KYC Portal</h3><p>Please use the unique link sent to your WhatsApp to upload documents.</p>");
+});
+
 module.exports = { router, generateKYCLink };
