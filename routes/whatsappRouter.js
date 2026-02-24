@@ -18,15 +18,20 @@ if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
 }
 
 const sendWhatsApp = async (to, body) => {
-    if (!twilioClient) return console.log("⚠️ Twilio not configured. Could not send:", body);
+    if (!twilioClient) return console.log("⚠️ Twilio Keys Missing! Could not send message.");
+    
+    // ✨ Foolproof cleaner: strips 'whatsapp:' if it exists, then adds it back cleanly
+    const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+
     try {
         await twilioClient.messages.create({
-            from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
+            from: `whatsapp:${cleanTwilioNumber}`, // Always perfectly formatted!
             to: `whatsapp:${to}`,
             body: body
         });
+        console.log(`✅ Text delivered to ${to}`);
     } catch (err) {
-        console.error("Twilio Send Error:", err.message);
+        console.error("❌ Twilio Send Error:", err.message);
     }
 };
 
