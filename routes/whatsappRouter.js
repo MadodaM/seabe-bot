@@ -222,13 +222,15 @@ router.post('/', (req, res) => {
             }
 
             // 2. Handle Burial Society Flows
-            if (session.flow === 'SOCIETY_PAYMENT' || incomingMsg === 'society') {
+            // ✅ FIXED: Added `session.mode === 'SOCIETY'` to lock the user in!
+            if (incomingMsg === 'society' || session.mode === 'SOCIETY' || session.flow === 'SOCIETY_PAYMENT') {
                 if (member.societyCode) {
-                    session.mode = 'SOCIETY';
+                    session.mode = 'SOCIETY'; // Lock them into Society mode
                     console.log("🚀 ROUTER: Handing off to Society Bot!");
-                    await handleSocietyMessage(cleanPhone, incomingMsg, session, member); // ✅ Added Await
+                    await handleSocietyMessage(cleanPhone, incomingMsg, session, member); 
                     return;
-                } else {
+                } else if (incomingMsg === 'society') {
+                    // Only show this warning if they explicitly asked for society
                     await sendWhatsApp(cleanPhone, "⚠️ You are not linked to a Burial Society. Reply *Join* to search for one.");
                     return;
                 }
