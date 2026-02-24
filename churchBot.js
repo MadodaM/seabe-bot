@@ -37,7 +37,7 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
         // ====================================================
         // 1. MAIN MENU TRIGGER & NPO DETECTION
         // ====================================================
-        const triggers = ['hi', 'menu', 'hello', 'npo', 'donate', 'help'];
+        const triggers = ['amen','hi', 'menu', 'hello', 'npo', 'donate', 'help'];
         
         if (triggers.includes(incomingMsg)) {
             

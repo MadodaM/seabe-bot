@@ -20,6 +20,7 @@ const { getAISupportReply } = require('./services/aiSupport');
 // --- IMPORT BOTS ---
 const { handleSocietyMessage } = require('./societyBot');
 const { handleChurchMessage } = require('./churchBot');
+const paymentBot = require('./paymentBot');
 
 const adminRoutes = require('./routes/admin');
 const { router: kycRouter } = require('./routes/kyc');
