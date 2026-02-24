@@ -3,13 +3,13 @@
 // Covers: Churches ⛪ AND Non-Profits 🤝
 // ==========================================
 
-const { 
-    createPaymentLink, 
-    createSubscriptionLink, 
-    getTransactionHistory,
-    listActiveSubscriptions,
-    cancelSubscription
-} = require('./services/paystack');
+// 📦 Pull in BOTH of your new Payment Gateways (NO PAYSTACK)
+const ozow = require('../services/ozow'); 
+const netcash = require('../services/netcash');
+
+// 🎛️ THE MASTER TOGGLE (Reads from your .env file)
+const ACTIVE_GATEWAY_NAME = process.env.ACTIVE_GATEWAY || 'OZOW'; 
+const gateway = ACTIVE_GATEWAY_NAME === 'NETCASH' ? netcash : ozow;
 
 // --- HELPER: DYNAMIC ADS ---
 // Fetches sponsored text if available
@@ -17,7 +17,7 @@ async function getAdSuffix(churchCode, prisma) {
     try {
         const ad = await prisma.ad.findFirst({ 
             where: { churchCode: churchCode, status: 'Active', expiryDate: { gte: new Date() } },
-            orderBy: { createdAt: 'desc' }    
+            orderBy: { createdAt: 'desc' }   
         });
 
         if (ad) {
@@ -54,7 +54,7 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
                         `5. News & Updates 📰\n` +
                         `6. My Profile 👤\n` +
                         `7. History 📜\n` + 
-                        `8. Go to Society 🛡️\n\n` +
+                        `8. Go to Lobby 🛡️\n\n` +
                         `Reply with a number:`;
             
             // 🅱️ TRAP: User typed "NPO" but is inside a CHURCH
@@ -75,7 +75,7 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
                         `5. News 📰\n` +
                         `6. Profile 👤\n` +
                         `7. History 📜\n` +
-                        `8. Go to Society 🛡️\n\n` + 
+                        `8. Go to Lobby 🛡️\n\n` + 
                         `Reply with a number:${adText}`;
             }
         }
@@ -129,10 +129,6 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
                     where: { 
                         churchCode: session.orgCode, 
                         status: 'Active', 
-                        // ❌ REMOVED: isDonation: false (This field might not exist in your new schema)
-                        // ❌ REMOVED: date: { gte: new Date() } 
-                        
-                        // ✅ ADDED: Filter by Expiry Date instead
                         expiryDate: { gte: new Date() } 
                     } 
                 });
@@ -143,7 +139,6 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
                 } else {
                     let list = "🎟️ *Select an Event:*\n\n"; 
                     events.forEach((e, index) => { 
-                        // Added the Date Text to the list so users know when it is
                         list += `*${index + 1}.* ${e.name}\n🗓 ${e.date}\n💰 R${e.price}\n\n`; 
                     });
                     reply = list + "Reply with the number."; 
@@ -162,20 +157,19 @@ async function handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twi
 
             // --- OPTION 5: NEWS ---
             else if (incomingMsg === '5') {
-                // --- 📰 UPDATED NEWS LOGIC ---
-const news = await prisma.news.findMany({ 
-        where: { church: { code: session.orgCode }, status: 'Active' }, 
-        orderBy: { createdAt: 'desc' }, 
-        take: 3 
-    });
+                const news = await prisma.news.findMany({ 
+                    where: { church: { code: session.orgCode }, status: 'Active' }, 
+                    orderBy: { createdAt: 'desc' }, 
+                    take: 3 
+                });
 
-    if (news.length === 0) {
-        reply = "📰 No news updates at the moment.";
-    } else {
-        reply = "*Latest Updates:*\n\n" + news.map(n => `📌 *${n.headline}*\n${n.body || ''}`).join('\n\n');
-    }
-    session.step = 'CHURCH_MENU';
-}
+                if (news.length === 0) {
+                    reply = "📰 No news updates at the moment.";
+                } else {
+                    reply = "*Latest Updates:*\n\n" + news.map(n => `📌 *${n.headline}*\n${n.body || ''}`).join('\n\n');
+                }
+                session.step = 'CHURCH_MENU';
+            }
 
             // --- OPTION 6: PROFILE ---
             else if (incomingMsg === '6') {
@@ -185,16 +179,15 @@ const news = await prisma.news.findMany({
 
             // --- OPTION 7: HISTORY ---
             else if (incomingMsg === '7') {
-                 const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
-                 const userEmail = member?.email || `${cleanPhone}@seabe.io`; 
-                 reply = await getTransactionHistory(userEmail);
+                 // Dynamic Gateway explicitly uses phone number for history lookup
+                 reply = await gateway.getTransactionHistory(cleanPhone);
                  session.step = 'CHURCH_MENU';
             }
             
             // --- OPTION 8: SWITCH TO SOCIETY ---
             else if (incomingMsg === '8') {
                  reply = "🔄 Switching to Burial Society mode...\nReply *Society* to continue.";
-                 delete session.mode; // Reset mode so main router picks up "Society"
+                 delete session.mode; 
             }
 
             else {
@@ -206,39 +199,26 @@ const news = await prisma.news.findMany({
         // 3. PAYMENT PROCESSING (Amounts)
         // ====================================================
         else if (session.step === 'CHURCH_PAY') {
-            let amount = incomingMsg.replace(/\D/g,''); // Remove non-digits
+            let amount = incomingMsg.replace(/\D/g,''); 
             let type = ''; 
             
-            // 💡 FIX: CHECK IF THIS IS A SPECIFIC PROJECT FIRST
             if (session.selectedEvent && session.selectedEvent.isDonation) {
-                // It's a specific fund (e.g. Building Fund)
-                // We use the Event ID in the type: "PROJECT-12"
                 type = `PROJECT-${session.selectedEvent.id}`;
             }
-            // Standard Menu Choices
             else if (session.choice === '1') type = (session.orgType === 'NON_PROFIT') ? 'DONATION' : 'OFFERING';
             else if (session.choice === '2') type = 'TITHE';
             else if (session.choice === '4') type = 'RECURRING';
-            else if (session.choice === 'EVENT') type = `TICKET-${session.selectedEvent.id}`; // Fixed Price Tickets
+            else if (session.choice === 'EVENT') type = `TICKET-${session.selectedEvent.id}`;
 
-            // Identify User
-            const memberInfo = await prisma.member.findUnique({ where: { phone: cleanPhone } });
-            const customerEmail = memberInfo?.email || `${cleanPhone}@seabe.io`;
-            
-            // Generate Unique Reference
-            // Result: "AFM001-PROJECT-5-8833-17234"
             const ref = `${session.orgCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
 
-            // Generate Link
-            const link = (type === 'RECURRING') 
-                ? await createSubscriptionLink(amount, ref, customerEmail, session.subaccount, cleanPhone, session.orgName) 
-                : await createPaymentLink(amount, ref, customerEmail, session.subaccount, cleanPhone, session.orgName);
+            // ✨ MAGIC: Gateway Toggle handles everything cleanly!
+            // Note: Our new modules handle both recurring and once-off payloads smoothly.
+            const link = await gateway.createPaymentLink(amount, ref, cleanPhone, session.orgName);
             
             if (link) {
-                // Clear the selected event so it doesn't stick for next time
                 delete session.selectedEvent;
-                
-                reply = `Tap to pay R${amount}:\n👉 ${link}`;
+                reply = `Tap to securely pay R${amount} via ${ACTIVE_GATEWAY_NAME}:\n👉 ${link}`;
                 
                 // Log pending transaction
                 await prisma.transaction.create({ 
@@ -262,23 +242,17 @@ const news = await prisma.news.findMany({
                 session.selectedEvent = selected;
 
                 if (selected.isDonation) {
-                    // Variable Amount (Project/Building Fund)
                     session.step = 'CHURCH_PAY'; 
-                    // We cheat and set choice to '1' (Donation) but append Project Name in Ref later if needed
                     session.choice = '1'; 
                     reply = `🏗️ *${selected.name}*\n\nHow much would you like to contribute?`;
                 } else {
-                    // Fixed Price (Ticket)
                     session.step = 'CHURCH_PAY'; 
                     session.choice = 'EVENT'; 
-                    // For tickets, we usually just confirm. 
-                    // Simplified here to just generate link for 1 ticket:
-                    const memberInfo = await prisma.member.findUnique({ where: { phone: cleanPhone } });
-                    const email = memberInfo?.email || `${cleanPhone}@seabe.io`;
                     const ref = `${session.orgCode}-EVENT-${selected.id}-${Date.now().toString().slice(-5)}`;
                     
-                    const link = await createPaymentLink(selected.price, ref, email, session.subaccount, cleanPhone, session.orgName);
-                    reply = `Tap to buy ticket for ${selected.name} (R${selected.price}):\n👉 ${link}`;
+                    // Route through dynamic gateway
+                    const link = await gateway.createPaymentLink(selected.price, ref, cleanPhone, session.orgName);
+                    reply = `Tap to buy a ticket for ${selected.name} (R${selected.price}) via ${ACTIVE_GATEWAY_NAME}:\n👉 ${link}`;
                     session.step = 'CHURCH_MENU';
                 }
             } else {
@@ -294,28 +268,12 @@ const news = await prisma.news.findMany({
                 session.step = 'UPDATE_EMAIL';
                 reply = "📧 Reply with your new *Email Address*:";
             } else if (incomingMsg === '2') {
-                 // Manage Subscriptions
-                 const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
-                 const userEmail = member?.email || `${cleanPhone}@seabe.io`;
-                 const subs = await listActiveSubscriptions(userEmail);
-                 
-                 if (subs.length === 0) {
-                     reply = "You have no active recurring gifts.";
-                     session.step = 'CHURCH_MENU';
-                 } else {
-                     let subList = "📋 *Your Active Subscriptions:*\n\n";
-                     subs.forEach((sub, index) => {
-                         const amount = (sub.amount / 100).toFixed(2);
-                         subList += `*${index + 1}.* ${sub.plan.name} (R${amount})\n`;
-                     });
-                     subList += "\nReply with the number to *CANCEL* it, or '0' to go back.";
-                     session.activeSubs = subs;
-                     session.step = 'CANCEL_SUB_SELECT';
-                     reply = subList;
-                 }
+                 // Manage Subscriptions via dynamic gateway
+                 const subsMsg = await gateway.listActiveSubscriptions(cleanPhone);
+                 reply = subsMsg + "\n\n(Reply '0' to go back)";
+                 session.step = 'CANCEL_SUB_SELECT';
             } 
             else if (incomingMsg === '3') {
-                // UNLINK ORGANIZATION
                 await prisma.member.update({ where: { phone: cleanPhone }, data: { churchCode: null } });
                 delete session.mode; 
                 delete session.orgCode;
@@ -339,14 +297,9 @@ const news = await prisma.news.findMany({
                  session.step = 'CHURCH_MENU';
                  reply = "Returning to menu...";
              } else {
-                 const selection = parseInt(incomingMsg) - 1;
-                 const subs = session.activeSubs;
-                 if (subs && subs[selection]) {
-                     const targetSub = subs[selection];
-                     const success = await cancelSubscription(targetSub.subscription_code, targetSub.email_token);
-                     reply = success ? `✅ Cancelled.` : "⚠️ Failed to cancel.";
-                     session.step = 'CHURCH_MENU';
-                 }
+                 // New Gateways use secure portals to cancel mandates
+                 reply = `⚠️ To securely cancel a recurring debit or EFT mandate, please refer to the secure link sent to your email or contact ${session.orgName} administration.`;
+                 session.step = 'CHURCH_MENU';
              }
         }
 
