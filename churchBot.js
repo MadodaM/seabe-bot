@@ -4,8 +4,8 @@
 // ==========================================
 
 // 📦 Pull in BOTH of your new Payment Gateways (NO PAYSTACK)
-const ozow = require('../services/ozow'); 
-const netcash = require('../services/netcash');
+const ozow = require('./services/ozow'); 
+const netcash = require('./services/netcash');
 
 // 🎛️ THE MASTER TOGGLE (Reads from your .env file)
 const ACTIVE_GATEWAY_NAME = process.env.ACTIVE_GATEWAY || 'OZOW'; 
