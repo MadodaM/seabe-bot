@@ -10,6 +10,7 @@ const axios = require('axios');
 const { getAISupportReply } = require('../services/aiSupport');
 const { handleSocietyMessage } = require('../bots/societyBot');
 const { handleChurchMessage } = require('../bots/churchBot');
+const { processTwilioClaim } = require('../services/aiClaimWorker');
 
 // Safely initialize Twilio for background messaging
 let twilioClient;
@@ -19,13 +20,10 @@ if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
 
 const sendWhatsApp = async (to, body) => {
     if (!twilioClient) return console.log("⚠️ Twilio Keys Missing! Could not send message.");
-    
-    // ✨ Foolproof cleaner: strips 'whatsapp:' if it exists, then adds it back cleanly
     const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
-
     try {
         await twilioClient.messages.create({
-            from: `whatsapp:${cleanTwilioNumber}`, // Always perfectly formatted!
+            from: `whatsapp:${cleanTwilioNumber}`, 
             to: `whatsapp:${to}`,
             body: body
         });
@@ -41,7 +39,7 @@ router.post('/', (req, res) => {
     const incomingMsg = (req.body.Body || '').trim().toLowerCase();
     const cleanPhone = (req.body.From || '').replace('whatsapp:', '');
 
-    // 1. Respond to Twilio IMMEDIATELY to prevent the 15s timeout
+    // 1. Respond to Twilio IMMEDIATELY (Prevents 15s timeout)
     res.type('text/xml').send('<Response></Response>');
 
     // 2. Handle all logic safely in the background
@@ -49,6 +47,7 @@ router.post('/', (req, res) => {
         try {
             if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
             const session = userSession[cleanPhone];
+            const numMedia = parseInt(req.body.NumMedia || '0'); 
 
             const member = await prisma.member.findUnique({
                 where: { phone: cleanPhone },
@@ -100,7 +99,7 @@ router.post('/', (req, res) => {
                             text: `Attached is the latest transaction report for ${org.name}.\n\nTotal Processed: R${total.toFixed(2)}`,
                             attachments: [{
                                 content: Buffer.from(csvContent).toString('base64'),
-                                filename: `Report_${targetCode}_${new Date().toISOString().split('T')[0]}.csv`,
+                                filename: `Report_${targetCode}.csv`,
                                 type: 'text/csv',
                                 disposition: 'attachment'
                             }]
@@ -111,7 +110,7 @@ router.post('/', (req, res) => {
                             await sendWhatsApp(cleanPhone, `✅ Report for *${org.name}* has been emailed to *${org.email}*.`);
                         } catch (error) {
                             console.error("Email Error:", error);
-                            await sendWhatsApp(cleanPhone, "⚠️ Error sending email. Please check server logs.");
+                            await sendWhatsApp(cleanPhone, "⚠️ Error sending email.");
                         }
                     }
                 }
@@ -119,53 +118,51 @@ router.post('/', (req, res) => {
             }
 
             // ================================================
+            // 🖼️ MULTIMEDIA HANDLER (AI CLAIM OCR)
+            // ================================================
+            if (numMedia > 0 && session.step === 'AWAITING_CLAIM_DOCUMENT') {
+                const imageUrl = req.body.MediaUrl0;
+                const orgCode = member?.societyCode || member?.churchCode;
+                processTwilioClaim(cleanPhone, imageUrl, orgCode);
+                await sendWhatsApp(cleanPhone, "⏳ *Document Received!*\n\nOur Gemini AI is now processing the claim. I will message you once the scan is complete.");
+                return;
+            }
+
+            // ================================================
             // 🛠️ ADMIN TRIGGER: MANUAL VERIFY (PAYSTACK)
             // ================================================
             if (incomingMsg.startsWith('verify ')) {
                 const reference = incomingMsg.split(' ')[1];
-
                 if (!reference) {
-                    await sendWhatsApp(cleanPhone, "⚠️ Please specify a reference. Example: *Verify REF-123*");
+                    await sendWhatsApp(cleanPhone, "⚠️ Please specify a reference.");
                 } else {
                     try {
                         const response = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
                             headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
                         });
-
-                        const status = response.data.data.status;
-                        const amount = response.data.data.amount / 100;
-
-                        if (status === 'success') {
-                            await prisma.transaction.update({
-                                where: { reference: reference },
-                                data: { status: 'SUCCESS' }
-                            });
-                            await sendWhatsApp(cleanPhone, `✅ **Verified!**\nReference: ${reference}\nAmount: R${amount}\nStatus updated to *SUCCESS*.`);
+                        if (response.data.data.status === 'success') {
+                            await prisma.transaction.update({ where: { reference }, data: { status: 'SUCCESS' } });
+                            await sendWhatsApp(cleanPhone, `✅ Verified! Status updated to *SUCCESS*.`);
                         } else {
-                            await sendWhatsApp(cleanPhone, `❌ **Payment Failed.**\nPaystack says this transaction is still: *${status}*.`);
+                            await sendWhatsApp(cleanPhone, `❌ Payment is still: *${response.data.data.status}*.`);
                         }
                     } catch (error) {
-                        console.error("Verify Error:", error);
-                        await sendWhatsApp(cleanPhone, "⚠️ Could not verify. Check the reference number.");
+                        await sendWhatsApp(cleanPhone, "⚠️ Could not verify reference.");
                     }
                 }
                 return;
             }
 
-// ================================================
-            // 🚦 USER ROUTING LOGIC & MENUS
             // ================================================
-            console.log(`🧭 ROUTER: Processing message "${incomingMsg}" from ${cleanPhone}`);
-
+            // 🚦 USER ROUTING LOGIC
+            // ================================================
             if (!member) {
-                console.log("🧭 ROUTER: User not found in DB. Starting Onboarding.");
                 if (session.step === 'JOIN_SELECT' || session.step === 'SEARCH' || incomingMsg === 'join') {
                     if (session.step !== 'JOIN_SELECT') {
                          const results = await prisma.church.findMany({
                              where: { name: { contains: incomingMsg, mode: 'insensitive' } },
                              take: 5
                          });
-
                          if (results.length > 0) {
                              session.searchResults = results;
                              let reply = `🔍 Found ${results.length} matches:\n\n` + 
@@ -175,95 +172,56 @@ router.post('/', (req, res) => {
                              await sendWhatsApp(cleanPhone, reply);
                          } else {
                              session.step = 'SEARCH';
-                             await sendWhatsApp(cleanPhone, "👋 Welcome to Seabe Pay! Please reply with the name of your organization (e.g. 'AFM'):");
+                             await sendWhatsApp(cleanPhone, "👋 Welcome! Please reply with the name of your organization:");
                          }
                     } else if (session.step === 'JOIN_SELECT') {
                         const index = parseInt(incomingMsg) - 1;
                         const org = session.searchResults ? session.searchResults[index] : null;
-
                         if (org) {
-                             const updateData = {};
-                             let reply = "";
-                             
-                             if (org.type === 'BURIAL_SOCIETY') {
-                                 updateData.societyCode = org.code;
-                                 reply = `✅ Linked to Society: *${org.name}*\n\nReply *Society* to access your policy menu.`;
-                             } else {
-                                 updateData.churchCode = org.code;
-                                 reply = `✅ Linked to Church: *${org.name}*\n\nReply *Hi* to see the main menu.`;
-                             }
-
+                             const updateData = org.type === 'BURIAL_SOCIETY' ? { societyCode: org.code } : { churchCode: org.code };
                              await prisma.member.upsert({
                                  where: { phone: cleanPhone },
                                  update: updateData,
                                  create: { phone: cleanPhone, firstName: 'Member', lastName: 'New', ...updateData }
                              });
-                             
                              delete userSession[cleanPhone]; 
-                             await sendWhatsApp(cleanPhone, reply);
-                        } else {
-                            session.step = 'SEARCH';
-                            await sendWhatsApp(cleanPhone, "⚠️ Invalid selection. Try searching again.");
+                             await sendWhatsApp(cleanPhone, `✅ Successfully linked to *${org.name}*!`);
                         }
                     }
                 } else {
-                    await sendWhatsApp(cleanPhone, "👋 Welcome! It looks like you aren't registered yet. Please reply with *Join* to find your organization.");
+                    await sendWhatsApp(cleanPhone, "👋 Welcome! Please reply with *Join* to find your organization.");
                 }
                 return;
             }
 
-            console.log("🧭 ROUTER: User identified as", member.firstName);
-
-            // 1. Handle Global "Cancel" or "Reset"
             if (incomingMsg === 'exit' || incomingMsg === 'cancel') {
                 delete userSession[cleanPhone];
-                await sendWhatsApp(cleanPhone, "🔄 Session cleared. Reply *Hi* to see the main menu.");
+                await sendWhatsApp(cleanPhone, "🔄 Session cleared.");
                 return;
             }
 
-            // 2. Handle Burial Society Flows
-            // ✅ FIXED: Added `session.mode === 'SOCIETY'` to lock the user in!
-            if (incomingMsg === 'society' || session.mode === 'SOCIETY' || session.flow === 'SOCIETY_PAYMENT') {
+            // Route to Society
+            if (incomingMsg === 'society' || session.mode === 'SOCIETY') {
                 if (member.societyCode) {
-                    session.mode = 'SOCIETY'; // Lock them into Society mode
-                    console.log("🚀 ROUTER: Handing off to Society Bot!");
-                    await handleSocietyMessage(cleanPhone, incomingMsg, session, member); 
-                    return;
-                } else if (incomingMsg === 'society') {
-                    // Only show this warning if they explicitly asked for society
-                    await sendWhatsApp(cleanPhone, "⚠️ You are not linked to a Burial Society. Reply *Join* to search for one.");
+                    session.mode = 'SOCIETY';
+                    await handleSocietyMessage(cleanPhone, incomingMsg, session, member);
                     return;
                 }
             }
 
-            // 3. Handle Church / Payment Flows
-            const churchTriggers = ['amen', 'hi', 'menu', 'hello', 'npo', 'donate', 'help', 'pay'];
-            
-            if (churchTriggers.includes(incomingMsg) || session.mode === 'CHURCH' || session.flow === 'CHURCH_PAYMENT') {
+            // Route to Church
+            const churchTriggers = ['amen', 'hi', 'menu', 'hello', 'pay'];
+            if (churchTriggers.includes(incomingMsg) || session.mode === 'CHURCH') {
                 if (member.churchCode) {
                     session.mode = 'CHURCH';
-                    console.log("🚀 ROUTER: Handing off to Church Bot!");
-                    await handleChurchMessage(cleanPhone, incomingMsg, session, member); // ✅ Added Await
+                    await handleChurchMessage(cleanPhone, incomingMsg, session, member);
                     return;
-                } else {
-                     console.log("⚠️ ROUTER: User used a church trigger but has NO churchCode in DB.");
-                     await sendWhatsApp(cleanPhone, "⚠️ You are not currently linked to a Ministry. Reply *Join* to find yours!");
-                     return;
                 }
             }
 
-            // ================================================
-            // 🤖 FALLBACK: AI CATCH-ALL
-            // ================================================
-            console.log(`🤖 ROUTER: Message didn't match any menus. Triggering AI Support for: ${incomingMsg}`);
-            try {
-                const aiResponse = await getAISupportReply(incomingMsg, cleanPhone, member?.firstName);
-                console.log(`🤖 AI Responded: ${aiResponse}`);
-                await sendWhatsApp(cleanPhone, aiResponse);
-            } catch (error) {
-                console.error("AI Fallback Error:", error);
-                await sendWhatsApp(cleanPhone, "🤔 I didn't quite catch that. Reply *Menu* to see available options.");
-            }
+            // AI Fallback
+            const aiResponse = await getAISupportReply(incomingMsg, cleanPhone, member?.firstName);
+            await sendWhatsApp(cleanPhone, aiResponse);
 
         } catch (e) {
             console.error("❌ ROUTER CRASH:", e);
