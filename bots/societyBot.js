@@ -73,14 +73,14 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                 if (dependents.length === 0) {
                     reply = `👨‍👩‍👧‍👦 *My Dependents*\n\nNo dependents linked.\nReply *Add* to add one.`;
                 } else {
-                    reply = `👨‍👩‍👧‍👦 *Dependents (${dependents.length})*\n` + dependents.map(d => `- ${d.firstName} (${d.relation})`).join('\n') + `\n\nReply *Add* to add more or *0* to back.`;
+                    reply = `👨‍👩‍👧‍👦 *Dependents (${dependents.length})*\n` + dependents.map(d => `- ${d.firstName} (${d.relation})`).join('\n') + `\n\nReply *Add* to add more or *Society* to go back.`;
                 }
                 session.step = 'DEPENDENT_VIEW';
             }
 
             // OPTION 3: KYC COMPLIANCE
             else if (incomingMsg === '3') {
-                onst host = process.env.HOST_URL || 'seabe-bot-test.onrender.com';
+                const host = process.env.HOST_URL || 'seabe-bot-test.onrender.com'; // ✅ Added the 'c'
     
 				// ✨ This creates the unique token in the DB and returns the full URL
 				const link = await generateKYCLink(cleanPhone, host);
@@ -88,6 +88,9 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
 				reply = `👤 *KYC Compliance*\n\nPlease verify your identity using this secure link (valid for 24h):\n\n👉 ${link}`;
 }
             }
+			
+			// OPTION 4: Digital Card
+			
 
             // OPTION 5: PREMIUM PAYMENT
             else if (incomingMsg === '5') {
