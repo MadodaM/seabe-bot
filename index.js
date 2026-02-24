@@ -17,6 +17,7 @@ const { MessagingResponse } = require('twilio').twiml;
 const { PrismaClient } = require('@prisma/client');
 const { getAISupportReply } = require('./services/aiSupport');
 
+
 // --- IMPORT BOTS ---
 const { handleSocietyMessage } = require('./societyBot');
 const { handleChurchMessage } = require('./churchBot');
@@ -290,10 +291,19 @@ app.post('/paystack/webhook', async (req, res) => {
 		return;
 	}
 
-	// 5. Default Fallback
-	await sendMessage(cleanPhone, "🤔 I didn't quite catch that. Reply *Menu* to see available options.");
+	// 5. Default Fallback (AI Support)
+try {
+    // Let Gemini think about what the user just said
+    const aiResponse = await getAISupportReply(incomingMsg, cleanPhone, member?.firstName);
+    
+    // Send Gemini's answer back using your existing function!
+    await sendMessage(cleanPhone, aiResponse);
+} catch (error) {
+    console.error("AI Fallback Error:", error);
+    await sendMessage(cleanPhone, "🤔 I didn't quite catch that. Reply *Menu* to see available options.");
+}
 
-	// --- [END OF BOT BRAIN] ---
+// --- [END OF BOT BRAIN] ---
 				
 			} catch (error) {
 				console.error("⚠️ Background processing error:", error);
