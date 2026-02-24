@@ -538,7 +538,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1>"));
 	
 	// GET: Ozow Sandbox Preview Page
-router.get('/ozow-sandbox-preview', (req, res) => {
+app.get('/ozow-sandbox-preview', (req, res) => {
     const html = `
     <!DOCTYPE html>
     <html lang="en">
@@ -652,7 +652,7 @@ router.get('/ozow-sandbox-preview', (req, res) => {
 });
 
 // GET: NetCash Sandbox Preview Page
-router.get('/netcash-sandbox-preview', (req, res) => {
+app.get('/netcash-sandbox-preview', (req, res) => {
     const html = `
     <!DOCTYPE html>
     <html lang="en">
