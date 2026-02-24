@@ -226,91 +226,86 @@ app.post('/paystack/webhook', async (req, res) => {
     }
 });;
 
+// ==========================================
+// 🚦 WHATSAPP TRAFFIC CONTROLLER (ROUTER)
+// ==========================================
+app.post('/whatsapp', (req, res) => {
+    const incomingMsg = (req.body.Body || '').trim().toLowerCase();
+    const cleanPhone = (req.body.From || '').replace('whatsapp:', '');
 
-	// ==========================================
-	// 🚦 WHATSAPP TRAFFIC CONTROLLER (ROUTER)
-	// ==========================================
-	app.post('/whatsapp', async (req, res) => {
-		app.post('/whatsapp', (req, res) => {
-		const incomingMsg = req.body.Body?.trim().toLowerCase();
-		const cleanPhone = req.body.From.replace('whatsapp:', '');
+    // 1. Respond to Twilio IMMEDIATELY to prevent the 15s timeout
+    res.type('text/xml').send('<Response></Response>');
 
-		// 1. Respond to Twilio IMMEDIATELY to prevent the 15s timeout
-		res.type('text/xml').send('<Response></Response>');
+    // 2. Handle everything else in the background
+    (async () => {
+        try {
+            if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
+            const session = userSession[cleanPhone];
 
-		// 2. Handle everything else in the background
-		(async () => {
-			try {
-				if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
-				const session = userSession[cleanPhone];
+            // Now we do the slow database work
+            const member = await prisma.member.findUnique({
+                where: { phone: cleanPhone },
+                include: { church: true, society: true }
+            });
 
-				// Now we do the slow database work
-				const member = await prisma.member.findUnique({
-					where: { phone: cleanPhone },
-					include: { church: true, society: true }
-				});
+            // LOGIC GATE: Is it a new user or existing?
+            if (!member) {
+                // Using your existing sendMessage function
+                await sendMessage(cleanPhone, "👋 Welcome! It looks like you aren't registered yet. Please reply with your *Church Code* to get started.");
+                return;
+            }
 
-				// LOGIC GATE: Is it a new user or existing?
-				if (!member) {
-					await client.messages.create({
-						from: process.env.TWILIO_PHONE_NUMBER,
-						to: `whatsapp:${cleanPhone}`,
-						body: "👋 Welcome! It looks like you aren't registered yet. Please reply with your *Church Code* to get started."
-					});
-					return;
-				}
+            // --- [START OF BOT BRAIN] ---
 
-				// --- [START OF BOT BRAIN] ---
+            // 1. Handle Global "Cancel" or "Reset"
+            if (incomingMsg === 'exit' || incomingMsg === 'cancel') {
+                delete userSession[cleanPhone];
+                await sendMessage(cleanPhone, "🔄 Session cleared. Reply *Hi* to see the main menu.");
+                return;
+            }
 
-	// 1. Handle Global "Cancel" or "Reset"
-	if (incomingMsg === 'exit' || incomingMsg === 'cancel') {
-		delete userSession[cleanPhone];
-		await sendMessage(cleanPhone, "🔄 Session cleared. Reply *Hi* to see the main menu.");
-		return;
-	}
+            // 2. Handle Burial Society Flows (If session exists)
+            if (session.flow === 'SOCIETY_PAYMENT' || incomingMsg === 'society') {
+                return handleSocietyMessage(cleanPhone, incomingMsg, session, member);
+            }
 
-	// 2. Handle Burial Society Flows (If session exists)
-	if (session.flow === 'SOCIETY_PAYMENT' || incomingMsg === 'society') {
-		return handleSocietyMessage(cleanPhone, incomingMsg, session, member);
-	}
+            // 3. Handle Church Flows (If session exists)
+            if (session.flow === 'CHURCH_PAYMENT' || incomingMsg === 'pay') {
+                return handleChurchPayment(cleanPhone, incomingMsg, session, member);
+            }
 
-	// 3. Handle Church Flows (If session exists)
-	if (session.flow === 'CHURCH_PAYMENT' || incomingMsg === 'pay') {
-		return handleChurchPayment(cleanPhone, incomingMsg, session, member);
-	}
+            // 4. Main Menu Logic (For registered members)
+            if (incomingMsg === 'hi' || incomingMsg === 'menu') {
+                const menu = `👋 Hello, ${member.firstName}!\n\n` +
+                             `How can I help you today?\n` +
+                             `1️⃣ *Pay* (Tithe/Offering)\n` +
+                             `2️⃣ *Society* (Burial Fees)\n` +
+                             `3️⃣ *Balance* (Check Statements)\n` +
+                             `4️⃣ *Admin* (Reports)`;
+                await sendMessage(cleanPhone, menu);
+                return;
+            }
 
-	// 4. Main Menu Logic (For registered members)
-	if (incomingMsg === 'hi' || incomingMsg === 'menu') {
-		const menu = `👋 Hello, ${member.name}!\n\n` +
-					 `How can I help you today?\n` +
-					 `1️⃣ *Pay* (Tithe/Offering)\n` +
-					 `2️⃣ *Society* (Burial Fees)\n` +
-					 `3️⃣ *Balance* (Check Statements)\n` +
-					 `4️⃣ *Admin* (Reports)`;
-		await sendMessage(cleanPhone, menu);
-		return;
-	}
+            // 5. Default Fallback (AI Support)
+            console.log("👉 1. Reached the fallback block. Sending to AI...");
 
-// 5. Default Fallback (AI Support)
-console.log("👉 1. Reached the fallback block. Sending to AI...");
-
-try {
-    const aiResponse = await getAISupportReply(incomingMsg, cleanPhone, member?.firstName);
-    console.log("👉 2. Received response from Gemini:", aiResponse);
-    
-    await sendMessage(cleanPhone, aiResponse);
-    console.log("👉 3. Twilio successfully sent the message to the phone!");
-} catch (error) {
-    console.error("❌ Fallback Error:", error);
-    await sendMessage(cleanPhone, "🤔 I didn't quite catch that. Reply *Menu* to see available options.");
-}
-// --- [END OF BOT BRAIN] ---
-				
-			} catch (error) {
-				console.error("⚠️ Background processing error:", error);
-			}
-		})();
-	});
+            try {
+                const aiResponse = await getAISupportReply(incomingMsg, cleanPhone, member?.firstName);
+                console.log("👉 2. Received response from Gemini:", aiResponse);
+                
+                await sendMessage(cleanPhone, aiResponse);
+                console.log("👉 3. Twilio successfully sent the message to the phone!");
+            } catch (error) {
+                console.error("❌ Fallback Error:", error);
+                await sendMessage(cleanPhone, "🤔 I didn't quite catch that. Reply *Menu* to see available options.");
+            }
+            // --- [END OF BOT BRAIN] ---
+            
+        } catch (error) {
+            console.error("⚠️ Background processing error:", error);
+        }
+    })();
+});
 		
 		const twiml = new MessagingResponse();
 		const incomingMsg = req.body.Body.trim().toLowerCase();
