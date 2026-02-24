@@ -15,7 +15,7 @@ const axios = require('axios');
 const multer = require('multer'); 
 const { MessagingResponse } = require('twilio').twiml;
 const { PrismaClient } = require('@prisma/client');
-
+const { getAISupportReply } = require('./services/aiSupport');
 
 // --- IMPORT BOTS ---
 const { handleSocietyMessage } = require('./societyBot');
@@ -27,7 +27,7 @@ const collectionRoutes = require('./routes/collections');
 const { startCronJobs } = require('./services/scheduler');
 const prospectKYCRoutes = require('./routes/prospectKYC');
 const surepolRoutes = require('./routes/surepol');
-const whatsappRoutes = require('./routes/whatsapp');
+const whatsappRoutes = require('./routes/whatsappRouter');
 
 //app.use('/', adminRoutes);
 
@@ -225,334 +225,334 @@ app.post('/paystack/webhook', async (req, res) => {
 });;
 
 
-// ==========================================
-// 🚦 WHATSAPP TRAFFIC CONTROLLER (ROUTER)
-// ==========================================
-app.post('/whatsapp', async (req, res) => {
-    app.post('/whatsapp', (req, res) => {
-    const incomingMsg = req.body.Body?.trim().toLowerCase();
-    const cleanPhone = req.body.From.replace('whatsapp:', '');
+	// ==========================================
+	// 🚦 WHATSAPP TRAFFIC CONTROLLER (ROUTER)
+	// ==========================================
+	app.post('/whatsapp', async (req, res) => {
+		app.post('/whatsapp', (req, res) => {
+		const incomingMsg = req.body.Body?.trim().toLowerCase();
+		const cleanPhone = req.body.From.replace('whatsapp:', '');
 
-    // 1. Respond to Twilio IMMEDIATELY to prevent the 15s timeout
-    res.type('text/xml').send('<Response></Response>');
+		// 1. Respond to Twilio IMMEDIATELY to prevent the 15s timeout
+		res.type('text/xml').send('<Response></Response>');
 
-    // 2. Handle everything else in the background
-    (async () => {
-        try {
-            if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
-            const session = userSession[cleanPhone];
+		// 2. Handle everything else in the background
+		(async () => {
+			try {
+				if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
+				const session = userSession[cleanPhone];
 
-            // Now we do the slow database work
-            const member = await prisma.member.findUnique({
-                where: { phone: cleanPhone },
-                include: { church: true, society: true }
-            });
+				// Now we do the slow database work
+				const member = await prisma.member.findUnique({
+					where: { phone: cleanPhone },
+					include: { church: true, society: true }
+				});
 
-            // LOGIC GATE: Is it a new user or existing?
-            if (!member) {
-                await client.messages.create({
-                    from: process.env.TWILIO_PHONE_NUMBER,
-                    to: `whatsapp:${cleanPhone}`,
-                    body: "👋 Welcome! It looks like you aren't registered yet. Please reply with your *Church Code* to get started."
-                });
-                return;
-            }
+				// LOGIC GATE: Is it a new user or existing?
+				if (!member) {
+					await client.messages.create({
+						from: process.env.TWILIO_PHONE_NUMBER,
+						to: `whatsapp:${cleanPhone}`,
+						body: "👋 Welcome! It looks like you aren't registered yet. Please reply with your *Church Code* to get started."
+					});
+					return;
+				}
 
-            // --- [START OF BOT BRAIN] ---
+				// --- [START OF BOT BRAIN] ---
 
-// 1. Handle Global "Cancel" or "Reset"
-if (incomingMsg === 'exit' || incomingMsg === 'cancel') {
-    delete userSession[cleanPhone];
-    await sendMessage(cleanPhone, "🔄 Session cleared. Reply *Hi* to see the main menu.");
-    return;
-}
+	// 1. Handle Global "Cancel" or "Reset"
+	if (incomingMsg === 'exit' || incomingMsg === 'cancel') {
+		delete userSession[cleanPhone];
+		await sendMessage(cleanPhone, "🔄 Session cleared. Reply *Hi* to see the main menu.");
+		return;
+	}
 
-// 2. Handle Burial Society Flows (If session exists)
-if (session.flow === 'SOCIETY_PAYMENT' || incomingMsg === 'society') {
-    return handleSocietyMessage(cleanPhone, incomingMsg, session, member);
-}
+	// 2. Handle Burial Society Flows (If session exists)
+	if (session.flow === 'SOCIETY_PAYMENT' || incomingMsg === 'society') {
+		return handleSocietyMessage(cleanPhone, incomingMsg, session, member);
+	}
 
-// 3. Handle Church Flows (If session exists)
-if (session.flow === 'CHURCH_PAYMENT' || incomingMsg === 'pay') {
-    return handleChurchPayment(cleanPhone, incomingMsg, session, member);
-}
+	// 3. Handle Church Flows (If session exists)
+	if (session.flow === 'CHURCH_PAYMENT' || incomingMsg === 'pay') {
+		return handleChurchPayment(cleanPhone, incomingMsg, session, member);
+	}
 
-// 4. Main Menu Logic (For registered members)
-if (incomingMsg === 'hi' || incomingMsg === 'menu') {
-    const menu = `👋 Hello, ${member.name}!\n\n` +
-                 `How can I help you today?\n` +
-                 `1️⃣ *Pay* (Tithe/Offering)\n` +
-                 `2️⃣ *Society* (Burial Fees)\n` +
-                 `3️⃣ *Balance* (Check Statements)\n` +
-                 `4️⃣ *Admin* (Reports)`;
-    await sendMessage(cleanPhone, menu);
-    return;
-}
+	// 4. Main Menu Logic (For registered members)
+	if (incomingMsg === 'hi' || incomingMsg === 'menu') {
+		const menu = `👋 Hello, ${member.name}!\n\n` +
+					 `How can I help you today?\n` +
+					 `1️⃣ *Pay* (Tithe/Offering)\n` +
+					 `2️⃣ *Society* (Burial Fees)\n` +
+					 `3️⃣ *Balance* (Check Statements)\n` +
+					 `4️⃣ *Admin* (Reports)`;
+		await sendMessage(cleanPhone, menu);
+		return;
+	}
 
-// 5. Default Fallback
-await sendMessage(cleanPhone, "🤔 I didn't quite catch that. Reply *Menu* to see available options.");
+	// 5. Default Fallback
+	await sendMessage(cleanPhone, "🤔 I didn't quite catch that. Reply *Menu* to see available options.");
 
-// --- [END OF BOT BRAIN] ---
-            
-        } catch (error) {
-            console.error("⚠️ Background processing error:", error);
-        }
-    })();
-});
-	
-	const twiml = new MessagingResponse();
-    const incomingMsg = req.body.Body.trim().toLowerCase();
-    const cleanPhone = req.body.From.replace('whatsapp:', '');
+	// --- [END OF BOT BRAIN] ---
+				
+			} catch (error) {
+				console.error("⚠️ Background processing error:", error);
+			}
+		})();
+	});
+		
+		const twiml = new MessagingResponse();
+		const incomingMsg = req.body.Body.trim().toLowerCase();
+		const cleanPhone = req.body.From.replace('whatsapp:', '');
 
-    if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
-    const session = userSession[cleanPhone];
+		if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
+		const session = userSession[cleanPhone];
 
-    try {
-        // Fetch Member with BOTH links (Church & Society)
-        const member = await prisma.member.findUnique({
-            where: { phone: cleanPhone },
-            include: { church: true, society: true }
-        });
+		try {
+			// Fetch Member with BOTH links (Church & Society)
+			const member = await prisma.member.findUnique({
+				where: { phone: cleanPhone },
+				include: { church: true, society: true }
+			});
 
-// ------------------------------------------------
-        // 🛠️ ADMIN TRIGGER: SECURE EMAIL REPORT
-        // Usage: "Report AFM" -> Sends CSV to admin@afm.com
-        // ------------------------------------------------
-		if (incomingMsg.startsWith('report ')) {       // ✅ CORRECT
-            const targetCode = incomingMsg.split(' ')[1]?.toUpperCase();
+	// ------------------------------------------------
+			// 🛠️ ADMIN TRIGGER: SECURE EMAIL REPORT
+			// Usage: "Report AFM" -> Sends CSV to admin@afm.com
+			// ------------------------------------------------
+			if (incomingMsg.startsWith('report ')) {       // ✅ CORRECT
+				const targetCode = incomingMsg.split(' ')[1]?.toUpperCase();
 
-            if (!targetCode) {
-                twiml.message("⚠️ Please specify a code. Example: *Report AFM*");
-            } else {
-                // 1. Fetch Org Details AND Transactions together
-                const org = await prisma.church.findUnique({
-                    where: { code: targetCode },
-                    include: { 
-                        transactions: {
-                            where: { status: 'SUCCESS' },
-                            orderBy: { date: 'desc' },
-                            take: 100 // Last 100 transactions
-                        }
-                    }
-                });
+				if (!targetCode) {
+					twiml.message("⚠️ Please specify a code. Example: *Report AFM*");
+				} else {
+					// 1. Fetch Org Details AND Transactions together
+					const org = await prisma.church.findUnique({
+						where: { code: targetCode },
+						include: { 
+							transactions: {
+								where: { status: 'SUCCESS' },
+								orderBy: { date: 'desc' },
+								take: 100 // Last 100 transactions
+							}
+						}
+					});
 
-                if (!org) {
-                    twiml.message(`🚫 Organization *${targetCode}* not found.`);
-                } else if (org.transactions.length === 0) {
-                    twiml.message(`📉 No transactions found for *${org.name}*.`);
-                } else if (!org.email) {
-                    twiml.message(`⚠️ *${org.name}* has no email address configured in the database.`);
-                } else {
-                    // 2. Generate CSV Content (Hidden from WhatsApp)
-                    let csvContent = "Date,Phone,Type,Amount,Reference\n";
-                    let total = 0;
+					if (!org) {
+						twiml.message(`🚫 Organization *${targetCode}* not found.`);
+					} else if (org.transactions.length === 0) {
+						twiml.message(`📉 No transactions found for *${org.name}*.`);
+					} else if (!org.email) {
+						twiml.message(`⚠️ *${org.name}* has no email address configured in the database.`);
+					} else {
+						// 2. Generate CSV Content (Hidden from WhatsApp)
+						let csvContent = "Date,Phone,Type,Amount,Reference\n";
+						let total = 0;
 
-                    org.transactions.forEach(t => {
-                        const date = t.date.toISOString().split('T')[0];
-                        const amount = t.amount.toFixed(2);
-                        csvContent += `${date},${t.phone},${t.type},${amount},${t.reference}\n`;
-                        total += t.amount;
-                    });
-                    
-                    // Add Summary Row at bottom of CSV
-                    csvContent += `\nTOTAL,,,${total.toFixed(2)},`;
+						org.transactions.forEach(t => {
+							const date = t.date.toISOString().split('T')[0];
+							const amount = t.amount.toFixed(2);
+							csvContent += `${date},${t.phone},${t.type},${amount},${t.reference}\n`;
+							total += t.amount;
+						});
+						
+						// Add Summary Row at bottom of CSV
+						csvContent += `\nTOTAL,,,${total.toFixed(2)},`;
 
-                    // 3. Send Email via SendGrid
-                    const msg = {
-                        to: org.email, // 🔒 Sent ONLY to the registered admin email
-                        from: process.env.EMAIL_FROM || 'admin@seabe.io',
-                        subject: `📊 Monthly Report: ${org.name}`,
-                        text: `Attached is the latest transaction report for ${org.name}.\n\nTotal Processed: R${total.toFixed(2)}`,
-                        attachments: [
-                            {
-                                content: Buffer.from(csvContent).toString('base64'),
-                                filename: `Report_${targetCode}_${new Date().toISOString().split('T')[0]}.csv`,
-                                type: 'text/csv',
-                                disposition: 'attachment'
-                            }
-                        ]
-                    };
+						// 3. Send Email via SendGrid
+						const msg = {
+							to: org.email, // 🔒 Sent ONLY to the registered admin email
+							from: process.env.EMAIL_FROM || 'admin@seabe.io',
+							subject: `📊 Monthly Report: ${org.name}`,
+							text: `Attached is the latest transaction report for ${org.name}.\n\nTotal Processed: R${total.toFixed(2)}`,
+							attachments: [
+								{
+									content: Buffer.from(csvContent).toString('base64'),
+									filename: `Report_${targetCode}_${new Date().toISOString().split('T')[0]}.csv`,
+									type: 'text/csv',
+									disposition: 'attachment'
+								}
+							]
+						};
 
-                    try {
-                        await sgMail.send(msg);
-                        // 4. Secure WhatsApp Reply
-                        twiml.message(`✅ Report for *${org.name}* has been emailed to *${org.email}*.`);
-                    } catch (error) {
-                        console.error("Email Error:", error);
-                        twiml.message("⚠️ Error sending email. Please check server logs.");
-                    }
-                }
-            }
-            
-            res.type('text/xml').send(twiml.toString());
-            return; 
-        }
+						try {
+							await sgMail.send(msg);
+							// 4. Secure WhatsApp Reply
+							twiml.message(`✅ Report for *${org.name}* has been emailed to *${org.email}*.`);
+						} catch (error) {
+							console.error("Email Error:", error);
+							twiml.message("⚠️ Error sending email. Please check server logs.");
+						}
+					}
+				}
+				
+				res.type('text/xml').send(twiml.toString());
+				return; 
+			}
 
-// ------------------------------------------------
-        // 🛠️ ADMIN TRIGGER: MANUAL VERIFY
-        // Usage: "Verify REF123456789"
-        // ------------------------------------------------
-        if (incomingMsg.startsWith('verify ')) {
-            const reference = incomingMsg.split(' ')[1];
+	// ------------------------------------------------
+			// 🛠️ ADMIN TRIGGER: MANUAL VERIFY
+			// Usage: "Verify REF123456789"
+			// ------------------------------------------------
+			if (incomingMsg.startsWith('verify ')) {
+				const reference = incomingMsg.split(' ')[1];
 
-            if (!reference) {
-                twiml.message("⚠️ Please specify a reference. Example: *Verify REF-123*");
-            } else {
-                try {
-                    // 1. Ask Paystack for the status
-                    const response = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
-                        headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
-                    });
+				if (!reference) {
+					twiml.message("⚠️ Please specify a reference. Example: *Verify REF-123*");
+				} else {
+					try {
+						// 1. Ask Paystack for the status
+						const response = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
+							headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
+						});
 
-                    const status = response.data.data.status;
-                    const amount = response.data.data.amount / 100;
+						const status = response.data.data.status;
+						const amount = response.data.data.amount / 100;
 
-                    if (status === 'success') {
-                        // 2. Update Database
-                        await prisma.transaction.update({
-                            where: { reference: reference },
-                            data: { status: 'SUCCESS' }
-                        });
-                        twiml.message(`✅ **Verified!**\nReference: ${reference}\nAmount: R${amount}\nStatus updated to *SUCCESS*.`);
-                    } else {
-                        twiml.message(`❌ **Payment Failed.**\nPaystack says this transaction is still: *${status}*.`);
-                    }
-                } catch (error) {
-                    console.error("Verify Error:", error);
-                    twiml.message("⚠️ Could not verify. Check the reference number.");
-                }
-            }
-            
-            res.type('text/xml').send(twiml.toString());
-            return;
-        }
+						if (status === 'success') {
+							// 2. Update Database
+							await prisma.transaction.update({
+								where: { reference: reference },
+								data: { status: 'SUCCESS' }
+							});
+							twiml.message(`✅ **Verified!**\nReference: ${reference}\nAmount: R${amount}\nStatus updated to *SUCCESS*.`);
+						} else {
+							twiml.message(`❌ **Payment Failed.**\nPaystack says this transaction is still: *${status}*.`);
+						}
+					} catch (error) {
+						console.error("Verify Error:", error);
+						twiml.message("⚠️ Could not verify. Check the reference number.");
+					}
+				}
+				
+				res.type('text/xml').send(twiml.toString());
+				return;
+			}
 
-        // ------------------------------------
-        // PATH 1: SOCIETY MODE 🛡️
-        // ------------------------------------
-        if (incomingMsg === 'society' || session.mode === 'SOCIETY') {
-            if (member && member.societyCode) {
-                // Lock Session to Society
-                session.mode = 'SOCIETY';
-                session.orgCode = member.societyCode;
-                session.orgName = member.society.name;
-                session.subaccount = member.society.subaccountCode;
-                session.churchCode = member.society.id; // For ID-based logic
+			// ------------------------------------
+			// PATH 1: SOCIETY MODE 🛡️
+			// ------------------------------------
+			if (incomingMsg === 'society' || session.mode === 'SOCIETY') {
+				if (member && member.societyCode) {
+					// Lock Session to Society
+					session.mode = 'SOCIETY';
+					session.orgCode = member.societyCode;
+					session.orgName = member.society.name;
+					session.subaccount = member.society.subaccountCode;
+					session.churchCode = member.society.id; // For ID-based logic
 
-                return handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, twiml, res, req);
-            } 
-            else if (incomingMsg === 'society') {
-                twiml.message("⚠️ You are not linked to a Burial Society. Reply *Join* to find one.");
-                res.type('text/xml').send(twiml.toString());
-                return;
-            }
-        }
+					return handleSocietyMessage(incomingMsg, cleanPhone, session, prisma, twiml, res, req);
+				} 
+				else if (incomingMsg === 'society') {
+					twiml.message("⚠️ You are not linked to a Burial Society. Reply *Join* to find one.");
+					res.type('text/xml').send(twiml.toString());
+					return;
+				}
+			}
 
-        // ------------------------------------
-        // PATH 2: CHURCH MODE ⛪
-        // ------------------------------------
-        if (incomingMsg === 'hi' || session.mode === 'CHURCH') {
-            if (member && member.churchCode) {
-                // Lock Session to Church
-                session.mode = 'CHURCH';
-                session.orgCode = member.churchCode;
-                session.orgName = member.church.name;
-                session.subaccount = member.church.subaccountCode;
-                session.churchCode = member.church.id; // For ads
+			// ------------------------------------
+			// PATH 2: CHURCH MODE ⛪
+			// ------------------------------------
+			if (incomingMsg === 'hi' || session.mode === 'CHURCH') {
+				if (member && member.churchCode) {
+					// Lock Session to Church
+					session.mode = 'CHURCH';
+					session.orgCode = member.churchCode;
+					session.orgName = member.church.name;
+					session.subaccount = member.church.subaccountCode;
+					session.churchCode = member.church.id; // For ads
 
-                return handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twiml, res);
-            } 
-            // If they typed "Hi" but have no church, we fall through to the Search/Join logic below...
-        }
+					return handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twiml, res);
+				} 
+				// If they typed "Hi" but have no church, we fall through to the Search/Join logic below...
+			}
 
-        // ------------------------------------
-        // PATH 3: ONBOARDING / SEARCH 🔍
-        // ------------------------------------
-        // If we are here, the user is either:
-        // 1. New (No member record)
-        // 2. Unlinked (Member exists but no code)
-        // 3. Typed a random word while not in a specific mode
-        
-        if (session.step === 'JOIN_SELECT' || session.step === 'SEARCH' || incomingMsg === 'join') {
-            // ... (Simple Search Logic) ...
-            if (session.step !== 'JOIN_SELECT') {
-                 // PERFORM SEARCH
-                 const results = await prisma.church.findMany({
-                     where: { 
-                         name: { contains: incomingMsg, mode: 'insensitive' }
-                         // We removed 'status' because it doesn't exist on the Church table
-                     },
-                     take: 5
-                 });
+			// ------------------------------------
+			// PATH 3: ONBOARDING / SEARCH 🔍
+			// ------------------------------------
+			// If we are here, the user is either:
+			// 1. New (No member record)
+			// 2. Unlinked (Member exists but no code)
+			// 3. Typed a random word while not in a specific mode
+			
+			if (session.step === 'JOIN_SELECT' || session.step === 'SEARCH' || incomingMsg === 'join') {
+				// ... (Simple Search Logic) ...
+				if (session.step !== 'JOIN_SELECT') {
+					 // PERFORM SEARCH
+					 const results = await prisma.church.findMany({
+						 where: { 
+							 name: { contains: incomingMsg, mode: 'insensitive' }
+							 // We removed 'status' because it doesn't exist on the Church table
+						 },
+						 take: 5
+					 });
 
-                 if (results.length > 0) {
-                     session.searchResults = results;
-                     let reply = `🔍 Found ${results.length} matches:\n\n` + 
-                             results.map((r, i) => `*${i+1}.* ${r.type === 'BURIAL_SOCIETY' ? '🛡️' : '⛪'} ${r.name}`).join('\n') +
-                             `\n\nReply with the number to join.`;
-                     session.step = 'JOIN_SELECT';
-                     twiml.message(reply);
-                 } else {
-                     twiml.message("👋 Welcome to Seabe Pay! Please reply with the name of your organization (e.g. 'AFM'):");
-                     session.step = 'SEARCH';
-                 }
-            } 
-            else if (session.step === 'JOIN_SELECT') {
-                // HANDLE JOIN SELECTION
-                const index = parseInt(incomingMsg) - 1;
-                const org = session.searchResults ? session.searchResults[index] : null;
+					 if (results.length > 0) {
+						 session.searchResults = results;
+						 let reply = `🔍 Found ${results.length} matches:\n\n` + 
+								 results.map((r, i) => `*${i+1}.* ${r.type === 'BURIAL_SOCIETY' ? '🛡️' : '⛪'} ${r.name}`).join('\n') +
+								 `\n\nReply with the number to join.`;
+						 session.step = 'JOIN_SELECT';
+						 twiml.message(reply);
+					 } else {
+						 twiml.message("👋 Welcome to Seabe Pay! Please reply with the name of your organization (e.g. 'AFM'):");
+						 session.step = 'SEARCH';
+					 }
+				} 
+				else if (session.step === 'JOIN_SELECT') {
+					// HANDLE JOIN SELECTION
+					const index = parseInt(incomingMsg) - 1;
+					const org = session.searchResults ? session.searchResults[index] : null;
 
-                if (org) {
-                     const updateData = {};
-                     let reply = "";
-                     
-                     // Smart Field Update based on Org Type
-                     if (org.type === 'BURIAL_SOCIETY') {
-                         updateData.societyCode = org.code;
-                         reply = `✅ Linked to Society: *${org.name}*\n\nReply *Society* to access your policy menu.`;
-                     } else {
-                         updateData.churchCode = org.code;
-                         reply = `✅ Linked to Church: *${org.name}*\n\nReply *Hi* to give Tithes & Offerings.`;
-                     }
+					if (org) {
+						 const updateData = {};
+						 let reply = "";
+						 
+						 // Smart Field Update based on Org Type
+						 if (org.type === 'BURIAL_SOCIETY') {
+							 updateData.societyCode = org.code;
+							 reply = `✅ Linked to Society: *${org.name}*\n\nReply *Society* to access your policy menu.`;
+						 } else {
+							 updateData.churchCode = org.code;
+							 reply = `✅ Linked to Church: *${org.name}*\n\nReply *Hi* to give Tithes & Offerings.`;
+						 }
 
-                     await prisma.member.upsert({
-                         where: { phone: cleanPhone },
-                         update: updateData,
-                         create: { phone: cleanPhone, firstName: 'Member', lastName: 'New', ...updateData }
-                     });
-                     
-                     delete userSession[cleanPhone]; // Clear session to refresh data next time
-                     twiml.message(reply);
-                } else {
-                    twiml.message("⚠️ Invalid selection. Try searching again.");
-                    session.step = 'SEARCH';
-                }
-            }
-            res.type('text/xml').send(twiml.toString());
-            return;
-        }
+						 await prisma.member.upsert({
+							 where: { phone: cleanPhone },
+							 update: updateData,
+							 create: { phone: cleanPhone, firstName: 'Member', lastName: 'New', ...updateData }
+						 });
+						 
+						 delete userSession[cleanPhone]; // Clear session to refresh data next time
+						 twiml.message(reply);
+					} else {
+						twiml.message("⚠️ Invalid selection. Try searching again.");
+						session.step = 'SEARCH';
+					}
+				}
+				res.type('text/xml').send(twiml.toString());
+				return;
+			}
 
-        // ------------------------------------
-        // FALLBACK
-        // ------------------------------------
-        // If user has a church but typed something random, default to Church Mode
-        if (member && member.churchCode) {
-             session.mode = 'CHURCH';
-             session.orgCode = member.churchCode;
-             session.orgName = member.church.name;
-             session.subaccount = member.church.subaccountCode;
-             session.churchCode = member.church.id;
-             return handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twiml, res);
-        } else {
-             twiml.message("👋 Welcome! Reply *Join* to start.");
-             res.type('text/xml').send(twiml.toString());
-        }
+			// ------------------------------------
+			// FALLBACK
+			// ------------------------------------
+			// If user has a church but typed something random, default to Church Mode
+			if (member && member.churchCode) {
+				 session.mode = 'CHURCH';
+				 session.orgCode = member.churchCode;
+				 session.orgName = member.church.name;
+				 session.subaccount = member.church.subaccountCode;
+				 session.churchCode = member.church.id;
+				 return handleChurchMessage(incomingMsg, cleanPhone, session, prisma, twiml, res);
+			} else {
+				 twiml.message("👋 Welcome! Reply *Join* to start.");
+				 res.type('text/xml').send(twiml.toString());
+			}
 
-    } catch (e) {
-        console.error("Router Error:", e);
-        res.sendStatus(500);
-    }
-});
+		} catch (e) {
+			console.error("Router Error:", e);
+			res.sendStatus(500);
+		}
+	});
 
 // --- SUCCESS PAGE ---
 app.get('/payment-success', async (req, res) => {
