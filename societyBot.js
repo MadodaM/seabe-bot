@@ -1,8 +1,8 @@
 // ==========================================
 // bots/societyBot.js - Burial Society Logic Handler
 // ==========================================
-const ozow = require('../services/ozow'); 
-const netcash = require('../services/netcash');
+const ozow = require('./services/ozow'); 
+const netcash = require('./services/netcash');
 
 // Toggle check
 const ACTIVE_GATEWAY_NAME = process.env.ACTIVE_GATEWAY || 'OZOW'; 
