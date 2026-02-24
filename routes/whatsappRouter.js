@@ -1,59 +1,156 @@
 // routes/whatsappRouter.js
 const express = require('express');
 const router = express.Router();
-const { MessagingResponse } = require('twilio').twiml;
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const sgMail = require('@sendgrid/mail'); 
 const axios = require('axios');
 
-// Bot Imports
+// Bot & AI Imports
 const { getAISupportReply } = require('../services/aiSupport');
 const { handleSocietyMessage } = require('../societyBot');
 const { handleChurchMessage } = require('../churchBot');
-const paymentBot = require('../paymentBot');
+
+// Safely initialize Twilio for background messaging
+let twilioClient;
+if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
+    twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+}
+
+const sendWhatsApp = async (to, body) => {
+    if (!twilioClient) return console.log("⚠️ Twilio not configured. Could not send:", body);
+    try {
+        await twilioClient.messages.create({
+            from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
+            to: `whatsapp:${to}`,
+            body: body
+        });
+    } catch (err) {
+        console.error("Twilio Send Error:", err.message);
+    }
+};
 
 let userSession = {}; 
 
-router.post('/', async (req, res) => {
-    const twiml = new MessagingResponse();
+router.post('/', (req, res) => {
     const incomingMsg = (req.body.Body || '').trim().toLowerCase();
     const cleanPhone = (req.body.From || '').replace('whatsapp:', '');
 
-    // 1. Respond to Twilio IMMEDIATELY to prevent timeouts
+    // 1. Respond to Twilio IMMEDIATELY to prevent the 15s timeout
     res.type('text/xml').send('<Response></Response>');
 
-    // 2. Handle logic in background
-    try {
-        if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
-        const session = userSession[cleanPhone];
+    // 2. Handle all logic safely in the background
+    (async () => {
+        try {
+            if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
+            const session = userSession[cleanPhone];
 
-        const member = await prisma.member.findUnique({
-            where: { phone: cleanPhone },
-            include: { church: true, society: true }
-        });
+            const member = await prisma.member.findUnique({
+                where: { phone: cleanPhone },
+                include: { church: true, society: true }
+            });
 
-        // ------------------------------------------------
-        // 🛠️ ADMIN TRIGGERS & REPORTS
-        // ------------------------------------------------
-        if (incomingMsg.startsWith('report ')) {
-            // ... (Your existing Report CSV logic remains intact here) ...
-            return;
-        }
+            // ================================================
+            // 🛠️ ADMIN TRIGGER: SECURE EMAIL REPORT
+            // ================================================
+            if (incomingMsg.startsWith('report ')) {
+                const targetCode = incomingMsg.split(' ')[1]?.toUpperCase();
 
-        if (incomingMsg.startsWith('verify ')) {
-            // ... (Your existing Paystack Verify logic remains intact here) ...
-            return;
-        }
+                if (!targetCode) {
+                    await sendWhatsApp(cleanPhone, "⚠️ Please specify a code. Example: *Report AFM*");
+                } else {
+                    const org = await prisma.church.findUnique({
+                        where: { code: targetCode },
+                        include: { 
+                            transactions: {
+                                where: { status: 'SUCCESS' },
+                                orderBy: { date: 'desc' },
+                                take: 100
+                            }
+                        }
+                    });
 
-        // ------------------------------------------------
-        // 🚦 BOT ROUTING
-        // ------------------------------------------------
-       // ================================================
+                    if (!org) {
+                        await sendWhatsApp(cleanPhone, `🚫 Organization *${targetCode}* not found.`);
+                    } else if (org.transactions.length === 0) {
+                        await sendWhatsApp(cleanPhone, `📉 No transactions found for *${org.name}*.`);
+                    } else if (!org.email) {
+                        await sendWhatsApp(cleanPhone, `⚠️ *${org.name}* has no email address configured.`);
+                    } else {
+                        let csvContent = "Date,Phone,Type,Amount,Reference\n";
+                        let total = 0;
+
+                        org.transactions.forEach(t => {
+                            const date = t.date.toISOString().split('T')[0];
+                            const amount = t.amount.toFixed(2);
+                            csvContent += `${date},${t.phone},${t.type},${amount},${t.reference}\n`;
+                            total += t.amount;
+                        });
+                        csvContent += `\nTOTAL,,,${total.toFixed(2)},`;
+
+                        const msg = {
+                            to: org.email,
+                            from: process.env.EMAIL_FROM || 'admin@seabe.io',
+                            subject: `📊 Monthly Report: ${org.name}`,
+                            text: `Attached is the latest transaction report for ${org.name}.\n\nTotal Processed: R${total.toFixed(2)}`,
+                            attachments: [{
+                                content: Buffer.from(csvContent).toString('base64'),
+                                filename: `Report_${targetCode}_${new Date().toISOString().split('T')[0]}.csv`,
+                                type: 'text/csv',
+                                disposition: 'attachment'
+                            }]
+                        };
+
+                        try {
+                            await sgMail.send(msg);
+                            await sendWhatsApp(cleanPhone, `✅ Report for *${org.name}* has been emailed to *${org.email}*.`);
+                        } catch (error) {
+                            console.error("Email Error:", error);
+                            await sendWhatsApp(cleanPhone, "⚠️ Error sending email. Please check server logs.");
+                        }
+                    }
+                }
+                return; 
+            }
+
+            // ================================================
+            // 🛠️ ADMIN TRIGGER: MANUAL VERIFY (PAYSTACK)
+            // ================================================
+            if (incomingMsg.startsWith('verify ')) {
+                const reference = incomingMsg.split(' ')[1];
+
+                if (!reference) {
+                    await sendWhatsApp(cleanPhone, "⚠️ Please specify a reference. Example: *Verify REF-123*");
+                } else {
+                    try {
+                        const response = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
+                            headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
+                        });
+
+                        const status = response.data.data.status;
+                        const amount = response.data.data.amount / 100;
+
+                        if (status === 'success') {
+                            await prisma.transaction.update({
+                                where: { reference: reference },
+                                data: { status: 'SUCCESS' }
+                            });
+                            await sendWhatsApp(cleanPhone, `✅ **Verified!**\nReference: ${reference}\nAmount: R${amount}\nStatus updated to *SUCCESS*.`);
+                        } else {
+                            await sendWhatsApp(cleanPhone, `❌ **Payment Failed.**\nPaystack says this transaction is still: *${status}*.`);
+                        }
+                    } catch (error) {
+                        console.error("Verify Error:", error);
+                        await sendWhatsApp(cleanPhone, "⚠️ Could not verify. Check the reference number.");
+                    }
+                }
+                return;
+            }
+
+            // ================================================
             // 🚦 USER ROUTING LOGIC & MENUS
             // ================================================
             if (!member) {
-                // User is not in DB yet - Handle Onboarding
                 if (session.step === 'JOIN_SELECT' || session.step === 'SEARCH' || incomingMsg === 'join') {
                     if (session.step !== 'JOIN_SELECT') {
                          const results = await prisma.church.findMany({
@@ -102,7 +199,6 @@ router.post('/', async (req, res) => {
                         }
                     }
                 } else {
-                    // ✅ FIXED: Using sendWhatsApp
                     await sendWhatsApp(cleanPhone, "👋 Welcome! It looks like you aren't registered yet. Please reply with *Join* to find your organization.");
                 }
                 return;
@@ -111,7 +207,6 @@ router.post('/', async (req, res) => {
             // 1. Handle Global "Cancel" or "Reset"
             if (incomingMsg === 'exit' || incomingMsg === 'cancel') {
                 delete userSession[cleanPhone];
-                // ✅ FIXED: Using sendWhatsApp
                 await sendWhatsApp(cleanPhone, "🔄 Session cleared. Reply *Hi* to see the main menu.");
                 return;
             }
@@ -122,14 +217,12 @@ router.post('/', async (req, res) => {
                     session.mode = 'SOCIETY';
                     return handleSocietyMessage(cleanPhone, incomingMsg, session, member);
                 } else {
-                    // ✅ FIXED: Using sendWhatsApp
                     await sendWhatsApp(cleanPhone, "⚠️ You are not linked to a Burial Society. Reply *Join* to search for one.");
                     return;
                 }
             }
 
-            // 3. Handle Church / Payment Flows 
-            // ✅ FIXED: Added all your church triggers so they route correctly!
+            // 3. Handle Church / Payment Flows
             const churchTriggers = ['amen', 'hi', 'menu', 'hello', 'npo', 'donate', 'help', 'pay'];
             
             if (churchTriggers.includes(incomingMsg) || session.mode === 'CHURCH' || session.flow === 'CHURCH_PAYMENT') {
@@ -145,7 +238,6 @@ router.post('/', async (req, res) => {
             console.log(`🤖 AI Support Triggered for: ${incomingMsg}`);
             try {
                 const aiResponse = await getAISupportReply(incomingMsg, cleanPhone, member?.firstName);
-                // ✅ FIXED: Using sendWhatsApp instead of paymentBot
                 await sendWhatsApp(cleanPhone, aiResponse);
             } catch (error) {
                 console.error("AI Fallback Error:", error);
