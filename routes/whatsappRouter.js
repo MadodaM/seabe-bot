@@ -147,10 +147,13 @@ router.post('/', (req, res) => {
                 return;
             }
 
-            // ================================================
+// ================================================
             // 🚦 USER ROUTING LOGIC & MENUS
             // ================================================
+            console.log(`🧭 ROUTER: Processing message "${incomingMsg}" from ${cleanPhone}`);
+
             if (!member) {
+                console.log("🧭 ROUTER: User not found in DB. Starting Onboarding.");
                 if (session.step === 'JOIN_SELECT' || session.step === 'SEARCH' || incomingMsg === 'join') {
                     if (session.step !== 'JOIN_SELECT') {
                          const results = await prisma.church.findMany({
@@ -204,6 +207,8 @@ router.post('/', (req, res) => {
                 return;
             }
 
+            console.log("🧭 ROUTER: User identified as", member.firstName);
+
             // 1. Handle Global "Cancel" or "Reset"
             if (incomingMsg === 'exit' || incomingMsg === 'cancel') {
                 delete userSession[cleanPhone];
@@ -215,7 +220,9 @@ router.post('/', (req, res) => {
             if (session.flow === 'SOCIETY_PAYMENT' || incomingMsg === 'society') {
                 if (member.societyCode) {
                     session.mode = 'SOCIETY';
-                    return handleSocietyMessage(cleanPhone, incomingMsg, session, member);
+                    console.log("🚀 ROUTER: Handing off to Society Bot!");
+                    await handleSocietyMessage(cleanPhone, incomingMsg, session, member); // ✅ Added Await
+                    return;
                 } else {
                     await sendWhatsApp(cleanPhone, "⚠️ You are not linked to a Burial Society. Reply *Join* to search for one.");
                     return;
@@ -228,16 +235,23 @@ router.post('/', (req, res) => {
             if (churchTriggers.includes(incomingMsg) || session.mode === 'CHURCH' || session.flow === 'CHURCH_PAYMENT') {
                 if (member.churchCode) {
                     session.mode = 'CHURCH';
-                    return handleChurchMessage(cleanPhone, incomingMsg, session, member);
+                    console.log("🚀 ROUTER: Handing off to Church Bot!");
+                    await handleChurchMessage(cleanPhone, incomingMsg, session, member); // ✅ Added Await
+                    return;
+                } else {
+                     console.log("⚠️ ROUTER: User used a church trigger but has NO churchCode in DB.");
+                     await sendWhatsApp(cleanPhone, "⚠️ You are not currently linked to a Ministry. Reply *Join* to find yours!");
+                     return;
                 }
             }
 
             // ================================================
             // 🤖 FALLBACK: AI CATCH-ALL
             // ================================================
-            console.log(`🤖 AI Support Triggered for: ${incomingMsg}`);
+            console.log(`🤖 ROUTER: Message didn't match any menus. Triggering AI Support for: ${incomingMsg}`);
             try {
                 const aiResponse = await getAISupportReply(incomingMsg, cleanPhone, member?.firstName);
+                console.log(`🤖 AI Responded: ${aiResponse}`);
                 await sendWhatsApp(cleanPhone, aiResponse);
             } catch (error) {
                 console.error("AI Fallback Error:", error);
@@ -245,7 +259,7 @@ router.post('/', (req, res) => {
             }
 
         } catch (e) {
-            console.error("Router Error:", e);
+            console.error("❌ ROUTER CRASH:", e);
         }
     })();
 });
