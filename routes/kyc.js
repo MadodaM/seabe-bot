@@ -1,3 +1,4 @@
+// routes/kyc.js
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
@@ -43,13 +44,29 @@ const uploadToCloud = (buffer) => {
     });
 };
 
-// 1️⃣ Create a placeholder for the Bot Client
-let botClient = null;
+// 3️⃣ Initialize Twilio for Automatic Confirmations
+let twilioClient;
+if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
+    twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+}
 
-// 2️⃣ Helper to set the client (Called from index.js)
-const setClient = (client) => {
-    botClient = client;
-    console.log("✅ KYC Route connected to WhatsApp Bot");
+const sendWhatsApp = async (to, body) => {
+    if (!twilioClient) return console.log("⚠️ Twilio Keys Missing! Could not send KYC confirmation.");
+    const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+    
+    // Ensure clean +27 format for Twilio
+    const cleanToNumber = to.startsWith('+') ? to : `+${to.replace(/\D/g, '')}`;
+
+    try {
+        await twilioClient.messages.create({
+            from: `whatsapp:${cleanTwilioNumber}`,
+            to: `whatsapp:${cleanToNumber}`,
+            body: body
+        });
+        console.log(`✅ KYC Confirmation delivered to ${cleanToNumber}`);
+    } catch (err) {
+        console.error("❌ Twilio Send Error:", err.message);
+    }
 };
 
 // Helper: Generate Link
@@ -57,7 +74,7 @@ async function generateKYCLink(phone, host) {
     const token = crypto.randomBytes(16).toString('hex');
     await prisma.member.update({
         where: { phone: phone },
-        data: { kycToken: token, kycTokenExpires: new Date(Date.now() + 86400000) }
+        data: { kycToken: token, kycTokenExpires: new Date(Date.now() + 86400000) } // 24 hours
     });
     return `https://${host}/kyc/${token}`;
 }
@@ -67,7 +84,7 @@ router.get('/:token', async (req, res) => {
     const member = await prisma.member.findFirst({
         where: { kycToken: req.params.token, kycTokenExpires: { gte: new Date() } }
     });
-    if (!member) return res.send("<h3>❌ Link Expired</h3>");
+    if (!member) return res.send("<h3>❌ Link Expired</h3><p>Please request a new KYC link from the WhatsApp menu.</p>");
 
     res.send(`
         <!DOCTYPE html><html><head><title>Upload Documents</title><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -100,14 +117,12 @@ router.get('/:token', async (req, res) => {
     `);
 });
 
-// POST: Handle Files + Data (Now Secured)
+// POST: Handle Files + Data
 router.post('/:token', (req, res) => {
-    // 🛡️ Middleware Wrapper to catch Upload Errors
     const uploadMiddleware = upload.fields([{ name: 'idPhoto' }, { name: 'addressProof' }]);
 
     uploadMiddleware(req, res, async (err) => {
         if (err) {
-            // ❌ Handle File Too Large or Wrong Type
             console.error("Upload Blocked:", err.message);
             return res.send(`
                 <div style='text-align:center; padding:50px; font-family:sans-serif;'>
@@ -119,7 +134,6 @@ router.post('/:token', (req, res) => {
             `);
         }
 
-        // ✅ If we pass here, files are valid and in memory
         try {
             console.log("Processing KYC Upload...");
             
@@ -155,21 +169,24 @@ router.post('/:token', (req, res) => {
             });
 
             // 4. 🚀 TRIGGER WHATSAPP CONFIRMATION
-            if (botClient && updatedMember.phone) {
-                // Format phone: Remove '+' and add '@c.us'
-                const chatId = updatedMember.phone.replace('+', '') + '@c.us';
-                const message = `✅ *Documents Received!*\n\nHi ${updatedMember.firstName}, we have received your ID and Proof of Address.\n\nOur team will review them shortly. You can check your status in the main menu.`;
-                
-                botClient.sendMessage(chatId, message).catch(err => console.error("Failed to send WA confirmation:", err));
+            if (updatedMember.phone) {
+                const message = `✅ *Documents Received!*\n\nHi ${updatedMember.firstName || 'Member'}, we have securely received your ID and Proof of Address.\n\nOur team will review them shortly.`;
+                await sendWhatsApp(updatedMember.phone, message);
             }
 
-            res.send("<div style='text-align:center; padding:50px; font-family:sans-serif;'><h1>✅ Documents Received!</h1><p>You have received a confirmation on WhatsApp.</p></div>");
+            res.send(`
+                <div style='text-align:center; padding:50px; font-family:sans-serif;'>
+                    <h1 style="color: green;">✅ Documents Received!</h1>
+                    <p>Your files have been securely encrypted and stored.</p>
+                    <p>You may now close this page and return to WhatsApp.</p>
+                </div>
+            `);
 
         } catch (e) { 
             console.error("KYC Processing Error:", e);
-            res.send("<h3>❌ System Error</h3><p>Please try again.</p>"); 
+            res.send("<h3>❌ System Error</h3><p>An error occurred while saving your documents. Please try again.</p>"); 
         }
     });
 });
 
-module.exports = { router, generateKYCLink, setClient };
+module.exports = { router, generateKYCLink };
