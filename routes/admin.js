@@ -6,6 +6,8 @@ const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const cloudinary = require('cloudinary').v2;
 const { sendWhatsApp } = require('../services/whatsapp'); 
+const { decrypt } = require('../utils/crypto'); // Ensure this path matches your setup
+
 
 // 🛡️ Cloudinary Config
 cloudinary.config({
@@ -795,37 +797,135 @@ module.exports = (app, { prisma }) => {
 
     // --- 🕵️ VERIFICATIONS & ACTIONS ---
     router.get('/admin/:code/verifications', checkSession, async (req, res) => {
-        const allMembers = await prisma.member.findMany({ where: { churchCode: req.params.code.toUpperCase() } });
-        const queue = allMembers.filter(m => (m.idPhotoUrl && m.idPhotoUrl.length > 5) || (m.idNumber && m.idNumber.length > 5));
-        res.send(renderPage(req.org, 'verifications', `<div class="card"><h3>📂 Verification Queue (${queue.length})</h3><table><thead><tr><th>Name</th><th>Status</th><th>Action</th></tr></thead><tbody>${queue.length > 0 ? queue.map(m => `<tr><td>${m.firstName}</td><td>${(m.idPhotoUrl && m.idPhotoUrl.length > 5) ? '📷 Photo' : '📝 Data'}</td><td><a href="/admin/${req.params.code}/member/${m.id}" class="btn" style="width:auto;padding:5px 10px;">View</a></td></tr>`).join('') : '<tr><td colspan="3">No items found.</td></tr>'}</tbody></table></div>`));
+        const allMembers = await prisma.member.findMany({ 
+            where: { churchCode: req.params.code.toUpperCase() },
+            orderBy: { id: 'desc' }
+        });
+        
+        // Find members who have uploaded documents but aren't verified yet
+        const queue = allMembers.filter(m => (m.idPhotoUrl && !m.isIdVerified) || (m.kycToken === null && !m.isIdVerified && m.idNumber));
+        
+        const rows = queue.map(m => `
+            <tr>
+                <td><b>${m.firstName} ${m.lastName}</b><br><span style="font-size:11px; color:#7f8c8d;">${m.phone}</span></td>
+                <td><span class="badge" style="background:#f39c12; padding:4px 8px;">Pending Review</span></td>
+                <td style="text-align:right;">
+                    <a href="/admin/${req.params.code}/member/${m.id}" class="btn" style="width:auto; padding:6px 12px; background:#0984e3;">Review Docs</a>
+                </td>
+            </tr>
+        `).join('');
+
+        res.send(renderPage(req.org, 'verifications', `
+            <div class="card">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0;">📂 KYC Verification Queue</h3>
+                    <span class="badge" style="background:#e67e22; font-size:14px;">${queue.length} Pending</span>
+                </div>
+                <hr style="border:0; border-top:1px solid #eee; margin:15px 0;">
+                <table>
+                    <thead><tr><th>Member</th><th>Status</th><th style="text-align:right;">Action</th></tr></thead>
+                    <tbody>${queue.length > 0 ? rows : '<tr><td colspan="3" style="text-align:center; padding:30px; color:#95a5a6;">🎉 Queue is empty! No documents to review.</td></tr>'}</tbody>
+                </table>
+            </div>
+        `));
     });
 
     router.post('/admin/:code/verifications/action', checkSession, async (req, res) => {
         const { memberId, action, reason } = req.body;
         const member = await prisma.member.findUnique({ where: { id: parseInt(memberId) } });
+        
         if (member) {
             if (action === 'approve') {
                 await prisma.member.update({ where: { id: member.id }, data: { isIdVerified: true, verifiedAt: new Date(), rejectionReason: null } });
-                try { await sendWhatsApp(member.phone, `✅ *Verification Approved*\n\nHi ${member.firstName}, your documents have been accepted.`); } catch(e){}
+                try { await sendWhatsApp(member.phone, `✅ *KYC Approved!*\n\nHi ${member.firstName}, your identity documents and proof of address have been successfully verified by ${req.org.name}.`); } catch(e){}
             } else {
-                await prisma.member.update({ where: { id: member.id }, data: { isIdVerified: false, rejectionReason: reason || "Docs unclear" } });
-                try { await sendWhatsApp(member.phone, `❌ *Verification Rejected*\n\nReason: ${reason || "Documents were not clear"}.\nPlease reply '3' to re-upload.`); } catch(e){}
+                const rejectMsg = reason || "Documents were not clear or incomplete";
+                await prisma.member.update({ where: { id: member.id }, data: { isIdVerified: false, rejectionReason: rejectMsg } });
+                try { await sendWhatsApp(member.phone, `❌ *KYC Verification Failed*\n\nHi ${member.firstName}, your recent document upload was rejected by the administrator.\n\n*Reason:* ${rejectMsg}\n\nPlease reply with *3* to generate a new secure link and re-upload your documents.`); } catch(e){}
             }
         }
         res.redirect(`/admin/${req.org.code}/verifications`);
     });
 
-    // --- 👤 MEMBER PROFILE ---
+    // --- 👤 MEMBER PROFILE & KYC REVIEW ---
     router.get('/admin/:code/member/:id', checkSession, async (req, res) => {
         const member = await prisma.member.findUnique({ where: { id: parseInt(req.params.id) } });
         if (!member) return res.send("Not Found");
-        let photoUrl = member.idPhotoUrl || ""; 
-        if (photoUrl.startsWith('http:')) photoUrl = photoUrl.replace('http:', 'https:');
-        res.send(`<html><head><title>Profile</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:sans-serif;padding:20px;max-width:600px;margin:0 auto;background:#f4f4f9}.card{background:white;padding:20px;border-radius:8px;}</style></head><body>
-            <div class="card"><a href="/admin/${req.params.code}/verifications">Back</a><h2>${member.firstName} ${member.lastName}</h2><p>ID: ${member.idNumber || 'N/A'}</p><hr>${photoUrl.length > 5 ? `<a href="${photoUrl}"><img src="${photoUrl}" style="max-width:100%;border-radius:5px;"></a>` : '<p style="color:red">No Photo</p>'}<br><br><div style="background:#f0f2f5;padding:15px;"><h4>Action</h4><form action="/admin/${req.params.code}/verifications/action" method="POST"><input type="hidden" name="memberId" value="${member.id}"><button name="action" value="approve" style="background:#2ecc71;color:white;padding:10px;border:none;cursor:pointer;">✅ Approve</button> <button name="action" value="reject" style="background:#e74c3c;color:white;padding:10px;border:none;cursor:pointer;">❌ Reject</button></form></div><br><a href="/admin/${req.params.code}/members/${member.phone}/pdf" style="display:block;margin-top:10px;">📄 Download Statement (PDF)</a></div></body></html>`);
+
+        // Safely decrypt data if it was encrypted during upload
+        const safeDecrypt = (data) => {
+            if (!data) return null;
+            try { return decrypt ? decrypt(data) : data; } catch (e) { return data; }
+        };
+
+        const idNum = safeDecrypt(member.idNumber) || 'Not Provided';
+        const address = safeDecrypt(member.address) || 'Not Provided';
+        let idPhoto = safeDecrypt(member.idPhotoUrl);
+        let addressPhoto = safeDecrypt(member.proofOfAddressUrl);
+
+        // Ensure URLs are HTTPS
+        if (idPhoto && idPhoto.startsWith('http:')) idPhoto = idPhoto.replace('http:', 'https:');
+        if (addressPhoto && addressPhoto.startsWith('http:')) addressPhoto = addressPhoto.replace('http:', 'https:');
+
+        // Helper to render Docs (Handles PDFs vs Images)
+        const renderDoc = (url, title) => {
+            if (!url) return `<div style="padding:15px; background:#f9f9f9; border:1px dashed #ccc; text-align:center; color:#999; border-radius:8px; margin-bottom:15px;">No ${title} Uploaded</div>`;
+            if (url.endsWith('.pdf')) {
+                return `<div style="margin-bottom:15px; background:#eef2f5; padding:15px; border-radius:8px; border:1px solid #ddd;"><strong style="display:block; margin-bottom:10px;">📄 ${title} (PDF)</strong><a href="${url}" target="_blank" class="btn" style="background:#3498db; width:auto;">Open PDF Document</a></div>`;
+            }
+            return `<div style="margin-bottom:15px;"><strong style="display:block; margin-bottom:5px; color:#2c3e50;">📸 ${title}</strong><a href="${url}" target="_blank"><img src="${url}" style="max-width:100%; border-radius:8px; border:1px solid #ddd; box-shadow:0 2px 5px rgba(0,0,0,0.1);"></a></div>`;
+        };
+
+        res.send(renderPage(req.org, 'members', `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <a href="/admin/${req.params.code}/verifications" style="color:#7f8c8d; text-decoration:none; font-weight:bold;">← Back to Queue</a>
+                ${member.isIdVerified ? '<span class="badge" style="background:#27ae60; padding:6px 12px; font-size:14px;">✅ Fully Verified</span>' : '<span class="badge" style="background:#f39c12; padding:6px 12px; font-size:14px;">Pending Review</span>'}
+            </div>
+
+            <div class="card" style="border-top: 4px solid #00d2d3;">
+                <h2 style="margin-top:0;">${member.firstName} ${member.lastName}</h2>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:20px;">
+                    <div style="background:#f8f9fa; padding:15px; border-radius:6px;">
+                        <span style="font-size:11px; color:#7f8c8d; text-transform:uppercase;">Contact</span><br>
+                        <strong>${member.phone}</strong>
+                    </div>
+                    <div style="background:#f8f9fa; padding:15px; border-radius:6px;">
+                        <span style="font-size:11px; color:#7f8c8d; text-transform:uppercase;">ID Number (${member.idType || 'SA_ID'})</span><br>
+                        <strong>${idNum}</strong>
+                    </div>
+                </div>
+                <div style="background:#f8f9fa; padding:15px; border-radius:6px; margin-bottom:20px;">
+                    <span style="font-size:11px; color:#7f8c8d; text-transform:uppercase;">Physical Address</span><br>
+                    <strong>${address}</strong>
+                </div>
+
+                <hr style="border:0; border-top:1px solid #eee; margin:20px 0;">
+                <h3 style="color:#2c3e50;">Uploaded Documents</h3>
+                
+                ${renderDoc(idPhoto, 'ID / Passport Document')}
+                ${renderDoc(addressPhoto, 'Proof of Address')}
+
+                ${!member.isIdVerified ? `
+                <div style="background:#fffbeb; border:1px solid #fde68a; padding:20px; border-radius:8px; margin-top:30px;">
+                    <h3 style="margin-top:0; color:#b45309;">Review Decision</h3>
+                    <form action="/admin/${req.params.code}/verifications/action" method="POST">
+                        <input type="hidden" name="memberId" value="${member.id}">
+                        
+                        <label style="color:#b45309;">Rejection Reason (Only sent if rejecting)</label>
+                        <textarea name="reason" placeholder="e.g. The photo of your ID is blurry, please retake it in good lighting." style="background:white; border-color:#fcd34d;"></textarea>
+                        
+                        <div style="display:flex; gap:10px; margin-top:10px;">
+                            <button name="action" value="approve" class="btn" style="flex:1; background:#27ae60; padding:15px; font-size:16px;">✅ Approve KYC</button> 
+                            <button name="action" value="reject" class="btn" style="flex:1; background:#e74c3c; padding:15px; font-size:16px;">❌ Reject Documents</button>
+                        </div>
+                    </form>
+                </div>
+                ` : ''}
+            </div>
+        `));
     });
 
-    // --- 📄 PDF & SETTINGS ---
+    
     // --- 📄 PDF & SETTINGS ---
     router.get('/admin/:code/members/:phone/pdf', checkSession, async (req, res) => {
         const m = await prisma.member.findUnique({ where: { phone: req.params.phone } }); 
