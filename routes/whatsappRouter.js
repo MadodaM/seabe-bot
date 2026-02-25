@@ -94,7 +94,7 @@ router.post('/', (req, res) => {
 
                         const msg = {
                             to: org.email,
-                            from: process.env.EMAIL_FROM || 'admin@seabe.io',
+                            from: process.env.EMAIL_FROM || 'admin@seabe.tech',
                             subject: `📊 Monthly Report: ${org.name}`,
                             text: `Attached is the latest transaction report for ${org.name}.\n\nTotal Processed: R${total.toFixed(2)}`,
                             attachments: [{
@@ -151,72 +151,6 @@ router.post('/', (req, res) => {
                     }
                 }
                 return;
-            }
-
-            // ================================================
-            // 🚦 USER ROUTING LOGIC
-            // ================================================
-            if (!member) {
-                if (session.step === 'JOIN_SELECT' || session.step === 'SEARCH' || incomingMsg === 'join') {
-                    if (session.step !== 'JOIN_SELECT') {
-                         const results = await prisma.church.findMany({
-                             where: { name: { contains: incomingMsg, mode: 'insensitive' } },
-                             take: 5
-                         });
-                         if (results.length > 0) {
-                             session.searchResults = results;
-                             let reply = `🔍 Found ${results.length} matches:\n\n` + 
-                                     results.map((r, i) => `*${i+1}.* ${r.type === 'BURIAL_SOCIETY' ? '🛡️' : '⛪'} ${r.name}`).join('\n') +
-                                     `\n\nReply with the number to join.`;
-                             session.step = 'JOIN_SELECT';
-                             await sendWhatsApp(cleanPhone, reply);
-                         } else {
-                             session.step = 'SEARCH';
-                             await sendWhatsApp(cleanPhone, "👋 Welcome! Please reply with the name of your organization:");
-                         }
-                    } else if (session.step === 'JOIN_SELECT') {
-                        const index = parseInt(incomingMsg) - 1;
-                        const org = session.searchResults ? session.searchResults[index] : null;
-                        if (org) {
-                             const updateData = org.type === 'BURIAL_SOCIETY' ? { societyCode: org.code } : { churchCode: org.code };
-                             await prisma.member.upsert({
-                                 where: { phone: cleanPhone },
-                                 update: updateData,
-                                 create: { phone: cleanPhone, firstName: 'Member', lastName: 'New', ...updateData }
-                             });
-                             delete userSession[cleanPhone]; 
-                             await sendWhatsApp(cleanPhone, `✅ Successfully linked to *${org.name}*!`);
-                        }
-                    }
-                } else {
-                    await sendWhatsApp(cleanPhone, "👋 Welcome! Please reply with *Join* to find your organization.");
-                }
-                return;
-            }
-
-            if (incomingMsg === 'exit' || incomingMsg === 'cancel') {
-                delete userSession[cleanPhone];
-                await sendWhatsApp(cleanPhone, "🔄 Session cleared.");
-                return;
-            }
-
-            // Route to Society
-            if (incomingMsg === 'society' || session.mode === 'SOCIETY') {
-                if (member.societyCode) {
-                    session.mode = 'SOCIETY';
-                    await handleSocietyMessage(cleanPhone, incomingMsg, session, member);
-                    return;
-                }
-            }
-
-            // Route to Church
-            const churchTriggers = ['amen', 'hi', 'menu', 'hello', 'pay'];
-            if (churchTriggers.includes(incomingMsg) || session.mode === 'CHURCH') {
-                if (member.churchCode) {
-                    session.mode = 'CHURCH';
-                    await handleChurchMessage(cleanPhone, incomingMsg, session, member);
-                    return;
-                }
             }
 
             // ================================================
@@ -318,7 +252,9 @@ router.post('/', (req, res) => {
 
             // ================================================
             // 🤖 FALLBACK: AI CATCH-ALL
-            // ================================================	
+            // ================================================
+            const aiResponse = await getAISupportReply(incomingMsg, cleanPhone, member?.firstName);
+            await sendWhatsApp(cleanPhone, aiResponse);
 
         } catch (e) {
             console.error("❌ ROUTER CRASH:", e);
