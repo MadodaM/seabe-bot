@@ -3,6 +3,8 @@
 require('dotenv').config();
 
 const express = require('express');
+const { provisionNetCashAccount } = require('../services/netcashProvisioner');
+const sgMail = require('@sendgrid/mail');
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'seabe123';
 const COOKIE_NAME = 'seabe_admin_session';
@@ -279,6 +281,100 @@ module.exports = function(app, { prisma }) {
 
         } catch (error) {
             res.send(renderAdminPage('FICA Verifications', '', error.message));
+        }
+    });
+	
+	// ============================================================
+    // ⚙️ API: FICA LEVEL 1 APPROVAL
+    // ============================================================
+    app.post('/api/prospect/admin/approve-level-1', async (req, res) => {
+        if (!isAuthenticated(req)) return res.status(401).json({ error: "Unauthorized" });
+        
+        try {
+            const org = await prisma.church.findUnique({ where: { id: parseInt(req.body.churchId) } });
+            if (!org) return res.status(404).json({ error: "Organization not found" });
+
+            // 1. Update status to Awaiting Level 2
+            await prisma.church.update({
+                where: { id: org.id },
+                data: { ficaStatus: 'AWAITING_LEVEL_2' }
+            });
+
+            // 2. Email client asking for Corporate Docs
+            if (org.email || org.officialEmail) {
+                const targetEmail = org.officialEmail || org.email;
+                await sgMail.send({
+                    to: targetEmail,
+                    from: process.env.EMAIL_FROM || 'admin@seabe.tech',
+                    subject: `Action Required: FICA Level 1 Approved for ${org.name}`,
+                    text: `Great news! Your Level 1 FICA is approved.\n\nTo activate your NetCash merchant account, please reply to this email with your Level 2 corporate documents:\n- NPC Certificate / Constitution\n- CIPC Registration\n- Director IDs`
+                }).catch(e => console.error("Email error:", e));
+            }
+
+            res.json({ message: "Level 1 Approved. Email sent to client requesting Level 2 docs." });
+        } catch (error) {
+            console.error(error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    // ============================================================
+    // ⚙️ API: FINAL APPROVAL & NETCASH PROVISIONING
+    // ============================================================
+    app.post('/api/prospect/admin/approve-final', async (req, res) => {
+        if (!isAuthenticated(req)) return res.status(401).json({ error: "Unauthorized" });
+        
+        try {
+            const org = await prisma.church.findUnique({ where: { id: parseInt(req.body.churchId) } });
+            if (!org) return res.status(404).json({ error: "Organization not found" });
+
+            console.log(`🏦 Provisioning NetCash account for ${org.name}...`);
+
+            // 1. Map data for NetCash API (using fallbacks to prevent crashes if fields are missing)
+            const netcashData = {
+                name: org.name,
+                adminName: org.contactPerson || 'Admin',
+                email: org.officialEmail || org.email || 'admin@seabe.tech',
+                phone: org.adminPhone || org.phone || '0000000000',
+                bankName: org.bankName || 'Standard Bank', // Ensure these fields exist in your Prisma schema!
+                branchCode: org.branchCode || '051001',
+                accountNumber: org.accountNumber || '0000000000'
+            };
+
+            // 2. Fire the Payload
+            const netcashResponse = await provisionNetCashAccount(netcashData);
+
+            if (netcashResponse && netcashResponse.MerchantId) {
+                
+                // 3. Save the new keys and mark as ACTIVE
+                await prisma.church.update({
+                    where: { id: org.id },
+                    data: {
+                        ficaStatus: 'ACTIVE',
+                        netcashMerchantId: netcashResponse.MerchantId,
+                        netcashPayNowKey: netcashResponse.PayNowKey,
+                        subaccountCode: netcashResponse.PayNowKey // Maps to your dashboard UI
+                    }
+                });
+
+                // 4. Send the "You are Live!" Email
+                if (org.email || org.officialEmail) {
+                    const targetEmail = org.officialEmail || org.email;
+                    await sgMail.send({
+                        to: targetEmail,
+                        from: process.env.EMAIL_FROM || 'admin@seabe.tech',
+                        subject: `🎉 ${org.name} FICA Approved! Merchant Account Live.`,
+                        text: `Your KYB is fully approved and your merchant account has been created!\n\nNetCash Merchant ID: ${netcashResponse.MerchantId}\nPay Now Key: ${netcashResponse.PayNowKey}\n\nYour members can now pay securely via Seabe Pay on WhatsApp.`
+                    }).catch(e => console.error("Email error:", e));
+                }
+
+                res.json({ message: "KYB Finalized & NetCash Account Created!", netCashAccountId: netcashResponse.MerchantId });
+            } else {
+                res.status(500).json({ error: "NetCash API failed to return keys. Check Partner ID." });
+            }
+        } catch (error) {
+            console.error(error);
+            res.status(500).json({ error: error.message });
         }
     });
 
