@@ -44,11 +44,18 @@ const upload = multer({
     }
 });
 
-// Helper: Stream Buffer to Cloudinary
+// Helper: Stream Buffer to Cloudinary (Bulletproof JIT injection)
 const uploadToCloud = (buffer) => {
     return new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
-            { folder: "kyc_docs", resource_type: "auto" },
+            { 
+                folder: "kyc_docs", 
+                resource_type: "auto",
+                // 🔥 Force-feed the keys right at the moment of upload
+                cloud_name: process.env.CLOUDINARY_NAME,
+                api_key: process.env.CLOUDINARY_KEY || process.env.CLOUDINARY_API_KEY,
+                api_secret: process.env.CLOUDINARY_SECRET || process.env.CLOUDINARY_API_SECRET
+            },
             (error, result) => {
                 if (error) reject(error);
                 else resolve(result.secure_url);
