@@ -110,6 +110,10 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
         }
 
         // 5️⃣ PERSIST CLAIM
+        // 🛠️ FIX: Look up the claimant's name so Prisma has a beneficiaryName
+        const claimant = await prisma.member.findUnique({ where: { phone: userPhone } });
+        const benName = claimant ? `${claimant.firstName} ${claimant.lastName}` : "Pending Verification";
+
         await prisma.claim.create({
             data: {
                 societyCode: orgCode,
@@ -117,6 +121,7 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
                 dateOfDeath: new Date(aiData.dateOfDeath),
                 causeOfDeath: aiData.causeOfDeath,
                 claimantPhone: userPhone,
+                beneficiaryName: benName, // 👈 The missing puzzle piece!
                 status: status,
                 documentUrl: uploadResult.secure_url,
                 adminNotes: adminNotes
