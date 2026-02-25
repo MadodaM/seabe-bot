@@ -111,12 +111,21 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
 
         // 5️⃣ PERSIST CLAIM
         const claimant = await prisma.member.findUnique({ where: { phone: userPhone } });
-        const benName = claimant ? `${claimant.firstName} ${claimant.lastName}` : "Pending Verification";
+        
+        // If for some reason the claimant isn't in the DB, we can't save the claim.
+        if (!claimant) {
+            throw new Error("Claimant not found in database.");
+        }
+
+        const benName = `${claimant.firstName} ${claimant.lastName}`;
 
         await prisma.claim.create({
             data: {
-                // 🛠️ FIX: Use 'connect' instead of just 'societyCode' string
+                // 1. Connect to the Organization
                 church: { connect: { code: orgCode } }, 
+                // 2. Connect to the Member who is claiming (The Claimant)
+                member: { connect: { id: claimant.id } }, 
+                
                 deceasedIdNumber: aiData.deceasedIdNumber,
                 dateOfDeath: new Date(aiData.dateOfDeath),
                 causeOfDeath: aiData.causeOfDeath,
