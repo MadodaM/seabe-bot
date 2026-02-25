@@ -8,11 +8,25 @@ const crypto = require('crypto');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 
-// 1️⃣ Configure Cloud Storage
-cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_NAME,
-    api_key: process.env.CLOUDINARY_KEY,
-    api_secret: process.env.CLOUDINARY_SECRET
+// 1️⃣ Configure Cloud Storage (Bulletproof Version)
+if (process.env.CLOUDINARY_URL) {
+    // If you used the single URL string, Cloudinary auto-configures!
+    console.log("☁️ Cloudinary: Connecting via CLOUDINARY_URL...");
+} else {
+    // If you used separate keys, we catch both naming conventions
+    cloudinary.config({
+        cloud_name: process.env.CLOUDINARY_NAME,
+        api_key: process.env.CLOUDINARY_KEY || process.env.CLOUDINARY_API_KEY,
+        api_secret: process.env.CLOUDINARY_SECRET || process.env.CLOUDINARY_API_SECRET
+    });
+}
+
+// 🛑 DIAGNOSTIC LOG: Print to Render logs so we can prove they loaded (without exposing secrets)
+console.log("☁️ Cloudinary Keys Loaded:", {
+    cloud_name: process.env.CLOUDINARY_NAME || "MISSING",
+    has_api_key: !!(process.env.CLOUDINARY_KEY || process.env.CLOUDINARY_API_KEY),
+    has_secret: !!(process.env.CLOUDINARY_SECRET || process.env.CLOUDINARY_API_SECRET),
+    has_url: !!process.env.CLOUDINARY_URL
 });
 
 // 2️⃣ Configure Secure Upload Handling (RAM Storage)
