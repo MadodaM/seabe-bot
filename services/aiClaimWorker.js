@@ -126,4 +126,61 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
     }
 }
 
-module.exports = { processTwilioClaim };
+// ==========================================
+// ✨ ADMIN DASHBOARD: DIRECT FILE OCR
+// ==========================================
+async function analyzeAdminDocument(filePath, mimeType) {
+    const fs = require('fs');
+    try {
+        console.log(`🚀 AI WORKER: Analyzing Admin Upload...`);
+        const buffer = fs.readFileSync(filePath);
+
+        // 1️⃣ CLOUDINARY VAULT
+        const uploadResult = await new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+                { folder: 'seabe_admin_claims', resource_type: 'auto' },
+                (error, result) => {
+                    if (error) reject(error);
+                    else resolve(result);
+                }
+            );
+            stream.end(buffer);
+        });
+
+        // 2️⃣ GEMINI 2.5 FLASH EXTRACTION
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-2.5-flash", 
+            generationConfig: { responseMimeType: "application/json" } 
+        });
+
+        const prompt = `Act as a forensic document analyst. 
+        Analyze this South African Death Certificate (DHA-1663) and extract:
+        {
+            "deceasedIdNumber": "13-digit string or 'UNREADABLE'",
+            "dateOfDeath": "YYYY-MM-DD",
+            "causeOfDeath": "NATURAL" or "UNNATURAL",
+            "confidenceScore": number between 1 and 100,
+            "documentType": "String identifying the document type"
+        }
+        Strict Classification Rule: Classify as "UNNATURAL" only if it mentions murder, assault, accident, suicide, or an open inquiry.`;
+
+        const imagePart = {
+            inlineData: { data: buffer.toString("base64"), mimeType: mimeType }
+        };
+
+        const result = await model.generateContent([prompt, imagePart]);
+        const aiData = JSON.parse(result.response.text());
+
+        // Clean up the temp file
+        fs.unlinkSync(filePath);
+
+        return { extractedData: aiData, vaultUrl: uploadResult.secure_url };
+
+    } catch (error) {
+        console.error("❌ Admin OCR Error:", error.message);
+        throw error;
+    }
+}
+
+// Update your exports to include both functions!
+module.exports = { processTwilioClaim, analyzeAdminDocument };

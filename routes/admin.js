@@ -16,13 +16,17 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// 🛡️ Upload Config
+// 🛡️ Upload Config (Updated to allow Images/PDFs for Claims)
 const upload = multer({ 
     dest: 'uploads/',
     limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
-        if (file.mimetype.includes('csv') || file.originalname.endsWith('.csv')) cb(null, true);
-        else cb(new Error('❌ Invalid File Type. CSV only.'));
+        const allowed = ['text/csv', 'image/jpeg', 'image/png', 'application/pdf'];
+        if (allowed.includes(file.mimetype) || file.originalname.endsWith('.csv')) {
+            cb(null, true);
+        } else {
+            cb(new Error('❌ Invalid File Type. CSV, JPG, PNG, or PDF only.'));
+        }
     }
 });
 
@@ -63,6 +67,27 @@ const renderPage = (org, activeTab, content) => {
         <a href="/admin/${org.code}/settings" style="${navStyle('settings')}">⚙️ Settings</a>
     </div><div class="container">${content}</div></body></html>`;
 };
+
+// --- ✨ API: SUREPOL AI OCR EXTRACTOR ---
+    const { analyzeAdminDocument } = require('../services/aiClaimWorker'); // Add this import at the top of admin.js if preferred
+
+    router.post('/api/surepol/claims/extract-ocr', checkSession, (req, res, next) => {
+        upload.single('document')(req, res, (err) => { 
+            if (err) return res.status(400).json({ error: err.message }); 
+            next(); 
+        });
+    }, async (req, res) => {
+        try {
+            if (!req.file) return res.status(400).json({ error: "No document uploaded." });
+
+            // Send the file to Gemini!
+            const aiResponse = await analyzeAdminDocument(req.file.path, req.file.mimetype);
+            
+            res.json(aiResponse);
+        } catch (error) {
+            res.status(500).json({ error: "AI Processing Failed. Please fill manually." });
+        }
+    });
 
 module.exports = (app, { prisma }) => {
 
