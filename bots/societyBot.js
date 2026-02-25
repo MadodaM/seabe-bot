@@ -39,7 +39,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
     try {
         // 1. MENU TRIGGER
         const societyTriggers = ['society', 'menu', 'hi', 'hello'];
-        if (societyTriggers.includes(incomingMsg.toLowerCase()) && session.step !== 'ADD_DEP_NAME' && session.step !== 'ADD_DEP_RELATION') {
+        if (societyTriggers.includes(incomingMsg.toLowerCase()) && session.step !== 'ADD_DEP_NAME' && session.step !== 'ADD_DEP_RELATION' && session.step !== 'PROFILE_MENU' && session.step !== 'UPDATE_NAME' && session.step !== 'UPDATE_EMAIL' && session.step !== 'CONFIRM_UNLINK') {
             session.step = 'SOCIETY_MENU';
             reply = `🛡️ *${session.orgName}*\n_Burial Society Portal_\n\n` +
                     `1. My Policy 📜\n` +
@@ -48,7 +48,8 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                     `4. Digital Card 🪪\n` +
                     `5. Pay Premium 💳\n` +
                     `6. Log a Death Claim 📑\n` +
-                    `7. Exit to Lobby ⛪\n\n` +
+                    `7. My Profile 👤\n` +
+                    `8. Exit to Lobby ⛪\n\n` +
                     `Reply with a number:`;
         }
 
@@ -75,10 +76,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             // OPTION 3: KYC COMPLIANCE
             else if (incomingMsg === '3') {
                 const host = process.env.HOST_URL || 'seabe-bot-test.onrender.com';
-                
-                // ✨ Generate the secure 24-hour token link
                 const link = await generateKYCLink(cleanPhone, host);
-                
                 reply = `👤 *KYC Compliance*\n\nPlease verify your identity to ensure your policy remains active (Valid for 24 hours):\n\n👉 ${link}`;
             }
 
@@ -96,7 +94,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                         `💳 *Status:* ${member?.status || 'ACTIVE'} ${statusEmoji}\n` +
                         `━━━━━━━━━━━━━━━━━━━━\n` +
                         `_Show this card to service providers for verification._\n\n` +
-                        `Reply *society* to go back.`;
+                        `Reply *0* to go back.`;
             }
 
             // OPTION 5: PREMIUM PAYMENT
@@ -121,8 +119,20 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                 reply = `📑 *Log a Death Claim*\n\nPlease upload a clear photo of the *Death Certificate*.\n\nOur AI will process the details instantly.`;
             }
 
-            // OPTION 7: EXIT
+            // ✨ OPTION 7: MY PROFILE (NEW)
             else if (incomingMsg === '7') {
+                session.step = 'PROFILE_MENU';
+                reply = `👤 *My Profile*\n\n` +
+                        `Name: ${member?.firstName} ${member?.lastName}\n` +
+                        `Email: ${member?.email || 'Not set'}\n\n` +
+                        `1️⃣ Update Name & Surname\n` +
+                        `2️⃣ Update Email Address\n` +
+                        `3️⃣ Leave Society (Unlink)\n` +
+                        `0️⃣ Back to Main Menu`;
+            }
+
+            // OPTION 8: EXIT (MOVED)
+            else if (incomingMsg === '8') {
                 session.mode = 'CHURCH';
                 session.step = 'CHURCH_MENU';
                 reply = "⛪ *Switching to Church Mode.*\n\nReply *Menu* to see your options.";
@@ -131,6 +141,51 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             else if (incomingMsg === '0') {
                 session.step = 'SOCIETY_MENU';
                 return handleSocietyMessage(cleanPhone, 'society', session, member);
+            }
+        }
+
+        // ==========================================
+        // 👤 PROFILE MANAGEMENT STATES (NEW)
+        // ==========================================
+        else if (session.step === 'PROFILE_MENU') {
+            if (incomingMsg === '1') {
+                session.step = 'UPDATE_NAME';
+                reply = "✏️ Please reply with your *First Name* and *Last Name* (e.g., John Doe):";
+            } else if (incomingMsg === '2') {
+                session.step = 'UPDATE_EMAIL';
+                reply = "📧 Please reply with your new *Email Address*:";
+            } else if (incomingMsg === '3') {
+                session.step = 'CONFIRM_UNLINK';
+                reply = "⚠️ *WARNING*\n\nAre you sure you want to leave this society? You will no longer receive updates or have access to this menu.\n\nReply *YES* to confirm, or *NO* to cancel.";
+            } else if (incomingMsg === '0') {
+                session.step = 'SOCIETY_MENU';
+                return handleSocietyMessage(cleanPhone, 'society', session, member);
+            } else {
+                reply = "⚠️ Invalid option. Please reply 1, 2, 3, or 0.";
+            }
+        }
+        else if (session.step === 'UPDATE_NAME') {
+            const parts = incomingMsg.split(' ');
+            const fName = parts[0] || 'Member';
+            const lName = parts.slice(1).join(' ') || '.'; 
+            await prisma.member.update({ where: { phone: cleanPhone }, data: { firstName: fName, lastName: lName } });
+            session.step = 'SOCIETY_MENU';
+            reply = `✅ Profile updated to *${fName} ${lName}*!\n\nReply *Menu* to go back.`;
+        }
+        else if (session.step === 'UPDATE_EMAIL') {
+            await prisma.member.update({ where: { phone: cleanPhone }, data: { email: incomingMsg.toLowerCase() } });
+            session.step = 'SOCIETY_MENU';
+            reply = `✅ Email successfully updated!\n\nReply *Menu* to go back.`;
+        }
+        else if (session.step === 'CONFIRM_UNLINK') {
+            if (incomingMsg === 'yes') {
+                await prisma.member.update({ where: { phone: cleanPhone }, data: { societyCode: null } });
+                session.mode = null;
+                session.step = null;
+                reply = "🚪 You have successfully unlinked from the society.\n\nReply *Join* anytime to link to a new organization.";
+            } else {
+                session.step = 'PROFILE_MENU';
+                reply = "🛑 Unlink cancelled. Reply *0* to go back, or *Menu* for the main menu.";
             }
         }
 
