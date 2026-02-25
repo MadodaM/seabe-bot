@@ -115,13 +115,14 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
 
         await prisma.claim.create({
             data: {
-                societyCode: orgCode,
+                // 🛠️ FIX: Use 'connect' instead of just 'societyCode' string
+                church: { connect: { code: orgCode } }, 
                 deceasedIdNumber: aiData.deceasedIdNumber,
                 dateOfDeath: new Date(aiData.dateOfDeath),
                 causeOfDeath: aiData.causeOfDeath,
                 claimantPhone: userPhone,
                 beneficiaryName: benName,
-                payoutAmount: 0, // 👈 FIX: Satisfies the database requirement
+                payoutAmount: 0,
                 status: status,
                 documentUrl: uploadResult.secure_url,
                 adminNotes: adminNotes
