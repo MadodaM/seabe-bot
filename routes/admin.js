@@ -71,12 +71,7 @@ const renderPage = (org, activeTab, content) => {
 // --- ✨ API: SUREPOL AI OCR EXTRACTOR ---
     const { analyzeAdminDocument } = require('../services/aiClaimWorker'); // Add this import at the top of admin.js if preferred
 
-    router.post('/api/surepol/claims/extract-ocr', checkSession, (req, res, next) => {
-        upload.single('document')(req, res, (err) => { 
-            if (err) return res.status(400).json({ error: err.message }); 
-            next(); 
-        });
-    }, async (req, res) => {
+        }, async (req, res) => {
         try {
             if (!req.file) return res.status(400).json({ error: "No document uploaded." });
 
@@ -1021,6 +1016,35 @@ module.exports = (app, { prisma }) => {
         res.setHeader('Set-Cookie', `session_${req.params.code}=; Path=/; Max-Age=0`);
         res.redirect(`/admin/${req.params.code}`);
     });
+    
+    router.get('/admin/:code/logout', (req, res) => {
+        res.setHeader('Set-Cookie', `session_${req.params.code}=; Path=/; Max-Age=0`);
+        res.redirect(`/admin/${req.params.code}`);
+    });
 
+    // ==========================================
+    // ✨ API: SUREPOL AI OCR EXTRACTOR
+    // ==========================================
+    const { analyzeAdminDocument } = require('../services/aiClaimWorker'); 
+
+    router.post('/api/surepol/claims/extract-ocr', checkSession, (req, res, next) => {
+        upload.single('document')(req, res, (err) => { 
+            if (err) return res.status(400).json({ error: err.message }); 
+            next(); 
+        });
+    }, async (req, res) => {
+        try {
+            if (!req.file) return res.status(400).json({ error: "No document uploaded." });
+
+            // Send the file to Gemini!
+            const aiResponse = await analyzeAdminDocument(req.file.path, req.file.mimetype);
+            
+            res.json(aiResponse);
+        } catch (error) {
+            res.status(500).json({ error: "AI Processing Failed. Please fill manually." });
+        }
+    });
+
+    // 👇 IT MUST GO RIGHT ABOVE THIS LINE!
     app.use('/', router);
 };
