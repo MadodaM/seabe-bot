@@ -5,6 +5,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient(); 
 const ozow = require('../services/ozow'); 
 const netcash = require('../services/netcash');
+const { generateKYCLink } = require('../routes/kyc');
 
 // Safely initialize Twilio for direct background messaging
 let twilioClient;
@@ -74,8 +75,11 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             // OPTION 3: KYC COMPLIANCE
             else if (incomingMsg === '3') {
                 const host = process.env.HOST_URL || 'seabe-bot-test.onrender.com';
-                const link = `https://${host}/kyc?phone=${cleanPhone}`;
-                reply = `👤 *KYC Compliance*\n\nPlease verify your identity to ensure your policy remains active:\n\n👉 ${link}`;
+                
+                // ✨ Generate the secure 24-hour token link
+                const link = await generateKYCLink(cleanPhone, host);
+                
+                reply = `👤 *KYC Compliance*\n\nPlease verify your identity to ensure your policy remains active (Valid for 24 hours):\n\n👉 ${link}`;
             }
 
             // OPTION 4: DIGITAL MEMBER CARD 🪪
@@ -92,7 +96,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                         `💳 *Status:* ${member?.status || 'ACTIVE'} ${statusEmoji}\n` +
                         `━━━━━━━━━━━━━━━━━━━━\n` +
                         `_Show this card to service providers for verification._\n\n` +
-                        `Reply *0* to go back.`;
+                        `Reply *society* to go back.`;
             }
 
             // OPTION 5: PREMIUM PAYMENT
