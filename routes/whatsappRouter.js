@@ -219,9 +219,106 @@ router.post('/', (req, res) => {
                 }
             }
 
-            // AI Fallback
-            const aiResponse = await getAISupportReply(incomingMsg, cleanPhone, member?.firstName);
-            await sendWhatsApp(cleanPhone, aiResponse);
+            // ================================================
+            // 🚦 USER ROUTING LOGIC & ONBOARDING
+            // ================================================
+            
+            // 1. Global Reset (Put this first so users can ALWAYS escape a loop)
+            if (incomingMsg === 'exit' || incomingMsg === 'cancel') {
+                delete userSession[cleanPhone];
+                await sendWhatsApp(cleanPhone, "🔄 Session cleared. Reply *Join* to switch organizations, *Hi* for Church, or *Society* for Burial menus.");
+                return;
+            }
+
+            // 2. The Universal "Join" Flow
+            if (incomingMsg === 'join' || session.step === 'SEARCH' || session.step === 'JOIN_SELECT') {
+                
+                if (incomingMsg === 'join') {
+                    session.step = 'SEARCH';
+                    await sendWhatsApp(cleanPhone, "🔍 Let's find your organization!\n\nPlease reply with their name (e.g., 'AFM' or 'Kgosigadi'):");
+                    return;
+                }
+
+                if (session.step === 'SEARCH') {
+                    const results = await prisma.church.findMany({
+                        where: { name: { contains: incomingMsg, mode: 'insensitive' } },
+                        take: 5
+                    });
+
+                    if (results.length > 0) {
+                        session.searchResults = results;
+                        let reply = `🔍 Found ${results.length} matches:\n\n` + 
+                                results.map((r, i) => `*${i+1}.* ${r.type === 'BURIAL_SOCIETY' ? '🛡️' : '⛪'} ${r.name}`).join('\n') +
+                                `\n\nReply with the number to join.`;
+                        session.step = 'JOIN_SELECT';
+                        await sendWhatsApp(cleanPhone, reply);
+                    } else {
+                        await sendWhatsApp(cleanPhone, "⚠️ We couldn't find an organization with that name. Please try another search term:");
+                    }
+                    return;
+                }
+
+                if (session.step === 'JOIN_SELECT') {
+                    const index = parseInt(incomingMsg) - 1;
+                    const org = session.searchResults ? session.searchResults[index] : null;
+                    if (org) {
+                        const updateData = org.type === 'BURIAL_SOCIETY' ? { societyCode: org.code } : { churchCode: org.code };
+                        
+                        await prisma.member.upsert({
+                            where: { phone: cleanPhone },
+                            update: updateData,
+                            create: { phone: cleanPhone, firstName: 'Member', lastName: 'New', ...updateData }
+                        });
+                        
+                        delete userSession[cleanPhone]; 
+                        await sendWhatsApp(cleanPhone, `✅ Successfully linked to *${org.name}*!\n\nReply *${org.type === 'BURIAL_SOCIETY' ? 'Society' : 'Hi'}* to access your menu.`);
+                    } else {
+                        await sendWhatsApp(cleanPhone, "⚠️ Invalid selection. Please reply with a valid number from the list, or type *Exit*.");
+                    }
+                    return;
+                }
+            }
+
+            // 3. Catch completely unregistered users
+            if (!member) {
+                await sendWhatsApp(cleanPhone, "👋 Welcome to Seabe Pay! Please reply with *Join* to find your organization.");
+                return;
+            }
+
+            // 4. Catch "Orphaned" users (In DB, but no code attached)
+            if (!member.churchCode && !member.societyCode) {
+                await sendWhatsApp(cleanPhone, "⚠️ You are not currently linked to any organization. Please reply *Join* to search for yours.");
+                return;
+            }
+
+            // 5. Route to Society
+            if (incomingMsg === 'society' || session.mode === 'SOCIETY') {
+                if (member.societyCode) {
+                    session.mode = 'SOCIETY';
+                    await handleSocietyMessage(cleanPhone, incomingMsg, session, member);
+                    return;
+                } else {
+                    await sendWhatsApp(cleanPhone, "⚠️ You are not linked to a Burial Society. Reply *Join* to find one.");
+                    return;
+                }
+            }
+
+            // 6. Route to Church
+            const churchTriggers = ['amen', 'hi', 'menu', 'hello', 'pay'];
+            if (churchTriggers.includes(incomingMsg) || session.mode === 'CHURCH') {
+                if (member.churchCode) {
+                    session.mode = 'CHURCH';
+                    await handleChurchMessage(cleanPhone, incomingMsg, session, member);
+                    return;
+                } else {
+                    await sendWhatsApp(cleanPhone, "⚠️ You are not linked to a Church. Reply *Join* to find one.");
+                    return;
+                }
+            }
+
+            // ================================================
+            // 🤖 FALLBACK: AI CATCH-ALL
+            // ================================================	
 
         } catch (e) {
             console.error("❌ ROUTER CRASH:", e);
