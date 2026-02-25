@@ -45,10 +45,17 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
         const mimeType = mediaResponse.headers['content-type'] || 'image/jpeg';
         const buffer = Buffer.from(mediaResponse.data, 'binary');
 
-        // 2️⃣ CLOUDINARY VAULT
+        // 2️⃣ CLOUDINARY VAULT (With Bulletproof JIT Injection)
         const uploadResult = await new Promise((resolve, reject) => {
             const stream = cloudinary.uploader.upload_stream(
-                { folder: `seabe_claims/${orgCode}`, resource_type: 'image' },
+                { 
+                    folder: `seabe_claims/${orgCode}`, // 🛠️ Reverted back to orgCode sorting!
+                    resource_type: 'auto',
+                    // 🔥 Force-feed the keys right at the moment of upload
+                    cloud_name: process.env.CLOUDINARY_NAME || process.env.CLOUDINARY_CLOUD_NAME,
+                    api_key: process.env.CLOUDINARY_KEY || process.env.CLOUDINARY_API_KEY,
+                    api_secret: process.env.CLOUDINARY_SECRET || process.env.CLOUDINARY_API_SECRET
+                },
                 (error, result) => {
                     if (error) reject(error);
                     else resolve(result);
@@ -58,7 +65,6 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
         });
 
         // 3️⃣ GEMINI 2.5 FLASH DATA EXTRACTION
-        // Note: Using 2.5-flash for superior extraction accuracy
         const model = genAI.getGenerativeModel({ 
             model: "gemini-2.5-flash", 
             generationConfig: { responseMimeType: "application/json" } 
@@ -122,7 +128,6 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
 
     } catch (error) {
         console.error("❌ Gemini 2.5 Worker Error:", error.message);
-        // Fallback or Admin notification could go here
     }
 }
 
@@ -135,10 +140,16 @@ async function analyzeAdminDocument(filePath, mimeType) {
         console.log(`🚀 AI WORKER: Analyzing Admin Upload...`);
         const buffer = fs.readFileSync(filePath);
 
-        // 1️⃣ CLOUDINARY VAULT
+        // 1️⃣ CLOUDINARY VAULT (With Bulletproof JIT Injection)
         const uploadResult = await new Promise((resolve, reject) => {
             const stream = cloudinary.uploader.upload_stream(
-                { folder: 'seabe_admin_claims', resource_type: 'auto' },
+                { 
+                    folder: 'seabe_admin_claims', // 🛠️ Correct folder for admin uploads
+                    resource_type: 'auto',
+                    cloud_name: process.env.CLOUDINARY_NAME || process.env.CLOUDINARY_CLOUD_NAME,
+                    api_key: process.env.CLOUDINARY_KEY || process.env.CLOUDINARY_API_KEY,
+                    api_secret: process.env.CLOUDINARY_SECRET || process.env.CLOUDINARY_API_SECRET
+                },
                 (error, result) => {
                     if (error) reject(error);
                     else resolve(result);
@@ -182,5 +193,4 @@ async function analyzeAdminDocument(filePath, mimeType) {
     }
 }
 
-// Update your exports to include both functions!
 module.exports = { processTwilioClaim, analyzeAdminDocument };
