@@ -6,8 +6,8 @@ const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const cloudinary = require('cloudinary').v2;
 const { sendWhatsApp } = require('../services/whatsapp'); 
-const { decrypt } = require('../utils/crypto'); // Ensure this path matches your setup
-
+const { decrypt } = require('../utils/crypto'); 
+const { analyzeAdminDocument } = require('../services/aiClaimWorker');
 
 // 🛡️ Cloudinary Config
 cloudinary.config({
@@ -16,7 +16,7 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// 🛡️ Upload Config (Updated to allow Images/PDFs for Claims)
+// 🛡️ Upload Config (Updated for AI Claims & CSVs)
 const upload = multer({ 
     dest: 'uploads/',
     limits: { fileSize: 5 * 1024 * 1024 },
@@ -62,27 +62,11 @@ const renderPage = (org, activeTab, content) => {
         ${eventsTab}
         <a href="/admin/${org.code}/team" style="${navStyle('team')}">🛡️ Team</a>
         <a href="/admin/${org.code}/ads" style="${navStyle('ads')}">📢 Ads</a>
-		<a href="/admin/${org.code}/collections" style="${navStyle('collections')}">💰 Revenue Recovery</a>
-		<a href="/admin/${org.code}/surepol" style="${navStyle('surepol')}">⚰️ Surepol (Burial)</a>
+        <a href="/admin/${org.code}/collections" style="${navStyle('collections')}">💰 Revenue Recovery</a>
+        <a href="/admin/${org.code}/surepol" style="${navStyle('surepol')}">⚰️ Surepol (Burial)</a>
         <a href="/admin/${org.code}/settings" style="${navStyle('settings')}">⚙️ Settings</a>
     </div><div class="container">${content}</div></body></html>`;
 };
-
-// --- ✨ API: SUREPOL AI OCR EXTRACTOR ---
-    const { analyzeAdminDocument } = require('../services/aiClaimWorker'); // Add this import at the top of admin.js if preferred
-
-        }, async (req, res) => {
-        try {
-            if (!req.file) return res.status(400).json({ error: "No document uploaded." });
-
-            // Send the file to Gemini!
-            const aiResponse = await analyzeAdminDocument(req.file.path, req.file.mimetype);
-            
-            res.json(aiResponse);
-        } catch (error) {
-            res.status(500).json({ error: "AI Processing Failed. Please fill manually." });
-        }
-    });
 
 module.exports = (app, { prisma }) => {
 
@@ -188,32 +172,31 @@ module.exports = (app, { prisma }) => {
                             <th>Status</th>
                         </tr>
                     </thead>
-						<tbody>
-							${debts.length > 0 ? debts.map(d => {
-								// Assign Badge Colors
-								let badgeColor = '#27ae60'; // Default Green for SENT
-								if (d.status === 'PENDING') badgeColor = '#e67e22'; // Orange
-								if (d.status === 'REMINDER_1') badgeColor = '#f39c12'; // Amber Warning
-								if (d.status === 'PROMISE_TO_PAY') badgeColor = '#0984e3'; // Blue
-								if (d.status === 'DISPUTED') badgeColor = '#d63031'; // Red
-								if (d.status === 'FINAL_NOTICE') badgeColor = '#2d3436'; // Black / Dark Grey
-                            
-								return `
-								<tr>
-									<td><b>${d.firstName}</b><br><span style="font-size:11px; color:#888;">Ref: ${d.reference}</span></td>
-									<td>${d.phone}</td>
-									<td><b>R${d.amount.toFixed(2)}</b></td>
-									<td><span class="badge" style="background:${badgeColor}; padding:5px 8px;">${d.status.replace(/_/g, ' ')}</span></td>
-								</tr>`;
-							}).join('') : '<tr><td colspan="4" style="text-align:center; padding:30px; color:#999;">No active debtors found. Upload a CSV to begin.</td></tr>'}
-						</tbody>
+                        <tbody>
+                            ${debts.length > 0 ? debts.map(d => {
+                                let badgeColor = '#27ae60'; 
+                                if (d.status === 'PENDING') badgeColor = '#e67e22'; 
+                                if (d.status === 'REMINDER_1') badgeColor = '#f39c12'; 
+                                if (d.status === 'PROMISE_TO_PAY') badgeColor = '#0984e3'; 
+                                if (d.status === 'DISPUTED') badgeColor = '#d63031'; 
+                                if (d.status === 'FINAL_NOTICE') badgeColor = '#2d3436'; 
+                                
+                                return `
+                                <tr>
+                                    <td><b>${d.firstName}</b><br><span style="font-size:11px; color:#888;">Ref: ${d.reference}</span></td>
+                                    <td>${d.phone}</td>
+                                    <td><b>R${d.amount.toFixed(2)}</b></td>
+                                    <td><span class="badge" style="background:${badgeColor}; padding:5px 8px;">${d.status.replace(/_/g, ' ')}</span></td>
+                                </tr>`;
+                            }).join('') : '<tr><td colspan="4" style="text-align:center; padding:30px; color:#999;">No active debtors found. Upload a CSV to begin.</td></tr>'}
+                        </tbody>
                 </table>
             </div>
         `;
 
         res.send(renderPage(req.org, 'collections', content));
-    });;
-	
+    });
+    
 // --- ⚰️ SUREPOL (BURIAL ADMIN UI) ---
     router.get('/admin/:code/surepol', checkSession, async (req, res) => {
         
@@ -534,16 +517,17 @@ module.exports = (app, { prisma }) => {
                     const div = document.createElement('div');
                     div.style.cssText = "display:flex; gap:5px; margin-bottom:10px; background:#f8f9fa; padding:10px; border-radius:5px;";
                     // Inside the 'addDependentBtn' click listener in admin.js
-					div.innerHTML = 
-						'<input type="text" class="dep-fname" placeholder="First Name" required style="margin:0; flex:1; padding:8px;">' +
-						'<input type="text" class="dep-lname" placeholder="Surname" required style="margin:0; flex:1; padding:8px;">' +
-						'<input type="date" class="dep-dob" required style="margin:0; flex:1; padding:8px;">' + // 👈 Changed to type="date"
-						'<select class="dep-rel" style="margin:0; flex:1; padding:8px;">' +
-							'<option value="SPOUSE">Spouse</option>' +
-							'<option value="CHILD">Child</option>' +
-							'<option value="EXTENDED">Extended Family</option>' +
-						'</select>' +
-						'<button type="button" onclick="this.parentElement.remove()" ...>X</button>';
+                    div.innerHTML = 
+                        '<input type="text" class="dep-fname" placeholder="First Name" required style="margin:0; flex:1; padding:8px;">' +
+                        '<input type="text" class="dep-lname" placeholder="Surname" required style="margin:0; flex:1; padding:8px;">' +
+                        '<input type="date" class="dep-dob" required style="margin:0; flex:1; padding:8px;">' + // 👈 Changed to type="date"
+                        '<select class="dep-rel" style="margin:0; flex:1; padding:8px;">' +
+                            '<option value="SPOUSE">Spouse</option>' +
+                            '<option value="CHILD">Child</option>' +
+                            '<option value="EXTENDED">Extended Family</option>' +
+                        '</select>' +
+                        '<button type="button" onclick="this.parentElement.remove()">X</button>';
+                    depsContainer.appendChild(div);
                 });
 
                 document.getElementById('newPolicyForm').addEventListener('submit', async (e) => {
@@ -557,14 +541,14 @@ module.exports = (app, { prisma }) => {
                     const dependents = [];
                     const depRows = depsContainer.children;
                     // Inside the 'newPolicyForm' submit listener
-					for (let i = 0; i < depRows.length; i++) {
-						dependents.push({
-							firstName: depRows[i].querySelector('.dep-fname').value.trim(),
-							lastName: depRows[i].querySelector('.dep-lname').value.trim(),
-							dateOfBirth: depRows[i].querySelector('.dep-dob').value, // 👈 Updated
-							relation: depRows[i].querySelector('.dep-rel').value
-						});
-					}
+                    for (let i = 0; i < depRows.length; i++) {
+                        dependents.push({
+                            firstName: depRows[i].querySelector('.dep-fname').value.trim(),
+                            lastName: depRows[i].querySelector('.dep-lname').value.trim(),
+                            dateOfBirth: depRows[i].querySelector('.dep-dob').value, // 👈 Updated
+                            relation: depRows[i].querySelector('.dep-rel').value
+                        });
+                    }
 
                     const payload = {
                         firstName: document.getElementById('pmFirstName').value.trim(),
@@ -754,13 +738,12 @@ module.exports = (app, { prisma }) => {
                         let cleanPhone = phone.replace(/\D/g, '');
                         if (cleanPhone.length === 10 && cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
                         
-                        // 🛠️ FIX: Added lastName to CREATE block
                         await prisma.member.upsert({ 
                             where: { phone: cleanPhone }, 
                             update: { firstName: firstName, lastName: lastName }, 
                             create: { 
                                 firstName: firstName, 
-                                lastName: lastName, // <--- The Missing Field!
+                                lastName: lastName, 
                                 phone: cleanPhone, 
                                 churchCode: req.org.code,
                                 status: 'ACTIVE'
@@ -850,7 +833,7 @@ module.exports = (app, { prisma }) => {
         `));
     });
 
-	router.post('/admin/:code/verifications/action', checkSession, async (req, res) => {
+    router.post('/admin/:code/verifications/action', checkSession, async (req, res) => {
         const { memberId, action, reason } = req.body;
         const member = await prisma.member.findUnique({ where: { id: parseInt(memberId) } });
         
@@ -869,9 +852,9 @@ module.exports = (app, { prisma }) => {
             }
         }
         res.redirect(`/admin/${req.org.code}/verifications`);
-    });;
+    });
 
-   // --- 👤 MEMBER PROFILE & KYC REVIEW ---
+    // --- 👤 MEMBER PROFILE & KYC REVIEW ---
     router.get('/admin/:code/member/:id', checkSession, async (req, res) => {
         const member = await prisma.member.findUnique({ where: { id: parseInt(req.params.id) } });
         if (!member) return res.send("Not Found");
@@ -879,11 +862,10 @@ module.exports = (app, { prisma }) => {
         // 🛠️ Smarter Decryptor: Ignores legacy plain-text data
         const safeDecrypt = (data) => {
             if (!data) return null;
-            // Encrypted data usually contains a colon (iv:encryptedContent)
             if (typeof data === 'string' && data.includes(':') && data.length > 30) {
                 try { return decrypt ? decrypt(data) : data; } catch (e) { return data; }
             }
-            return data; // Return unencrypted legacy data as-is
+            return data; 
         };
 
         const idNum = safeDecrypt(member.idNumber) || 'Not Provided';
@@ -891,11 +873,9 @@ module.exports = (app, { prisma }) => {
         let idPhoto = safeDecrypt(member.idPhotoUrl);
         let addressPhoto = safeDecrypt(member.proofOfAddressUrl);
 
-        // Ensure URLs are HTTPS
         if (idPhoto && idPhoto.startsWith('http:')) idPhoto = idPhoto.replace('http:', 'https:');
         if (addressPhoto && addressPhoto.startsWith('http:')) addressPhoto = addressPhoto.replace('http:', 'https:');
 
-        // Helper to render Docs (Handles PDFs vs Images)
         const renderDoc = (url, title) => {
             if (!url) return `<div style="padding:15px; background:#f9f9f9; border:1px dashed #ccc; text-align:center; color:#999; border-radius:8px; margin-bottom:15px;">No ${title} Uploaded</div>`;
             if (url.endsWith('.pdf')) {
@@ -903,8 +883,6 @@ module.exports = (app, { prisma }) => {
             }
             return `<div style="margin-bottom:15px;"><strong style="display:block; margin-bottom:5px; color:#2c3e50;">📸 ${title}</strong><a href="${url}" target="_blank"><img src="${url}" style="max-width:100%; border-radius:8px; border:1px solid #ddd; box-shadow:0 2px 5px rgba(0,0,0,0.1);"></a></div>`;
         };
-
-        // ... [KEEP YOUR EXISTING res.send(renderPage(...)) HTML BLOCK HERE] ...
 
         res.send(renderPage(req.org, 'members', `
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
@@ -955,7 +933,6 @@ module.exports = (app, { prisma }) => {
         `));
     });
 
-    
     // --- 📄 PDF & SETTINGS ---
     router.get('/admin/:code/members/:phone/pdf', checkSession, async (req, res) => {
         const m = await prisma.member.findUnique({ where: { phone: req.params.phone } }); 
@@ -966,29 +943,23 @@ module.exports = (app, { prisma }) => {
         doc.pipe(res);
 
         try {
-            // 🖼️ 1. Try to fetch and stamp the Logo
-            // (Assuming your database uses 'logoUrl' or similar. Change this if your DB field is named differently, like 'logo' or 'image')
             if (req.org.logoUrl) { 
                 const response = await fetch(req.org.logoUrl);
                 const arrayBuffer = await response.arrayBuffer();
                 const imageBuffer = Buffer.from(arrayBuffer);
                 
-                // Stamp it perfectly centered at the top
                 doc.image(imageBuffer, (doc.page.width - 100) / 2, 40, { width: 100 });
-                doc.moveDown(5); // Push the rest of the text down
+                doc.moveDown(5); 
             } else {
-                // No logo? Fallback to the generic text header
                 doc.fontSize(22).text(`${req.org.name}`, { align: 'center' });
                 doc.moveDown(1);
             }
         } catch (error) {
-            // If the image fails to load, gracefully fallback to text
             console.error("PDF Logo Error:", error.message);
             doc.fontSize(22).text(`${req.org.name}`, { align: 'center' });
             doc.moveDown(1);
         }
 
-        // 📝 2. Print the Statement Details
         doc.fontSize(16).text(`Account Statement`, { align: 'center', underline: true });
         doc.moveDown(1);
         
@@ -999,23 +970,17 @@ module.exports = (app, { prisma }) => {
         
         doc.moveDown(2);
         
-        // Draw a simple dividing line
         doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
         doc.moveDown(1);
 
-        // Print the status
         doc.fontSize(14).text(`Account Status: Confirmed`, { align: 'center' });
 
         doc.end();
     });
+
     router.get('/admin/:code/settings', checkSession, (req, res) => res.send(renderPage(req.org, 'settings', `<div class="card"><h3>Settings</h3><p>${req.org.name}</p></div>`)));
     router.get('/admin/:code/ads', checkSession, (req, res) => res.send(renderPage(req.org, 'ads', `<div class="card"><h3>Ads</h3><p>Coming Soon</p></div>`)));
     router.get('/admin/:code/claims', checkSession, (req, res) => res.send(renderPage(req.org, 'claims', `<div class="card"><h3>Claims</h3><p>See Dashboard for Liability.</p></div>`)));
-    
-    router.get('/admin/:code/logout', (req, res) => {
-        res.setHeader('Set-Cookie', `session_${req.params.code}=; Path=/; Max-Age=0`);
-        res.redirect(`/admin/${req.params.code}`);
-    });
     
     router.get('/admin/:code/logout', (req, res) => {
         res.setHeader('Set-Cookie', `session_${req.params.code}=; Path=/; Max-Age=0`);
@@ -1025,8 +990,6 @@ module.exports = (app, { prisma }) => {
     // ==========================================
     // ✨ API: SUREPOL AI OCR EXTRACTOR
     // ==========================================
-    const { analyzeAdminDocument } = require('../services/aiClaimWorker'); 
-
     router.post('/api/surepol/claims/extract-ocr', checkSession, (req, res, next) => {
         upload.single('document')(req, res, (err) => { 
             if (err) return res.status(400).json({ error: err.message }); 
@@ -1036,7 +999,6 @@ module.exports = (app, { prisma }) => {
         try {
             if (!req.file) return res.status(400).json({ error: "No document uploaded." });
 
-            // Send the file to Gemini!
             const aiResponse = await analyzeAdminDocument(req.file.path, req.file.mimetype);
             
             res.json(aiResponse);
@@ -1045,6 +1007,5 @@ module.exports = (app, { prisma }) => {
         }
     });
 
-    // 👇 IT MUST GO RIGHT ABOVE THIS LINE!
     app.use('/', router);
 };
