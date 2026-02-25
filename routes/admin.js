@@ -830,32 +830,40 @@ module.exports = (app, { prisma }) => {
         `));
     });
 
-    router.post('/admin/:code/verifications/action', checkSession, async (req, res) => {
+	router.post('/admin/:code/verifications/action', checkSession, async (req, res) => {
         const { memberId, action, reason } = req.body;
         const member = await prisma.member.findUnique({ where: { id: parseInt(memberId) } });
         
         if (member) {
+            // 🛠️ Phone Number Cleaner for Twilio (+27 format)
+            let cleanPhone = member.phone.replace(/\D/g, '');
+            if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+
             if (action === 'approve') {
                 await prisma.member.update({ where: { id: member.id }, data: { isIdVerified: true, verifiedAt: new Date(), rejectionReason: null } });
-                try { await sendWhatsApp(member.phone, `✅ *KYC Approved!*\n\nHi ${member.firstName}, your identity documents and proof of address have been successfully verified by ${req.org.name}.`); } catch(e){}
+                try { await sendWhatsApp(cleanPhone, `✅ *KYC Approved!*\n\nHi ${member.firstName}, your identity documents and proof of address have been successfully verified by ${req.org.name}.`); } catch(e){ console.error(e.message); }
             } else {
                 const rejectMsg = reason || "Documents were not clear or incomplete";
                 await prisma.member.update({ where: { id: member.id }, data: { isIdVerified: false, rejectionReason: rejectMsg } });
-                try { await sendWhatsApp(member.phone, `❌ *KYC Verification Failed*\n\nHi ${member.firstName}, your recent document upload was rejected by the administrator.\n\n*Reason:* ${rejectMsg}\n\nPlease reply with *3* to generate a new secure link and re-upload your documents.`); } catch(e){}
+                try { await sendWhatsApp(cleanPhone, `❌ *KYC Verification Failed*\n\nHi ${member.firstName}, your recent document upload was rejected by the administrator.\n\n*Reason:* ${rejectMsg}\n\nPlease reply with *3* to generate a new secure link and re-upload your documents.`); } catch(e){ console.error(e.message); }
             }
         }
         res.redirect(`/admin/${req.org.code}/verifications`);
-    });
+    });;
 
-    // --- 👤 MEMBER PROFILE & KYC REVIEW ---
+   // --- 👤 MEMBER PROFILE & KYC REVIEW ---
     router.get('/admin/:code/member/:id', checkSession, async (req, res) => {
         const member = await prisma.member.findUnique({ where: { id: parseInt(req.params.id) } });
         if (!member) return res.send("Not Found");
 
-        // Safely decrypt data if it was encrypted during upload
+        // 🛠️ Smarter Decryptor: Ignores legacy plain-text data
         const safeDecrypt = (data) => {
             if (!data) return null;
-            try { return decrypt ? decrypt(data) : data; } catch (e) { return data; }
+            // Encrypted data usually contains a colon (iv:encryptedContent)
+            if (typeof data === 'string' && data.includes(':') && data.length > 30) {
+                try { return decrypt ? decrypt(data) : data; } catch (e) { return data; }
+            }
+            return data; // Return unencrypted legacy data as-is
         };
 
         const idNum = safeDecrypt(member.idNumber) || 'Not Provided';
@@ -875,6 +883,8 @@ module.exports = (app, { prisma }) => {
             }
             return `<div style="margin-bottom:15px;"><strong style="display:block; margin-bottom:5px; color:#2c3e50;">📸 ${title}</strong><a href="${url}" target="_blank"><img src="${url}" style="max-width:100%; border-radius:8px; border:1px solid #ddd; box-shadow:0 2px 5px rgba(0,0,0,0.1);"></a></div>`;
         };
+
+        // ... [KEEP YOUR EXISTING res.send(renderPage(...)) HTML BLOCK HERE] ...
 
         res.send(renderPage(req.org, 'members', `
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
