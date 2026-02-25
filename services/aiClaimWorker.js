@@ -49,7 +49,7 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
         const uploadResult = await new Promise((resolve, reject) => {
             const stream = cloudinary.uploader.upload_stream(
                 { 
-                    folder: `seabe_claims/${orgCode}`, // 🛠️ Reverted back to orgCode sorting!
+                    folder: `seabe_claims/${orgCode}`, 
                     resource_type: 'auto',
                     // 🔥 Force-feed the keys right at the moment of upload
                     cloud_name: process.env.CLOUDINARY_NAME || process.env.CLOUDINARY_CLOUD_NAME,
@@ -110,7 +110,6 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
         }
 
         // 5️⃣ PERSIST CLAIM
-        // 🛠️ FIX: Look up the claimant's name so Prisma has a beneficiaryName
         const claimant = await prisma.member.findUnique({ where: { phone: userPhone } });
         const benName = claimant ? `${claimant.firstName} ${claimant.lastName}` : "Pending Verification";
 
@@ -121,18 +120,25 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
                 dateOfDeath: new Date(aiData.dateOfDeath),
                 causeOfDeath: aiData.causeOfDeath,
                 claimantPhone: userPhone,
-                beneficiaryName: benName, // 👈 The missing puzzle piece!
+                beneficiaryName: benName,
+                payoutAmount: 0, // 👈 FIX: Satisfies the database requirement
                 status: status,
                 documentUrl: uploadResult.secure_url,
                 adminNotes: adminNotes
             }
         });
 
-        // 6️⃣ NOTIFY USER
-        await sendWhatsApp(userPhone, `✅ *Claim Processed by AI*\n\nDocument Read: ${aiData.deceasedIdNumber}\nStatus: *${status.replace(/_/g, ' ')}*\n\nAn administrator will verify the bank details for payout.`);
+        // 6️⃣ NOTIFY USER (Smart Messaging)
+        if (status === 'UNRECOGNIZED_ID') {
+            await sendWhatsApp(userPhone, `⚠️ *Claim Escalated*\n\nWe were unable to verify your policy or ID number. We have escalated the request, and a support agent will contact you within 24 hours.`);
+        } else {
+            await sendWhatsApp(userPhone, `✅ *Claim Processed by AI*\n\nDocument Read: ${aiData.deceasedIdNumber}\nStatus: *${status.replace(/_/g, ' ')}*\n\nAn administrator will verify the bank details for payout.`);
+        }
 
     } catch (error) {
         console.error("❌ Gemini 2.5 Worker Error:", error.message);
+        // 🛡️ Catch-All Safety Message if anything crashes
+        await sendWhatsApp(userPhone, `⚠️ *System Alert*\n\nWe experienced an issue verifying your document. We have escalated the request, and a support agent will contact you within 24 hours.`);
     }
 }
 
