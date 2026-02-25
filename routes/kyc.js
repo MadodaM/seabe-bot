@@ -7,6 +7,9 @@ const prisma = new PrismaClient();
 const crypto = require('crypto');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
 
 // 1️⃣ Configure Cloud Storage (Bulletproof Version)
 if (process.env.CLOUDINARY_URL) {
@@ -189,10 +192,57 @@ router.post('/:token', (req, res) => {
                 }
             });
 
-            // 4. 🚀 TRIGGER WHATSAPP CONFIRMATION
+            // 4. 🚀 TRIGGER AI OCR & WHATSAPP CONFIRMATION (Background)
             if (updatedMember.phone) {
-                const message = `✅ *Documents Received!*\n\nHi ${updatedMember.firstName || 'Member'}, we have securely received your ID and Proof of Address.\n\nOur team will review them shortly.`;
-                await sendWhatsApp(updatedMember.phone, message);
+                (async () => {
+                    try {
+                        console.log(`🤖 Sending KYC ID to Gemini 2.5 Flash...`);
+                        let aiMessage = "";
+
+                        // If an ID photo was uploaded, run OCR!
+                        if (req.files['idPhoto']) {
+                            const mimeType = req.files['idPhoto'][0].mimetype;
+                            const base64Data = req.files['idPhoto'][0].buffer.toString("base64");
+
+                            const model = genAI.getGenerativeModel({ 
+                                model: "gemini-2.5-flash",
+                                generationConfig: { responseMimeType: "application/json" }
+                            });
+
+                            const prompt = `Act as a KYC verification agent. Read this South African ID or Passport.
+                            Extract the following into strict JSON:
+                            {
+                                "extractedIdNumber": "string",
+                                "firstName": "string",
+                                "lastName": "string",
+                                "dateOfBirth": "YYYY-MM-DD"
+                            }
+                            If a field is blurry or unreadable, output "UNKNOWN".`;
+
+                            const result = await model.generateContent([
+                                prompt, 
+                                { inlineData: { data: base64Data, mimeType: mimeType } }
+                            ]);
+                            
+                            const aiData = JSON.parse(result.response.text());
+                            console.log("🤖 KYC AI Extraction:", aiData);
+
+                            // Compare what they typed vs what the AI read
+                            const matchStatus = (aiData.extractedIdNumber === req.body.idNumber) ? "✅ *100% Match*" : "⚠️ *Mismatch Detected*";
+
+                            aiMessage = `✅ *KYC Documents Received!*\n\nHi ${aiData.firstName !== "UNKNOWN" ? aiData.firstName : 'Member'},\n\nOur AI has instantly scanned your ID:\n🆔 Extracted: ${aiData.extractedIdNumber}\n📊 AI Verification: ${matchStatus}\n\nOur team will securely review your proof of address next.`;
+                        } else {
+                            aiMessage = `✅ *Documents Received!*\n\nHi ${updatedMember.firstName || 'Member'}, we have securely received your documents for review.`;
+                        }
+
+                        await sendWhatsApp(updatedMember.phone, aiMessage);
+
+                    } catch (aiError) {
+                        console.error("❌ KYC AI OCR Error:", aiError.message);
+                        // Fallback if AI is busy
+                        await sendWhatsApp(updatedMember.phone, `✅ *Documents Received!*\n\nYour documents have been securely stored. Our team will review them shortly.`);
+                    }
+                })();
             }
 
             res.send(`
