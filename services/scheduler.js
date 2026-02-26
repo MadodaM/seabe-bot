@@ -87,7 +87,8 @@ const startCronJobs = () => {
             const day7Debts = await prisma.collection.findMany({
                 where: { 
                     status: 'SENT',
-                    updatedAt: { lte: sevenDaysAgo } 
+                    updatedAt: {   // ❌ THIS IS THE CULPRIT
+					lte: someDateVariable
                 }
             });
 
@@ -104,7 +105,8 @@ const startCronJobs = () => {
             const day14Debts = await prisma.collection.findMany({
                 where: {
                     status: 'REMINDER_1',
-                    updatedAt: { lte: fourteenDaysAgo }
+                    updatedAt: {   // ❌ THIS IS THE CULPRIT
+					lte: someDateVariable
                 }
             });
 
