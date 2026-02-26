@@ -1,4 +1,6 @@
+// ==========================================
 // services/scheduler.js
+// ==========================================
 const cron = require('node-cron');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -21,8 +23,6 @@ async function emailReport(churchCode) {
                 transactions: {
                     where: { 
                         status: 'SUCCESS',
-                        // Optional: Filter for the last 7 days only
-                        // createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } 
                     },
                     orderBy: { date: 'desc' }
                 }
@@ -87,8 +87,9 @@ const startCronJobs = () => {
             const day7Debts = await prisma.collection.findMany({
                 where: { 
                     status: 'SENT',
-                    updatedAt: {   // ❌ THIS IS THE CULPRIT
-					lte: someDateVariable
+                    createdAt: { 
+                        lte: sevenDaysAgo 
+                    }
                 }
             });
 
@@ -105,8 +106,9 @@ const startCronJobs = () => {
             const day14Debts = await prisma.collection.findMany({
                 where: {
                     status: 'REMINDER_1',
-                    updatedAt: {   // ❌ THIS IS THE CULPRIT
-					lte: someDateVariable
+                    createdAt: { 
+                        lte: fourteenDaysAgo 
+                    }
                 }
             });
 
@@ -138,7 +140,6 @@ const startCronJobs = () => {
         try {
             const churches = await prisma.church.findMany();
             for (const church of churches) { 
-                // Only attempt to send if the organization has an email configured
                 if (church.email) {
                     await emailReport(church.code); 
                 }
