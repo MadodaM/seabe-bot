@@ -168,19 +168,30 @@ model Ad {
 }
 
 model Claim {
-  id Int @id @default(autoincrement())
+  id              Int      @id @default(autoincrement())
 
   // Link to Church
-  churchCode String
-  church     Church @relation(fields: [churchCode], references: [code])
+  churchCode      String
+  church          Church   @relation(fields: [churchCode], references: [code])
 
   // Link to Member
-  memberPhone String
-  member      Member @relation(fields: [memberPhone], references: [phone])
+  memberPhone     String
+  member          Member   @relation(fields: [memberPhone], references: [phone])
 
   beneficiaryName String
   payoutAmount    Float
   status          String   @default("PENDING") // PENDING, APPROVED, PAID, DECLINED
+
+  // --------------------------------------------------
+  // ✨ NEW AI & DOCUMENT FIELDS (REQUIRED FOR ADMIN UI)
+  // --------------------------------------------------
+  deceasedIdNumber String?
+  dateOfDeath      DateTime?
+  causeOfDeath     String?
+  claimantPhone    String? 
+  documentUrl      String?
+  adminNotes       String?
+
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }

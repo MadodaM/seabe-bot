@@ -121,11 +121,10 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
 
         await prisma.claim.create({
             data: {
-                church: { connect: { code: orgCode } }, 
-                member: { connect: { id: claimant.id } }, 
+                churchCode: orgCode,        // 🛠️ Cleaner way to connect relation
+                memberPhone: userPhone,     // 🛠️ Cleaner way to connect relation
                 
-                // 🛠️ FIX: Matching the standard Prisma schema field names
-                idNumber: aiData.deceasedIdNumber, // Changed from deceasedIdNumber
+                deceasedIdNumber: aiData.deceasedIdNumber, // 👈 Reverted back to the correct name!
                 dateOfDeath: new Date(aiData.dateOfDeath),
                 causeOfDeath: aiData.causeOfDeath,
                 claimantPhone: userPhone,
