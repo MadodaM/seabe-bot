@@ -988,9 +988,9 @@ module.exports = (app, { prisma }) => {
     
     // 🎯 The corrected redirect (Ensure the closing "});" is there!)
     router.get('/admin/:code/claims', checkSession, (req, res) => {
-        res.redirect('/crm/claims.html');
-    });
-    
+    // This passes the exact church code to the front-end!
+    res.redirect(`/crm/claims.html?code=${req.params.code}`); 
+});
     router.get('/admin/:code/logout', (req, res) => {
         res.setHeader('Set-Cookie', `session_${req.params.code}=; Path=/; Max-Age=0`);
         res.redirect(`/admin/${req.params.code}`);

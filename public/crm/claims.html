@@ -68,8 +68,31 @@
     </main>
 
     <script>
-        // 🛠️ Replace this with the actual logged-in user's church code later (e.g., from localStorage)
-        const TEST_CHURCH_CODE = 'BS-001'; 
+        // 🧠 1. Grab the church code dynamically from the URL bar
+        const urlParams = new URLSearchParams(window.location.search);
+        const CHURCH_CODE = urlParams.get('code');
+
+        if (!CHURCH_CODE) {
+            alert("No organization code found. Please access this page from the admin dashboard.");
+        }
+
+        async function loadClaimsVault() {
+            if (!CHURCH_CODE) return; // Stop if there's no code
+
+            try {
+                // 📡 2. Fetch data specifically for this organization
+                const response = await fetch(`/api/crm/claims/${CHURCH_CODE}`);
+                const result = await response.json();
+
+                if (result.success) {
+                    renderDashboard(result);
+                } else {
+                    console.error("Failed to load claims:", result.error);
+                }
+            } catch (error) {
+                console.error("Error fetching claims:", error);
+            }
+        }
 
         async function loadClaimsVault() {
             try {
