@@ -84,9 +84,10 @@ function renderAdminPage(title, content, error = null) {
             <div class="sidebar">
                 <h2>SEABE PLATFORM</h2>
                 <a href="/admin">📊 Dashboard</a>
-                <a href="/admin/global-radar">🌍 Global Radar</a> <a href="/admin/churches">🏢 Organizations</a>
+                <a href="/admin/global-radar">🌍 Global Radar</a>
                 <a href="/admin/churches">🏢 Organizations</a>
-                <a href="/admin/fica">🛡️ FICA & KYB</a> <a href="/admin/global-collections">💰 Global Collections</a>
+                <a href="/admin/fica">🛡️ FICA & KYB</a> 
+                <a href="/admin/global-collections">💰 Global Collections</a>
                 <a href="/admin/events">🎟️ Events & Projects</a>
                 <a href="/admin/ads">📢 Advertising</a>
                 <a href="/admin/news">📰 News Feed</a>
