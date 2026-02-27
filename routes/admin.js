@@ -983,9 +983,13 @@ module.exports = (app, { prisma }) => {
     });
 
     router.get('/admin/:code/settings', checkSession, (req, res) => res.send(renderPage(req.org, 'settings', `<div class="card"><h3>Settings</h3><p>${req.org.name}</p></div>`)));
+    
     router.get('/admin/:code/ads', checkSession, (req, res) => res.send(renderPage(req.org, 'ads', `<div class="card"><h3>Ads</h3><p>Coming Soon</p></div>`)));
+    
+    // 🎯 The corrected redirect (Ensure the closing "});" is there!)
     router.get('/admin/:code/claims', checkSession, (req, res) => {
-    res.redirect('/crm/claims.html');
+        res.redirect('/crm/claims.html');
+    });
     
     router.get('/admin/:code/logout', (req, res) => {
         res.setHeader('Set-Cookie', `session_${req.params.code}=; Path=/; Max-Age=0`);
