@@ -986,11 +986,21 @@ module.exports = (app, { prisma }) => {
     
     router.get('/admin/:code/ads', checkSession, (req, res) => res.send(renderPage(req.org, 'ads', `<div class="card"><h3>Ads</h3><p>Coming Soon</p></div>`)));
     
-    // 🎯 The corrected redirect (Ensure the closing "});" is there!)
+    // 🎯 The Embedded Claims Vault Tab
     router.get('/admin/:code/claims', checkSession, (req, res) => {
-    // This passes the exact church code to the front-end!
-    res.redirect(`/crm/claims.html?code=${req.params.code}`); 
-});
+        const content = `
+            <style>
+                /* Expand the legacy container just for this tab so the new UI has room */
+                .container { max-width: 1200px !important; padding: 0 !important; }
+            </style>
+            <iframe 
+                src="/crm/claims.html?code=${req.params.code}" 
+                style="width: 100%; height: 85vh; border: none; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);"
+                title="Claims Vault"
+            ></iframe>
+        `;
+        res.send(renderPage(req.org, 'claims', content));
+    });
     router.get('/admin/:code/logout', (req, res) => {
         res.setHeader('Set-Cookie', `session_${req.params.code}=; Path=/; Max-Age=0`);
         res.redirect(`/admin/${req.params.code}`);
