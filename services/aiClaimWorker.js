@@ -32,9 +32,12 @@ const sendWhatsApp = async (to, body) => {
     } catch (e) { console.error("Worker Notify Error:", e.message); }
 };
 
+// ==========================================
+// UPGRADED processTwilioClaim (Fraud Engine)
+// ==========================================
 async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
     try {
-        console.log(`🚀 AI WORKER: Initializing Gemini 2.5 Flash for ${userPhone}...`);
+        console.log(`🚀 AI FRAUD ENGINE: Initializing Forensic Scan for ${userPhone}...`);
 
         // 1️⃣ SECURE DOWNLOAD
         const twilioAuth = Buffer.from(`${process.env.TWILIO_SID}:${process.env.TWILIO_AUTH}`).toString('base64');
@@ -45,13 +48,12 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
         const mimeType = mediaResponse.headers['content-type'] || 'image/jpeg';
         const buffer = Buffer.from(mediaResponse.data, 'binary');
 
-        // 2️⃣ CLOUDINARY VAULT (With Bulletproof JIT Injection)
+        // 2️⃣ CLOUDINARY VAULT
         const uploadResult = await new Promise((resolve, reject) => {
             const stream = cloudinary.uploader.upload_stream(
                 { 
                     folder: `seabe_claims/${orgCode}`, 
                     resource_type: 'auto',
-                    // 🔥 Force-feed the keys right at the moment of upload
                     cloud_name: process.env.CLOUDINARY_NAME || process.env.CLOUDINARY_CLOUD_NAME,
                     api_key: process.env.CLOUDINARY_KEY || process.env.CLOUDINARY_API_KEY,
                     api_secret: process.env.CLOUDINARY_SECRET || process.env.CLOUDINARY_API_SECRET
@@ -64,21 +66,24 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
             stream.end(buffer);
         });
 
-        // 3️⃣ GEMINI 2.5 FLASH DATA EXTRACTION
+        // 3️⃣ FORENSIC GEMINI 2.5 EXTRACTION & TAMPER CHECK
         const model = genAI.getGenerativeModel({ 
             model: "gemini-2.5-flash", 
             generationConfig: { responseMimeType: "application/json" } 
         });
 
-        const prompt = `Act as a forensic document analyst. 
-        Analyze the South African Death Certificate provided and extract:
+        const prompt = `Act as an expert forensic document analyst for a South African insurance provider. 
+        Analyze this South African Death Certificate (DHA-1663) and extract the data. 
+        CRITICAL: Perform a deep visual inspection for fraud. Look for mismatched fonts, misaligned text blocks, digital artifacts, pixel blurring around names/dates, or signs of Photoshop/tampering.
+        
+        Respond ONLY with this JSON structure:
         {
             "deceasedIdNumber": "13-digit string",
             "dateOfDeath": "YYYY-MM-DD",
-            "causeOfDeath": "NATURAL" or "UNNATURAL"
-        }
-        Strict Classification Rule:
-        Classify as "UNNATURAL" only if the certificate mentions murder, assault, accident, suicide, or an open inquiry. Otherwise, "NATURAL".`;
+            "causeOfDeath": "NATURAL" or "UNNATURAL",
+            "fraudScore": number (0 = authentic, 100 = obviously tampered/fake),
+            "fraudIndicators": ["List of specific visual anomalies found", "e.g., mismatched font on ID number", "digital blur around date". Leave empty if none.]
+        }`;
 
         const imagePart = {
             inlineData: { data: buffer.toString("base64"), mimeType: mimeType }
@@ -87,44 +92,59 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
         const result = await model.generateContent([prompt, imagePart]);
         const aiData = JSON.parse(result.response.text());
 
-        // 4️⃣ POLICY LOOKUP & VALIDATION
+        let status = 'PENDING_REVIEW';
+        let adminNotes = `✅ AI Scan Complete. Fraud Score: ${aiData.fraudScore}/100.`;
+
+        // 4️⃣ THE PLATFORM-WIDE DUPLICATE CHECK (The "Recycled Claim" Shield)
+        // We query the ENTIRE database, ignoring churchCode, to see if this ID was claimed anywhere else.
+        const duplicateClaims = await prisma.claim.findMany({
+            where: { deceasedIdNumber: aiData.deceasedIdNumber }
+        });
+
+        if (duplicateClaims.length > 0) {
+            status = 'FLAGGED_FRAUD_DUPLICATE';
+            adminNotes = `🚨 CRITICAL FRAUD: This ID Number (${aiData.deceasedIdNumber}) has already been claimed ${duplicateClaims.length} time(s) on the Seabe network!`;
+            console.warn(adminNotes);
+        }
+
+        // 5️⃣ FORENSIC AI TAMPER EVALUATION
+        // Ensure fraudScore is treated as a number in case the LLM tries to return a string
+        const parsedFraudScore = Number(aiData.fraudScore);
+        if (status !== 'FLAGGED_FRAUD_DUPLICATE' && parsedFraudScore > 60) {
+            status = 'FLAGGED_FRAUD_TAMPERING';
+            adminNotes = `🚨 AI TAMPER WARNING: High fraud probability (${parsedFraudScore}/100). Indicators: ${aiData.fraudIndicators.join(', ')}`;
+        }
+
+        // 6️⃣ POLICY WAITING PERIOD VALIDATION
         const member = await prisma.member.findFirst({
             where: { idNumber: aiData.deceasedIdNumber, societyCode: orgCode }
         });
 
-        let status = 'PENDING_REVIEW';
-        let adminNotes = "Gemini 2.5 Scan Successful.";
-
-        if (member) {
+        if (!member) {
+            if (status === 'PENDING_REVIEW') status = 'UNRECOGNIZED_ID';
+            adminNotes += " | ⚠️ ID not listed as member/dependent in this society.";
+        } else if (status === 'PENDING_REVIEW') {
             const joinedDate = new Date(member.joinedAt || new Date());
             const deathDate = new Date(aiData.dateOfDeath);
             const monthsDifference = (deathDate.getFullYear() - joinedDate.getFullYear()) * 12 + (deathDate.getMonth() - joinedDate.getMonth());
 
             if (aiData.causeOfDeath === 'NATURAL' && monthsDifference < 6) {
                 status = 'FLAGGED_WAITING_PERIOD';
-                adminNotes = `🚨 WAITING PERIOD VIOLATION: Natural death at ${monthsDifference} months. Policy requires 6 months.`;
+                adminNotes += ` | 🚨 POLICY VIOLATION: Natural death at ${monthsDifference} months (requires 6).`;
             }
-        } else {
-            adminNotes = "⚠️ ID NOT RECOGNIZED: Deceased is not listed as a member or dependent in this society.";
-            status = 'UNRECOGNIZED_ID';
         }
 
-        // 5️⃣ PERSIST CLAIM
+        // 7️⃣ PERSIST CLAIM TO DATABASE
         const claimant = await prisma.member.findUnique({ where: { phone: userPhone } });
-        
-        // If for some reason the claimant isn't in the DB, we can't save the claim.
-        if (!claimant) {
-            throw new Error("Claimant not found in database.");
-        }
+        if (!claimant) throw new Error("Claimant not found in database.");
 
         const benName = `${claimant.firstName} ${claimant.lastName}`;
 
         await prisma.claim.create({
             data: {
-                churchCode: orgCode,        // 🛠️ Cleaner way to connect relation
-                memberPhone: userPhone,     // 🛠️ Cleaner way to connect relation
-                
-                deceasedIdNumber: aiData.deceasedIdNumber, // 👈 Reverted back to the correct name!
+                churchCode: orgCode, 
+                memberPhone: userPhone, 
+                deceasedIdNumber: aiData.deceasedIdNumber, 
                 dateOfDeath: new Date(aiData.dateOfDeath),
                 causeOfDeath: aiData.causeOfDeath,
                 claimantPhone: userPhone,
@@ -136,17 +156,19 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
             }
         });
 
-        // 6️⃣ NOTIFY USER (Smart Messaging)
-        if (status === 'UNRECOGNIZED_ID') {
-            await sendWhatsApp(userPhone, `⚠️ *Claim Escalated*\n\nWe were unable to verify your policy or ID number. We have escalated the request, and a support agent will contact you within 24 hours.`);
+        // 8️⃣ SMART USER NOTIFICATION (Stealth Messaging)
+        if (status.includes('FRAUD')) {
+            // We give them a generic message so they don't know they've been caught
+            await sendWhatsApp(userPhone, `🔍 *Claim Under Review*\n\nYour document for ID ending in *${aiData.deceasedIdNumber.slice(-4)}* has been received. This claim requires manual validation by our compliance team. We will contact you shortly.`);
+        } else if (status === 'UNRECOGNIZED_ID') {
+            await sendWhatsApp(userPhone, `⚠️ *Claim Escalated*\n\nWe were unable to verify your policy or ID number. We have escalated the request.`);
         } else {
-            await sendWhatsApp(userPhone, `✅ *Claim Processed by AI*\n\nDocument Read: ${aiData.deceasedIdNumber}\nStatus: *${status.replace(/_/g, ' ')}*\n\nAn administrator will verify the bank details for payout.`);
+            await sendWhatsApp(userPhone, `✅ *Claim Processed by AI*\n\nDocument Read: ${aiData.deceasedIdNumber}\nStatus: *${status.replace(/_/g, ' ')}*\n\nAn administrator will verify the details for payout.`);
         }
 
     } catch (error) {
-        console.error("❌ Gemini 2.5 Worker Error:", error.message);
-        // 🛡️ Catch-All Safety Message if anything crashes
-        await sendWhatsApp(userPhone, `⚠️ *System Alert*\n\nWe experienced an issue verifying your document. We have escalated the request, and a support agent will contact you within 24 hours.`);
+        console.error("❌ Gemini Fraud Engine Error:", error.message);
+        await sendWhatsApp(userPhone, `⚠️ *System Alert*\n\nWe experienced an issue processing your document. A support agent will contact you within 24 hours.`);
     }
 }
 
