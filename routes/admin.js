@@ -997,7 +997,91 @@ module.exports = (app, { prisma }) => {
         res.send(renderPage(req.org, 'settings', content));
     });
     
-    router.get('/admin/:code/ads', checkSession, (req, res) => res.send(renderPage(req.org, 'ads', `<div class="card"><h3>Ads</h3><p>Coming Soon</p></div>`)));
+    // ==========================================
+    // 📢 1. The Embedded Broadcasts Tab
+    // ==========================================
+    router.get('/admin/:code/ads', checkSession, (req, res) => {
+        const content = `
+            <style>
+                .container { max-width: 1200px !important; padding: 0 !important; }
+            </style>
+            <iframe 
+                src="/crm/ads.html?code=${req.params.code}" 
+                style="width: 100%; height: 85vh; border: none; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);"
+                title="Broadcast Engine"
+            ></iframe>
+        `;
+        res.send(renderPage(req.org, 'ads', content));
+    });
+
+    // ==========================================
+    // 📢 2. API: Send WhatsApp Broadcast
+    // ==========================================
+    router.post('/api/crm/broadcast/:code', express.json(), async (req, res) => {
+        try {
+            const { message } = req.body;
+            if (!message) return res.status(400).json({ success: false, error: "Message is required" });
+
+            // 1. Get the org and ALL ACTIVE members
+            const org = await prisma.church.findUnique({ 
+                where: { code: req.params.code },
+                include: { members: { where: { status: 'ACTIVE' } } } 
+            });
+
+            if (!org) return res.status(404).json({ success: false, error: "Organization not found" });
+            
+            const activeMembers = org.members;
+            if (activeMembers.length === 0) {
+                return res.status(400).json({ success: false, error: "No active members found to broadcast to." });
+            }
+
+            // 2. Log the Broadcast in the database using the "Ad" model
+            await prisma.ad.create({
+                data: {
+                    content: message,
+                    churchId: org.id,
+                    status: 'Sent',
+                    views: activeMembers.length, // Storing the recipient count here
+                    expiryDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days from now
+                }
+            });
+
+            // 3. Blast the messages out! 🚀
+            let successCount = 0;
+            for (const member of activeMembers) {
+                if (member.phone) {
+                    const formattedMsg = `📢 *${org.name} Announcement*\n\n${message}\n\n_Reply 0 for menu._`;
+                    // Fire off the WhatsApp message
+                    await sendWhatsApp(member.phone, formattedMsg).catch(e => console.error(`Broadcast failed for ${member.phone}`));
+                    successCount++;
+                }
+            }
+
+            res.json({ success: true, message: `Broadcast successfully sent to ${successCount} members!` });
+        } catch (error) {
+            console.error("Broadcast Error:", error);
+            res.status(500).json({ success: false, error: "Failed to send broadcast." });
+        }
+    });
+
+    // ==========================================
+    // 📢 3. API: Fetch Broadcast History
+    // ==========================================
+    router.get('/api/crm/broadcasts/:code', async (req, res) => {
+        try {
+            const org = await prisma.church.findUnique({ where: { code: req.params.code } });
+            if (!org) return res.json({ success: true, history: [] });
+
+            const history = await prisma.ad.findMany({
+                where: { churchId: org.id },
+                orderBy: { id: 'desc' },
+                take: 10
+            });
+            res.json({ success: true, history });
+        } catch (e) { 
+            res.status(500).json({ success: false, error: e.message }); 
+        }
+    });
     
     // 🎯 The Embedded Claims Vault Tab
     router.get('/admin/:code/claims', checkSession, (req, res) => {

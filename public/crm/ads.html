@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Broadcast Engine</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 p-6 font-sans">
+
+    <div class="max-w-6xl mx-auto flex flex-col md:flex-row gap-6">
+        
+        <div class="w-full md:w-2/3 flex flex-col gap-6">
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-bold text-gray-800">📢 New Broadcast</h2>
+                    <span class="bg-blue-100 text-blue-800 text-xs font-bold px-3 py-1 rounded-full uppercase">WhatsApp API</span>
+                </div>
+                
+                <p class="text-gray-500 text-sm mb-6">Instantly send an official announcement to all <strong>Active</strong> members of your society.</p>
+                
+                <form id="broadcast-form" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-2">Your Message</label>
+                        <textarea id="message-input" rows="5" class="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none resize-none text-gray-700" placeholder="e.g. Friendly reminder: Annual general meeting this Sunday at 10 AM. Please bring your membership cards."></textarea>
+                        <p class="text-xs text-gray-400 mt-2 text-right">Use *asterisks* for bold formatting.</p>
+                    </div>
+
+                    <div class="pt-2 border-t flex justify-between items-center">
+                        <p class="text-sm text-gray-500 font-semibold" id="status-text">Ready to broadcast</p>
+                        <button type="submit" id="send-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-lg shadow-md transition flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+                            Send to All Active Members
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <h3 class="text-lg font-bold text-gray-800 mb-4">📜 Recent Broadcasts</h3>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-sm">
+                        <thead>
+                            <tr class="bg-gray-50 text-gray-500 uppercase tracking-wider border-b">
+                                <th class="p-3 font-semibold">Message Preview</th>
+                                <th class="p-3 font-semibold text-center">Recipients</th>
+                                <th class="p-3 font-semibold text-center">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="history-table" class="divide-y divide-gray-100">
+                            <tr><td colspan="3" class="p-4 text-center text-gray-400">Loading history...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="w-full md:w-1/3">
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 sticky top-6">
+                <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 border-b pb-2">Live WhatsApp Preview</h3>
+                
+                <div class="bg-[#EFEAE2] border-[8px] border-gray-800 rounded-[2rem] h-[400px] overflow-hidden relative shadow-inner">
+                    <div class="bg-[#075E54] text-white p-3 flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-xs font-bold text-gray-600">SB</div>
+                        <div class="font-bold text-sm">Burial Society</div>
+                    </div>
+                    
+                    <div class="p-4 flex flex-col gap-2">
+                        <div class="bg-white p-3 rounded-lg rounded-tl-none shadow-sm max-w-[90%] text-[13px] text-gray-800 relative">
+                            <div class="font-bold text-gray-900 mb-1">📢 <span id="preview-org-name">Society Announcement</span></div>
+                            <div id="preview-text" class="whitespace-pre-wrap">Your typed message will appear right here...</div>
+                            <div class="italic text-gray-500 mt-2 text-[11px]">Reply 0 for menu.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const CHURCH_CODE = urlParams.get('code');
+
+        // Live Preview Logic
+        const input = document.getElementById('message-input');
+        const preview = document.getElementById('preview-text');
+        
+        input.addEventListener('input', (e) => {
+            const val = e.target.value;
+            // Simple regex to make *bold* text actually bold in the HTML preview
+            preview.innerHTML = val ? val.replace(/\*(.*?)\*/g, '<strong>R15.92</strong>') : '<span class="text-gray-400 italic">Type a message to see preview...</span>';
+        });
+
+        // Fetch History on Load
+        async function loadHistory() {
+            try {
+                const res = await fetch(`/api/crm/broadcasts/${CHURCH_CODE}`);
+                const result = await res.json();
+                
+                const tbody = document.getElementById('history-table');
+                tbody.innerHTML = '';
+
+                if (result.history.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-gray-400">No broadcasts sent yet.</td></tr>';
+                    return;
+                }
+
+                result.history.forEach(ad => {
+                    const truncated = ad.content.length > 50 ? ad.content.substring(0, 50) + '...' : ad.content;
+                    tbody.innerHTML += `
+                        <tr class="hover:bg-gray-50">
+                            <td class="p-3 text-gray-700 italic">"${truncated}"</td>
+                            <td class="p-3 text-center font-bold text-blue-600">${ad.views || 0}</td>
+                            <td class="p-3 text-center"><span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-bold">✓ Sent</span></td>
+                        </tr>
+                    `;
+                });
+            } catch (error) {
+                console.error(error);
+            }
+        }
+
+        if (CHURCH_CODE) loadHistory();
+
+        // Submit Broadcast
+        document.getElementById('broadcast-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = input.value.trim();
+            if (!message) return alert("Please type a message first.");
+            if (!confirm("Are you sure you want to send this message to ALL active members?")) return;
+
+            const btn = document.getElementById('send-btn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = "⏳ Sending...";
+            btn.disabled = true;
+
+            try {
+                const res = await fetch(`/api/crm/broadcast/${CHURCH_CODE}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message })
+                });
+                
+                const result = await res.json();
+                
+                if (result.success) {
+                    alert("✅ " + result.message);
+                    input.value = '';
+                    preview.innerHTML = '<span class="text-gray-400 italic">Type a message to see preview...</span>';
+                    loadHistory();
+                } else {
+                    alert("❌ Failed: " + result.error);
+                }
+            } catch (error) {
+                alert("Network error.");
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
