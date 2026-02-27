@@ -319,7 +319,7 @@ module.exports = function(app, { prisma }) {
                 data: { ficaStatus: 'AWAITING_LEVEL_2' }
             });
 
-            // 2. Email client asking for Corporate Docs
+            // 2. Email client linking to the Secure FICA Portal
             if (org.email || org.officialEmail) {
                 const targetEmail = org.officialEmail || org.email;
                 const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
@@ -331,7 +331,9 @@ module.exports = function(app, { prisma }) {
                     subject: `Action Required: FICA Level 1 Approved for ${org.name}`,
                     text: `Great news! Your Level 1 FICA is approved.\n\nTo activate your NetCash merchant account, please upload your Level 2 corporate documents securely via your dedicated portal:\n\n👉 Click here to upload: ${portalLink}\n\nDocuments required:\n- NPC Certificate / Constitution\n- CIPC Registration\n- Director IDs`
                 }).catch(e => console.error("Email error:", e));
+            }
 
+            // 👇 THIS is the line and bracket that were likely missing!
             res.json({ message: "Level 1 Approved. Email sent to client requesting Level 2 docs." });
         } catch (error) {
             console.error(error);
