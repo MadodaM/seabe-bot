@@ -9,6 +9,10 @@ const { sendWhatsApp } = require('../services/whatsapp');
 const { decrypt } = require('../utils/crypto'); 
 const { analyzeAdminDocument } = require('../services/aiClaimWorker');
 
+// 🔌 1. IMPORT YOUR NEW API MICROSERVICES HERE
+const claimsEngine = require('./crmClaims');
+const blastEngine = require('./blastEngine');
+
 // 🛡️ Cloudinary Config
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -160,7 +164,7 @@ module.exports = (app, { prisma }) => {
             <div class="card">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <h3 style="margin:0;">2. Campaign Queue (${pending} Pending)</h3>
-                    ${pending > 0 ? `<form method="POST" action="/admin/${req.org.code}/collections/blast" style="margin:0;"><button class="btn" style="width:auto; background:#d63031; padding:10px 20px;">🚀 LAUNCH CAMPAIGN</button></form>` : '<span style="color:#999; font-size:13px;">Queue is empty</span>'}
+                    ${pending > 0 ? `<form method="POST" action="/api/crm/collections/blast/${req.org.code}" style="margin:0;"><button class="btn" style="width:auto; background:#d63031; padding:10px 20px;">🚀 LAUNCH CAMPAIGN</button></form>` : '<span style="color:#999; font-size:13px;">Queue is empty</span>'}
                 </div>
                 <hr style="margin:15px 0; border:0; border-top:1px solid #eee;">
                 <table>
@@ -1006,6 +1010,10 @@ module.exports = (app, { prisma }) => {
             res.status(500).json({ error: "AI Processing Failed. Please fill manually." });
         }
     });
+
+    // 🔌 2. MOUNT THE NEW API ROUTES HERE (Right before app.use)
+    app.use('/api/crm/claims', claimsEngine);
+    app.use('/api/crm/collections', blastEngine);
 
     app.use('/', router);
 };
