@@ -84,6 +84,7 @@ function renderAdminPage(title, content, error = null) {
             <div class="sidebar">
                 <h2>SEABE PLATFORM</h2>
                 <a href="/admin">📊 Dashboard</a>
+                <a href="/admin/global-radar">🌍 Global Radar</a> <a href="/admin/churches">🏢 Organizations</a>
                 <a href="/admin/churches">🏢 Organizations</a>
                 <a href="/admin/fica">🛡️ FICA & KYB</a> <a href="/admin/global-collections">💰 Global Collections</a>
                 <a href="/admin/events">🎟️ Events & Projects</a>
@@ -166,6 +167,23 @@ module.exports = function(app, { prisma }) {
         } catch (e) {
             res.send(renderAdminPage('Dashboard', '', `Database Error: ${e.message}`));
         }
+    });
+
+	// --- GLOBAL FRAUD & CLAIMS RADAR (IFRAME) ---
+    app.get('/admin/global-radar', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        
+        const content = `
+            <style>
+                .main { padding: 0 !important; } /* Removes legacy padding to let Tailwind take over */
+            </style>
+            <iframe 
+                src="/crm/global-radar.html" 
+                style="width: 100%; height: 100vh; border: none;"
+                title="Global Radar">
+            </iframe>
+        `;
+        res.send(renderAdminPage('Global Radar', content));
     });
 
     // ============================================================

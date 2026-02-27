@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global Fraud Radar</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 p-6 font-sans">
+    
+    <div class="max-w-7xl mx-auto">
+        <h2 class="text-2xl font-bold text-gray-800 mb-6">🌍 Global Network Pulse</h2>
+        
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 border-l-4 border-l-blue-500">
+                <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Active Societies</h3>
+                <p class="text-3xl font-bold text-gray-800" id="stat-societies">-</p>
+            </div>
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 border-l-4 border-l-green-500">
+                <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Total Members</h3>
+                <p class="text-3xl font-bold text-gray-800" id="stat-members">-</p>
+            </div>
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 border-l-4 border-l-orange-500">
+                <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Pending Claims</h3>
+                <p class="text-3xl font-bold text-gray-800" id="stat-claims">-</p>
+            </div>
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 border-l-4 border-l-red-500">
+                <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Total Outstanding Debt</h3>
+                <p class="text-3xl font-bold text-gray-800" id="stat-debt">-</p>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="bg-red-50 border-b border-red-100 p-4 flex justify-between items-center">
+                <h3 class="font-bold text-red-800">🚨 AI Fraud & Risk Alerts</h3>
+                <span class="bg-red-200 text-red-800 text-xs px-2 py-1 rounded-full font-bold">Network-Wide</span>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider border-b">
+                            <th class="p-4 font-semibold">Society</th>
+                            <th class="p-4 font-semibold">Deceased ID</th>
+                            <th class="p-4 font-semibold">Status</th>
+                            <th class="p-4 font-semibold">AI Analysis Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody id="alerts-table-body" class="divide-y divide-gray-100">
+                        <tr><td colspan="4" class="p-8 text-center text-gray-400">Loading AI insights...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function loadGlobalStats() {
+            try {
+                // Fetch from the new Super Admin API
+                const response = await fetch('/api/core/global/stats');
+                const result = await response.json();
+
+                if (result.success) {
+                    // Update Cards
+                    document.getElementById('stat-societies').innerText = result.globalMetrics.societies;
+                    document.getElementById('stat-members').innerText = result.globalMetrics.members;
+                    document.getElementById('stat-claims').innerText = result.globalMetrics.pendingClaims;
+                    document.getElementById('stat-debt').innerText = 'R' + result.globalMetrics.outstandingDebt.toLocaleString();
+
+                    // Update Fraud Table
+                    const tbody = document.getElementById('alerts-table-body');
+                    tbody.innerHTML = '';
+
+                    if (result.fraudAlerts.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="4" class="p-6 text-center text-green-600 font-semibold">✅ No fraud alerts detected on the network.</td></tr>';
+                    } else {
+                        result.fraudAlerts.forEach(alert => {
+                            let badge = "bg-yellow-100 text-yellow-800";
+                            if (alert.status.includes('FRAUD')) badge = "bg-red-100 text-red-800 font-bold border border-red-200";
+
+                            tbody.innerHTML += `
+                                <tr class="hover:bg-gray-50">
+                                    <td class="p-4 font-mono text-sm font-bold text-gray-700">${alert.churchCode}</td>
+                                    <td class="p-4 font-mono text-sm">${alert.deceasedIdNumber}</td>
+                                    <td class="p-4"><span class="px-3 py-1 rounded-full text-xs ${badge}">${alert.status.replace(/_/g, ' ')}</span></td>
+                                    <td class="p-4 text-sm text-gray-600 max-w-md truncate" title="${alert.adminNotes}">${alert.adminNotes || 'Review required'}</td>
+                                </tr>
+                            `;
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error("Failed to load global data", error);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', loadGlobalStats);
+    </script>
+</body>
+</html>
