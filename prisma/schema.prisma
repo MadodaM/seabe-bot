@@ -250,3 +250,59 @@ model RiskFlag {
 
   createdAt DateTime @default(now())
 }
+
+// ==========================================
+// 🛒 PROCUREMENT & VENDOR MODULE
+// ==========================================
+
+model Vendor {
+  id             Int             @id @default(autoincrement())
+  churchId       Int
+  church         Church          @relation(fields: [churchId], references: [id])
+  name           String
+  category       String          // e.g., Catering, Tent Hire, Venue, Florist
+  phone          String          // For WhatsApp RFQs
+  email          String?
+  bankDetails    String?
+  status         String          @default("ACTIVE")
+  purchaseOrders PurchaseOrder[]
+  quotes         Quote[]
+  createdAt      DateTime        @default(now())
+}
+
+model RequestForQuote {
+  id             Int             @id @default(autoincrement())
+  churchId       Int
+  church         Church          @relation(fields: [churchId], references: [id])
+  title          String          
+  description    String          @db.Text
+  requiredBy     DateTime
+  status         String          @default("OPEN") // OPEN, CLOSED, FULFILLED
+  quotes         Quote[]
+  createdAt      DateTime        @default(now())
+}
+
+model Quote {
+  id             Int             @id @default(autoincrement())
+  rfqId          Int
+  rfq            RequestForQuote @relation(fields: [rfqId], references: [id])
+  vendorId       Int
+  vendor         Vendor          @relation(fields: [vendorId], references: [id])
+  amount         Float
+  notes          String?         @db.Text
+  status         String          @default("PENDING") // PENDING, ACCEPTED, REJECTED
+  createdAt      DateTime        @default(now())
+}
+
+model PurchaseOrder {
+  id             Int             @id @default(autoincrement())
+  poNumber       String          @unique 
+  churchId       Int
+  church         Church          @relation(fields: [churchId], references: [id])
+  vendorId       Int
+  vendor         Vendor          @relation(fields: [vendorId], references: [id])
+  amount         Float
+  lineItems      String          @db.Text // Storing as text/JSON string to avoid DB strictness
+  status         String          @default("ISSUED") // ISSUED, FULFILLED, PAID
+  createdAt      DateTime        @default(now())
+}
