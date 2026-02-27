@@ -929,6 +929,10 @@ module.exports = (app, { prisma }) => {
                         <div style="display:flex; gap:10px; margin-top:10px;">
                             <button name="action" value="approve" class="btn" style="flex:1; background:#27ae60; padding:15px; font-size:16px;">✅ Approve KYC</button> 
                             <button name="action" value="reject" class="btn" style="flex:1; background:#e74c3c; padding:15px; font-size:16px;">❌ Reject Documents</button>
+							<button onclick="manualOverride(${claim.id})" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 px-4 rounded shadow text-sm"> 
+							⚠️ Manual Override
+						</button>
+													
                         </div>
                     </form>
                 </div>
@@ -1107,6 +1111,45 @@ module.exports = (app, { prisma }) => {
         res.redirect(`/admin/${req.params.code}`);
     });
 
+
+	// ==========================================
+    // 🛡️ API: MANUAL CLAIM OVERRIDE
+    // ==========================================
+    router.post('/api/crm/claims/:code/override', express.json(), async (req, res) => {
+        try {
+            const { claimId, manualIdNumber } = req.body;
+
+            if (!claimId || !manualIdNumber) {
+                return res.status(400).json({ success: false, error: "Claim ID and Manual ID Number are required." });
+            }
+
+            // 1. Verify the organization and claim
+            const org = await prisma.church.findUnique({ where: { code: req.params.code } });
+            if (!org) return res.status(404).json({ success: false, error: "Organization not found" });
+
+            const claim = await prisma.claim.findUnique({ where: { id: parseInt(claimId) } });
+            if (!claim || claim.churchId !== org.id) {
+                return res.status(404).json({ success: false, error: "Claim not found or unauthorized." });
+            }
+
+            // 2. Force the update (Bypassing AI)
+            await prisma.claim.update({
+                where: { id: claim.id },
+                data: {
+                    deceasedId: manualIdNumber,
+                    status: 'APPROVED', // Force it through!
+                    aiConfidence: 100, // We trust the human admin 100%
+                    notes: `Manually overridden by Admin. Original AI failure bypassed.`
+                }
+            });
+
+            res.json({ success: true, message: "Claim successfully overridden and approved!" });
+        } catch (error) {
+            console.error("Manual Override Error:", error);
+            res.status(500).json({ success: false, error: "System error processing override." });
+        }
+    });
+
     // ==========================================
     // ✨ API: SUREPOL AI OCR EXTRACTOR
     // ==========================================
@@ -1165,6 +1208,37 @@ module.exports = (app, { prisma }) => {
             res.status(500).json({ success: false, error: error.message });
         }
     });
+	
+	// The Override Logic
+async function manualOverride(claimId) {
+    const manualId = prompt("Enter the exact ID Number from the Death Certificate:");
+    
+    if (!manualId || manualId.trim() === "") {
+        alert("Override cancelled. ID number is required.");
+        return;
+    }
+
+    if (confirm(`Force approve this claim with ID: ${manualId}?`)) {
+        try {
+            // NOTE: Ensure CHURCH_CODE is defined in your script
+            const res = await fetch(`/api/crm/claims/${CHURCH_CODE}/override`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ claimId: claimId, manualIdNumber: manualId.trim() })
+            });
+            
+            const result = await res.json();
+            if (result.success) {
+                alert("✅ " + result.message);
+                location.reload(); // Refresh to see the new Approved status
+            } else {
+                alert("❌ Failed: " + result.error);
+            }
+        } catch (e) {
+            alert("Network error.");
+        }
+    }
+}
 
     app.use('/', router);
 };
