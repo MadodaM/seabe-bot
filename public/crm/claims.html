@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seabe CRM | Claims Vault</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans">
+
+    <nav class="bg-blue-900 text-white p-4 shadow-md">
+        <div class="max-w-6xl mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold tracking-wide">Seabe CRM <span class="font-light text-blue-300">| Claims Vault</span></h1>
+            <button class="text-sm bg-blue-700 px-4 py-2 rounded hover:bg-blue-600 transition">Logout</button>
+        </div>
+    </nav>
+
+    <main class="max-w-6xl mx-auto mt-8 p-4">
+        
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-white p-6 rounded-lg shadow border-t-4 border-blue-500">
+                <h3 class="text-gray-500 text-sm font-semibold uppercase">Total Claims</h3>
+                <p id="total-claims" class="text-3xl font-bold mt-2">-</p>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow border-t-4 border-yellow-500">
+                <h3 class="text-gray-500 text-sm font-semibold uppercase">Action Needed</h3>
+                <p id="action-needed" class="text-3xl font-bold mt-2 text-yellow-600">-</p>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow border-t-4 border-red-500">
+                <h3 class="text-gray-500 text-sm font-semibold uppercase">Fraud Alerts</h3>
+                <p id="fraud-alerts" class="text-3xl font-bold mt-2 text-red-600">-</p>
+            </div>
+        </div>
+
+        <h2 class="text-2xl font-bold mb-4 text-gray-800">🚨 Action Required</h2>
+        <div class="bg-white rounded-lg shadow overflow-hidden mb-12">
+            <table class="w-full text-left border-collapse">
+                <thead class="bg-gray-100 border-b">
+                    <tr>
+                        <th class="p-4 font-semibold text-gray-600">ID Number</th>
+                        <th class="p-4 font-semibold text-gray-600">Date of Death</th>
+                        <th class="p-4 font-semibold text-gray-600">Status</th>
+                        <th class="p-4 font-semibold text-gray-600">AI Notes</th>
+                        <th class="p-4 font-semibold text-gray-600">Document</th>
+                    </tr>
+                </thead>
+                <tbody id="action-table-body" class="divide-y divide-gray-200">
+                    <tr><td colspan="5" class="p-4 text-center text-gray-500">Loading claims...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h2 class="text-2xl font-bold mb-4 text-gray-800">📚 Claim History</h2>
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <table class="w-full text-left border-collapse">
+                <thead class="bg-gray-100 border-b">
+                    <tr>
+                        <th class="p-4 font-semibold text-gray-600">ID Number</th>
+                        <th class="p-4 font-semibold text-gray-600">Beneficiary</th>
+                        <th class="p-4 font-semibold text-gray-600">Status</th>
+                        <th class="p-4 font-semibold text-gray-600">Date Logged</th>
+                    </tr>
+                </thead>
+                <tbody id="history-table-body" class="divide-y divide-gray-200">
+                    </tbody>
+            </table>
+        </div>
+    </main>
+
+    <script>
+        // 🛠️ Replace this with the actual logged-in user's church code later (e.g., from localStorage)
+        const TEST_CHURCH_CODE = 'TEST_ORG_001'; 
+
+        async function loadClaimsVault() {
+            try {
+                // Fetch data from our new intelligent backend route
+                const response = await fetch(`/api/crm/claims/${TEST_CHURCH_CODE}`);
+                const result = await response.json();
+
+                if (result.success) {
+                    renderDashboard(result);
+                } else {
+                    alert("Failed to load claims data.");
+                }
+            } catch (error) {
+                console.error("Error fetching claims:", error);
+            }
+        }
+
+        function renderDashboard(result) {
+            // 1. Update Summary Cards
+            document.getElementById('total-claims').innerText = result.summary.total;
+            document.getElementById('action-needed').innerText = result.summary.actionNeededCount;
+            document.getElementById('fraud-alerts').innerText = result.summary.flaggedCount;
+
+            // 2. Render Action Required Table
+            const actionTbody = document.getElementById('action-table-body');
+            actionTbody.innerHTML = ''; // Clear loading text
+
+            if (result.data.actionRequired.length === 0) {
+                actionTbody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-gray-500">No pending claims. You're all caught up! 🎉</td></tr>`;
+            } else {
+                result.data.actionRequired.forEach(claim => {
+                    // Style the badge based on the severity of the flag
+                    let badgeClass = "bg-yellow-100 text-yellow-800";
+                    if (claim.status.includes('FRAUD')) badgeClass = "bg-red-100 text-red-800 font-bold";
+                    
+                    const row = `
+                        <tr class="hover:bg-gray-50 transition" id="claim-row-${claim.id}">
+                            <td class="p-4 font-mono text-sm">${claim.deceasedIdNumber || 'UNKNOWN'}</td>
+                            <td class="p-4 text-sm">${new Date(claim.dateOfDeath).toLocaleDateString()}</td>
+                            <td class="p-4">
+                                <span class="px-3 py-1 rounded-full text-xs ${badgeClass}">${claim.status.replace(/_/g, ' ')}</span>
+                            </td>
+                            <td class="p-4 text-sm text-gray-600 max-w-xs truncate" title="${claim.adminNotes}">${claim.adminNotes}</td>
+                            <td class="p-4 flex space-x-2 items-center">
+                                <a href="${claim.documentUrl}" target="_blank" class="text-blue-600 hover:bg-blue-50 px-3 py-1 rounded border border-blue-200 text-xs font-semibold transition">
+                                    📄 View Doc
+                                </a>
+                                <button onclick="handleDecision(${claim.id}, 'APPROVED')" class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-xs font-semibold transition shadow-sm">
+                                    Approve
+                                </button>
+                                <button onclick="handleDecision(${claim.id}, 'DECLINED')" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-xs font-semibold transition shadow-sm">
+                                    Decline
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+            }
+
+            // 3. Render History Table (Simplified view for paid/declined claims)
+            const historyTbody = document.getElementById('history-table-body');
+            historyTbody.innerHTML = ''; 
+            
+            if (result.data.history.length === 0) {
+                historyTbody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-gray-500">No claim history found.</td></tr>`;
+            } else {
+                result.data.history.forEach(claim => {
+                    let badgeClass = claim.status === 'APPROVED' || claim.status === 'PAID' ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-800";
+                    
+                    const row = `
+                        <tr class="hover:bg-gray-50 transition">
+                            <td class="p-4 font-mono text-sm">${claim.deceasedIdNumber || 'UNKNOWN'}</td>
+                            <td class="p-4 text-sm">${claim.beneficiaryName || 'N/A'}</td>
+                            <td class="p-4">
+                                <span class="px-3 py-1 rounded-full text-xs ${badgeClass}">${claim.status}</span>
+                            </td>
+                            <td class="p-4 text-sm text-gray-500">${new Date(claim.createdAt).toLocaleDateString()}</td>
+                        </tr>
+                    `;
+                    historyTbody.innerHTML += row;
+                });
+            }
+        }
+		
+		// ⚡ Handle Admin Decision Clicks
+        async function handleDecision(claimId, newStatus) {
+            let reason = '';
+            
+            // If declining, force the admin to provide a reason for the WhatsApp message
+            if (newStatus === 'DECLINED') {
+                reason = prompt("Please enter the reason for declining this claim (This will be sent to the family):");
+                if (reason === null) return; // Admin cancelled the prompt
+            } else {
+                const confirmApprove = confirm("Are you sure you want to APPROVE this claim? The family will be notified instantly.");
+                if (!confirmApprove) return;
+            }
+
+            try {
+                // Dim the row while processing
+                document.getElementById(`claim-row-${claimId}`).style.opacity = '0.5';
+
+                const response = await fetch(`/api/crm/claims/${claimId}/status`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: newStatus, reason: reason })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // Reload the dashboard to instantly reflect the changes
+                    loadClaimsVault();
+                } else {
+                    alert("Failed to update claim: " + result.error);
+                    document.getElementById(`claim-row-${claimId}`).style.opacity = '1';
+                }
+            } catch (error) {
+                console.error("Error making decision:", error);
+                alert("A network error occurred.");
+            }
+        }
+
+        // Initialize the dashboard when the page loads
+        document.addEventListener('DOMContentLoaded', loadClaimsVault);
+    </script>
+</body>
+</html>
