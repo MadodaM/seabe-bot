@@ -65,7 +65,7 @@ const renderPage = (org, activeTab, content) => {
         ${claimsTab}
         ${eventsTab}
         <a href="/admin/${org.code}/team" style="${navStyle('team')}">🛡️ Team</a>
-        <a href="/admin/${org.code}/ads" style="${navStyle('ads')}">📢 Ads</a>
+        <a href="/admin/${org.code}/broadcast" style="${navStyle('team')}">📢 Broadcasts</a>
         <a href="/admin/${org.code}/collections" style="${navStyle('collections')}">💰 Revenue Recovery</a>
         <a href="/admin/${org.code}/surepol" style="${navStyle('surepol')}">⚰️ Surepol (Burial)</a>
         <a href="/admin/${org.code}/settings" style="${navStyle('settings')}">⚙️ Settings</a>
@@ -1000,19 +1000,19 @@ module.exports = (app, { prisma }) => {
     // ==========================================
     // 📢 1. The Embedded Broadcasts Tab
     // ==========================================
-    router.get('/admin/:code/ads', checkSession, (req, res) => {
+    router.get('/admin/:code/broadcast', checkSession, (req, res) => {
         const content = `
             <style>
                 .container { max-width: 1200px !important; padding: 0 !important; }
             </style>
             <iframe 
-                src="/crm/ads.html?code=${req.params.code}" 
+                src="/crm/broadcast.html?code=${req.params.code}" 
                 style="width: 100%; height: 85vh; border: none; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);"
                 title="Broadcast Engine"
             ></iframe>
         `;
-        res.send(renderPage(req.org, 'ads', content));
-    });
+        res.send(renderPage(req.org, 'broadcast', content));
+    });;
 
     // ==========================================
     // 📢 2. API: Send WhatsApp Broadcast

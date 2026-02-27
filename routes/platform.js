@@ -89,7 +89,7 @@ function renderAdminPage(title, content, error = null) {
                 <a href="/admin/fica">🛡️ FICA & KYB</a> 
                 <a href="/admin/global-collections">💰 Global Collections</a>
                 <a href="/admin/events">🎟️ Events & Projects</a>
-                <a href="/admin/ads">📢 Advertising</a>
+                <a href="/admin/ads">📢 Broadcasts</a>
                 <a href="/admin/news">📰 News Feed</a>
                 <a href="/admin/users">👥 Member Search</a>
                 <br><br>
