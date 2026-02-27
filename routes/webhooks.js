@@ -1,73 +1,83 @@
 // ==========================================
-// routes/webhooks.js - Seabe Core Payments
+// routes/webhooks.js - Seabe Omni-Payment Listener
 // ==========================================
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const { sendWhatsApp } = require('../services/whatsapp'); // Adjust path if needed
+const { sendWhatsApp } = require('../services/whatsapp');
 
 // 💰 CORE WEBHOOK: Listens for NetCash / Ozow payment updates
-router.post('/api/core/webhooks/payment', async (req, res) => {
-    // Payment gateways typically send data in the request body
-    // Adjust these variable names if NetCash/Ozow uses slightly different keys (e.g., 'TransactionStatus')
-    const { reference, status, amount } = req.body;
+// URL: https://your-render-url.com/api/webhooks/payment (depending on how it's mounted in index.js)
+router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true }), express.json(), async (req, res) => {
+    
+    // 1️⃣ Extract Payload (Handles both standard JSON and NetCash ITN formats)
+    const reference = req.body.reference || req.body.Reference || req.body.p2;
+    const status = req.body.status || req.body.TransactionStatusCode || req.body.TransactionStatus;
+    const amount = req.body.amount || req.body.Amount || 0;
 
     try {
-        console.log(`💰 WEBHOOK RECEIVED: Payment ${status} for Ref: ${reference}`);
+        console.log(`💰 WEBHOOK RECEIVED: Payment [${status}] for Ref: [${reference}]`);
 
-        // 1️⃣ Find the invoice/collection using the unique reference
-        const collection = await prisma.collection.findFirst({
-            where: { reference: reference } 
-        });
+        if (!reference) return res.status(200).send('No reference provided');
 
-        if (!collection) {
-            console.error(`❌ Webhook Error: No collection found for reference ${reference}`);
-            // Still return 200 so the payment gateway stops spamming us with retries
-            return res.status(200).send('Reference Not Found');
+        // 2️⃣ The Omni-Search: Check Collections first, then Transactions
+        let record = await prisma.collection.findFirst({ where: { reference: reference } });
+        let recordType = 'COLLECTION';
+
+        if (!record) {
+            record = await prisma.transaction.findFirst({ where: { reference: reference } });
+            recordType = 'TRANSACTION';
         }
 
-        // 2️⃣ Process a SUCCESSFUL payment
-        // (Checking for common success strings used by SA gateways)
-        if (status === 'SUCCESS' || status === '000' || status === 'Completed') {
-            
-            // A. Mark the collection/invoice as PAID
-            await prisma.collection.update({
-                where: { id: collection.id },
-                data: { status: 'PAID', updatedAt: new Date() }
-            });
+        if (!record) {
+            console.error(`❌ Webhook Error: Reference ${reference} not found in Collections or Transactions.`);
+            return res.status(200).send('Reference Not Found'); // Return 200 so gateway stops retrying
+        }
 
-            // B. Mark the Member's policy as ACTIVE (The Magic Step ✨)
-            if (collection.memberId) {
-                await prisma.member.update({
-                    where: { id: collection.memberId },
-                    data: { status: 'ACTIVE' }
-                });
+        // 3️⃣ Determine if Successful (NetCash uses '1' or '002', others use 'SUCCESS')
+        const isSuccess = status === 'SUCCESS' || status === '1' || status === '002' || status === 'Completed';
+
+        if (isSuccess && record.status !== 'PAID') {
+            
+            // A. Update the correct table
+            if (recordType === 'COLLECTION') {
+                await prisma.collection.update({ where: { id: record.id }, data: { status: 'PAID', updatedAt: new Date() } });
+            } else {
+                await prisma.transaction.update({ where: { id: record.id }, data: { status: 'PAID', updatedAt: new Date() } });
             }
 
-            // C. Send the Automated WhatsApp Digital Receipt
-            const receiptMsg = `✅ *Payment Successful*\n\nHi ${collection.firstName},\nWe have received your premium payment of *R${parseFloat(amount).toFixed(2)}* (Ref: ${reference}).\n\nYour Seabe Burial Society policy is now *ACTIVE*. Thank you!`;
-            await sendWhatsApp(collection.phone, receiptMsg);
+            // B. Find the Phone Number to update Member and Send Receipt
+            // (Collections have phone natively. Transactions might just have phone, but let's be safe)
+            const targetPhone = record.phone; 
 
-            console.log(`✅ Payment Loop Closed for ${collection.firstName}`);
+            if (targetPhone) {
+                // Mark Member as ACTIVE
+                await prisma.member.update({
+                    where: { phone: targetPhone },
+                    data: { status: 'ACTIVE' }
+                }).catch(e => console.log("Note: Member update skipped or member not found."));
+
+                // Send Receipt
+                const receiptMsg = `✅ *Payment Successful*\n\nWe have received your payment of *R${parseFloat(amount || record.amount).toFixed(2)}* (Ref: ${reference}).\n\nYour Seabe Burial Society policy is now *ACTIVE*. Thank you!`;
+                await sendWhatsApp(targetPhone, receiptMsg);
+                console.log(`✅ Payment Loop Closed for ${targetPhone}`);
+            }
+        } 
+        else if (status === 'FAILED' || status === 'CANCELLED' || status === 'ERROR' || status === '003') {
+            // Handle Failure
+            if (recordType === 'COLLECTION') {
+                await prisma.collection.update({ where: { id: record.id }, data: { status: 'OVERDUE', updatedAt: new Date() } });
+            } else {
+                await prisma.transaction.update({ where: { id: record.id }, data: { status: 'FAILED', updatedAt: new Date() } });
+            }
+
+            if (record.phone) {
+                const failMsg = `⚠️ *Payment Failed*\n\nYour recent payment attempt for Ref: ${reference} was unsuccessful.\n\nPlease try again using your link or reply *Menu* to generate a new one.`;
+                await sendWhatsApp(record.phone, failMsg);
+            }
         }
 
-        // 3️⃣ Process a FAILED or CANCELLED payment
-        else if (status === 'FAILED' || status === 'CANCELLED' || status === 'ERROR') {
-            
-            await prisma.collection.update({
-                where: { id: collection.id },
-                data: { status: 'OVERDUE', updatedAt: new Date() }
-            });
-
-            const failMsg = `⚠️ *Payment Failed*\n\nHi ${collection.firstName},\nYour recent payment attempt for R${parseFloat(amount).toFixed(2)} was unsuccessful.\n\nPlease try again using your original link or reply *1* to speak to an administrator.`;
-            await sendWhatsApp(collection.phone, failMsg);
-            
-            console.log(`⚠️ Payment failed for ${collection.firstName}`);
-        }
-
-        // 🛡️ Always return a 200 OK status to the payment provider. 
-        // If you don't, they think your server is down and will keep resending the same webhook every 5 minutes.
         return res.status(200).send('Webhook Processed Successfully');
 
     } catch (error) {

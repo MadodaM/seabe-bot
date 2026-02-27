@@ -13,6 +13,7 @@ const { startCronJobs } = require('./services/scheduler');
 const blastEngineRoute = require('./routes/blastEngine');
 const webhooksRoute = require('./routes/webhooks');
 const crmClaimsRoute = require('./routes/crmClaims');
+const ficaPortalRoutes = require('./routes/ficaPortal');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -28,6 +29,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.urlencoded({ extended: true })); // Required for Twilio Webhooks
 app.use(bodyParser.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use('/public', express.static(path.join(__dirname, 'public')));
+app.use('/api/fica', ficaPortalRoutes);
 
 // Dedicated ping route to keep Render awake
 app.get('/ping', (req, res) => res.status(200).send("Heartbeat received. Seabe Engine is awake."));

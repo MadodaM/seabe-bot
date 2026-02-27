@@ -322,13 +322,15 @@ module.exports = function(app, { prisma }) {
             // 2. Email client asking for Corporate Docs
             if (org.email || org.officialEmail) {
                 const targetEmail = org.officialEmail || org.email;
+                const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+                const portalLink = `${host}/crm/fica-portal.html?code=${org.code}`;
+                
                 await sgMail.send({
                     to: targetEmail,
                     from: process.env.EMAIL_FROM || 'admin@seabe.tech',
                     subject: `Action Required: FICA Level 1 Approved for ${org.name}`,
-                    text: `Great news! Your Level 1 FICA is approved.\n\nTo activate your NetCash merchant account, please reply to this email with your Level 2 corporate documents:\n- NPC Certificate / Constitution\n- CIPC Registration\n- Director IDs`
+                    text: `Great news! Your Level 1 FICA is approved.\n\nTo activate your NetCash merchant account, please upload your Level 2 corporate documents securely via your dedicated portal:\n\n👉 Click here to upload: ${portalLink}\n\nDocuments required:\n- NPC Certificate / Constitution\n- CIPC Registration\n- Director IDs`
                 }).catch(e => console.error("Email error:", e));
-            }
 
             res.json({ message: "Level 1 Approved. Email sent to client requesting Level 2 docs." });
         } catch (error) {

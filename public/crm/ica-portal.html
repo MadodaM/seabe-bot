@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure FICA Upload | Seabe</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4 font-sans">
+
+    <div class="max-w-2xl w-full bg-white rounded-2xl shadow-xl overflow-hidden">
+        <div class="bg-gray-900 p-8 text-center">
+            <h1 class="text-3xl font-bold text-white mb-2">Secure Document Vault</h1>
+            <p class="text-gray-400">KYB & FICA Compliance Portal</p>
+        </div>
+
+        <div class="p-8">
+            <div id="loading" class="text-center text-gray-500 py-8">Loading organization details...</div>
+            
+            <div id="portal-content" class="hidden">
+                <div class="mb-8 border-b pb-6">
+                    <h2 class="text-xl font-bold text-gray-800" id="org-name">Organization Name</h2>
+                    <p class="text-sm text-gray-500">Org Code: <span id="org-code" class="font-mono font-bold text-gray-700"></span></p>
+                    <div class="mt-4 bg-blue-50 border border-blue-200 text-blue-800 p-4 rounded-lg text-sm">
+                        Please upload your Level 2 corporate documents below to activate your NetCash merchant account.
+                    </div>
+                </div>
+
+                <div class="space-y-6">
+                    <div class="border rounded-xl p-4 flex items-center justify-between bg-gray-50">
+                        <div>
+                            <h3 class="font-bold text-gray-800">NPC Certificate / Constitution</h3>
+                            <p class="text-xs text-gray-500">PDF or Image</p>
+                            <a href="#" id="link-npcRegUrl" target="_blank" class="hidden text-xs text-blue-600 font-bold mt-1">📄 View Uploaded File</a>
+                        </div>
+                        <div>
+                            <input type="file" id="file-npcRegUrl" class="hidden" accept=".pdf,image/*" onchange="uploadFile('npcRegUrl')">
+                            <button onclick="document.getElementById('file-npcRegUrl').click()" id="btn-npcRegUrl" class="bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 px-4 py-2 rounded shadow-sm text-sm font-bold transition">Upload</button>
+                        </div>
+                    </div>
+
+                    <div class="border rounded-xl p-4 flex items-center justify-between bg-gray-50">
+                        <div>
+                            <h3 class="font-bold text-gray-800">CIPC Registration</h3>
+                            <p class="text-xs text-gray-500">Official Company Registration</p>
+                            <a href="#" id="link-cipcDocUrl" target="_blank" class="hidden text-xs text-blue-600 font-bold mt-1">📄 View Uploaded File</a>
+                        </div>
+                        <div>
+                            <input type="file" id="file-cipcDocUrl" class="hidden" accept=".pdf,image/*" onchange="uploadFile('cipcDocUrl')">
+                            <button onclick="document.getElementById('file-cipcDocUrl').click()" id="btn-cipcDocUrl" class="bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 px-4 py-2 rounded shadow-sm text-sm font-bold transition">Upload</button>
+                        </div>
+                    </div>
+
+                    <div class="border rounded-xl p-4 flex items-center justify-between bg-gray-50">
+                        <div>
+                            <h3 class="font-bold text-gray-800">Director IDs</h3>
+                            <p class="text-xs text-gray-500">Combined PDF of all Directors</p>
+                            <a href="#" id="link-directorIdsUrl" target="_blank" class="hidden text-xs text-blue-600 font-bold mt-1">📄 View Uploaded File</a>
+                        </div>
+                        <div>
+                            <input type="file" id="file-directorIdsUrl" class="hidden" accept=".pdf,image/*" onchange="uploadFile('directorIdsUrl')">
+                            <button onclick="document.getElementById('file-directorIdsUrl').click()" id="btn-directorIdsUrl" class="bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 px-4 py-2 rounded shadow-sm text-sm font-bold transition">Upload</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-8 text-center text-xs text-gray-400">
+                    Documents are securely encrypted and vaulted for compliance review.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const CHURCH_CODE = urlParams.get('code');
+
+        if (!CHURCH_CODE) {
+            document.getElementById('loading').innerText = "❌ Invalid Link. Missing Organization Code.";
+        } else {
+            loadOrgData();
+        }
+
+        async function loadOrgData() {
+            try {
+                const res = await fetch(`/api/fica/info/${CHURCH_CODE}`);
+                const result = await res.json();
+                
+                if (result.success) {
+                    document.getElementById('loading').classList.add('hidden');
+                    document.getElementById('portal-content').classList.remove('hidden');
+                    
+                    document.getElementById('org-name').innerText = result.org.name;
+                    document.getElementById('org-code').innerText = result.org.code;
+
+                    // Show already uploaded links
+                    ['npcRegUrl', 'cipcDocUrl', 'directorIdsUrl'].forEach(type => {
+                        if (result.org[type]) {
+                            const btn = document.getElementById(`btn-${type}`);
+                            const link = document.getElementById(`link-${type}`);
+                            btn.innerText = "✅ Replace File";
+                            btn.classList.replace('text-gray-700', 'text-green-700');
+                            link.href = result.org[type];
+                            link.classList.remove('hidden');
+                        }
+                    });
+                } else {
+                    document.getElementById('loading').innerText = "❌ Organization not found.";
+                }
+            } catch (e) {
+                document.getElementById('loading').innerText = "❌ Network Error.";
+            }
+        }
+
+        async function uploadFile(docType) {
+            const fileInput = document.getElementById(`file-${docType}`);
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const btn = document.getElementById(`btn-${docType}`);
+            btn.innerText = "⏳ Uploading...";
+            btn.disabled = true;
+
+            // Convert File to Base64 String
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = async () => {
+                const base64String = reader.result;
+
+                try {
+                    const res = await fetch(`/api/fica/upload/${CHURCH_CODE}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ docType: docType, fileBase64: base64String })
+                    });
+
+                    const result = await res.json();
+                    if (result.success) {
+                        btn.innerText = "✅ Uploaded!";
+                        btn.classList.replace('text-gray-700', 'text-green-700');
+                        btn.disabled = false;
+                        
+                        const link = document.getElementById(`link-${docType}`);
+                        link.href = result.url;
+                        link.classList.remove('hidden');
+                        
+                        alert("Document saved securely. We will review it shortly.");
+                    } else {
+                        btn.innerText = "❌ Failed";
+                        alert("Upload failed. Try a smaller file size.");
+                    }
+                } catch (e) {
+                    btn.innerText = "❌ Error";
+                    alert("Network error.");
+                }
+            };
+        }
+    </script>
+</body>
+</html>

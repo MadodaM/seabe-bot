@@ -236,3 +236,16 @@ model AuditLog {
   @@index([adminId])
   @@index([modelName, recordId])
 }
+
+model RiskFlag {
+  id          Int      @id @default(autoincrement())
+  memberPhone String
+  member      Member   @relation(fields: [memberPhone], references: [phone])
+  
+  flagType    String   // "VELOCITY_SPIKE", "DUPLICATE_CLAIM", "FICA_EXPIRED"
+  severity    String   // "LOW", "MEDIUM", "CRITICAL"
+  description String   // e.g., "User paid from 3 different IPs in 24 hours"
+  status      String   @default("OPEN") // OPEN, INVESTIGATING, RESOLVED
+  
+  createdAt   DateTime @default(now())
+}
