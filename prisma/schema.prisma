@@ -13,23 +13,23 @@ datasource db {
 
 // --- USER & MEMBERSHIP ---
 model Member {
-  id             Int      @id @default(autoincrement())
-  firstName      String
-  lastName       String
-  phone          String   @unique
-  email          String?
-  createdAt      DateTime @default(now())
-  monthlyPremium Float? // <--- ADD THIS LINE
-  idType           String?   @default("SA_ID") 
-  idNumber         String?   // Stores ENCRYPTED data (e.g. "a1b2:f9e8...")
-  address          String?   // Stores ENCRYPTED data
-  kycToken         String?   @unique
-  kycTokenExpires  DateTime?
-  idPhotoUrl       String?  // Stores encrypted Cloudinary URL
+  id                Int       @id @default(autoincrement())
+  firstName         String
+  lastName          String
+  phone             String    @unique
+  email             String?
+  createdAt         DateTime  @default(now())
+  monthlyPremium    Float? // <--- ADD THIS LINE
+  idType            String?   @default("SA_ID")
+  idNumber          String? // Stores ENCRYPTED data (e.g. "a1b2:f9e8...")
+  address           String? // Stores ENCRYPTED data
+  kycToken          String?   @unique
+  kycTokenExpires   DateTime?
+  idPhotoUrl        String? // Stores encrypted Cloudinary URL
   proofOfAddressUrl String? // Stores encrypted Cloudinary URL
-  isIdVerified     Boolean   @default(false)
-  rejectionReason  String?
-  verifiedAt       DateTime?
+  isIdVerified      Boolean   @default(false)
+  rejectionReason   String?
+  verifiedAt        DateTime?
 
   // Link 1: Church (Optional)
   churchCode String?
@@ -47,64 +47,65 @@ model Member {
   dependents   Dependent[]
   transactions Transaction[]
   claims       Claim[]
-  collections Collection[]
+  collections  Collection[]
+  riskFlags    RiskFlag[]
 }
 
 model Dependent {
-  id          Int      @id @default(autoincrement())
+  id          Int    @id @default(autoincrement())
   firstName   String
   lastName    String
-  dateOfBirth String   // 👈 Changed from idNumber to dateOfBirth
+  dateOfBirth String // 👈 Changed from idNumber to dateOfBirth
   relation    String
-  status      String   @default("ACTIVE")
+  status      String @default("ACTIVE")
   memberId    Int
-  member      Member   @relation(fields: [memberId], references: [id])
+  member      Member @relation(fields: [memberId], references: [id])
 }
 
 // --- ORGANIZATIONS ---
 model Church {
-  id              Int      @id @default(autoincrement())
-  code            String   @unique
-  name            String
-  type            String   // "CHURCH" or "BURIAL_SOCIETY"
-  adminPhone      String?
-  email           String?  // ✅ Fixed
-  
+  id         Int     @id @default(autoincrement())
+  code       String  @unique
+  name       String
+  type       String // "CHURCH" or "BURIAL_SOCIETY"
+  adminPhone String?
+  email      String? // ✅ Fixed
+
   // FICA Level 1 (Initial FICA)
-  pastorIdUrl        String?  // Cloudinary Vault Link
-  proofOfBankUrl     String?  // Cloudinary Vault Link
-  
+  pastorIdUrl    String? // Cloudinary Vault Link
+  proofOfBankUrl String? // Cloudinary Vault Link
+
   // FICA Level 2 (Corporate FICA)
-  npcRegUrl          String?  
-  cipcDocUrl         String?
-  directorIdsUrl     String?  // Can be an array or single merged PDF link
-  
+  npcRegUrl      String?
+  cipcDocUrl     String?
+  directorIdsUrl String? // Can be an array or single merged PDF link
+
   // State Machine for FICA Flow
-  ficaStatus         String   @default("LEVEL_1_PENDING") 
+  ficaStatus String @default("LEVEL_1_PENDING")
   // Statuses: LEVEL_1_PENDING -> AWAITING_LEVEL_2 -> LEVEL_2_PENDING -> NETCASH_READY -> ACTIVE
-  
+
   // Financial Fields
-  defaultPremium  Float?   @default(150.0)
-  subscriptionFee Float?   @default(0.0)  // ✅ Added to match your code
-  subaccountCode  String?  // ✅ Renamed from 'Subaccount' to match your code
-  
-  otp             String?
-  otpExpires      DateTime?
-  createdAt       DateTime @default(now())
-  tosAcceptedAt   DateTime? // 👈 Add this so web.js can save the Terms agreement
+  defaultPremium  Float?  @default(150.0)
+  subscriptionFee Float?  @default(0.0) // ✅ Added to match your code
+  subaccountCode  String? // ✅ Renamed from 'Subaccount' to match your code
+
+  otp           String?
+  otpExpires    DateTime?
+  createdAt     DateTime  @default(now())
+  tosAcceptedAt DateTime? // 👈 Add this so web.js can save the Terms agreement
 
   // Relations
-  admins          Admin[]
-  
-  // Member Relations
-  churchMembers   Member[] @relation("ChurchMembers")
-  societyMembers  Member[] @relation("SocietyMembers")
+  admins Admin[]
 
-  transactions    Transaction[]
-  events          Event[]
-  claims          Claim[]
-  ads             Ad[]
-  news            News[]
+  // Member Relations
+  churchMembers  Member[] @relation("ChurchMembers")
+  societyMembers Member[] @relation("SocietyMembers")
+
+  transactions Transaction[]
+  events       Event[]
+  claims       Claim[]
+  ads          Ad[]
+  news         News[]
 }
 
 enum OrgType {
@@ -125,7 +126,7 @@ model Transaction {
   amount     Float
   reference  String   @unique
   status     String // 👈 Is the default 'pending' or 'PENDING'?
-  method     String?  // 👈 Add this line!
+  method     String? // 👈 Add this line!
   date       DateTime @default(now())
 }
 
@@ -168,19 +169,19 @@ model Ad {
 }
 
 model Claim {
-  id              Int      @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
   // Link to Church
-  churchCode      String
-  church          Church   @relation(fields: [churchCode], references: [code])
+  churchCode String
+  church     Church @relation(fields: [churchCode], references: [code])
 
   // Link to Member
-  memberPhone     String
-  member          Member   @relation(fields: [memberPhone], references: [phone])
+  memberPhone String
+  member      Member @relation(fields: [memberPhone], references: [phone])
 
   beneficiaryName String
   payoutAmount    Float
-  status          String   @default("PENDING") // PENDING, APPROVED, PAID, DECLINED
+  status          String @default("PENDING") // PENDING, APPROVED, PAID, DECLINED
 
   // --------------------------------------------------
   // ✨ NEW AI & DOCUMENT FIELDS (REQUIRED FOR ADMIN UI)
@@ -188,12 +189,12 @@ model Claim {
   deceasedIdNumber String?
   dateOfDeath      DateTime?
   causeOfDeath     String?
-  claimantPhone    String? 
+  claimantPhone    String?
   documentUrl      String?
   adminNotes       String?
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Admin {
@@ -207,45 +208,45 @@ model Admin {
 }
 
 model Collection {
-  id          Int      @id @default(autoincrement())
-  churchCode  String   
-  firstName   String
-  lastName    String?
-  phone       String
-  email       String?
-  amount      Float
-  reference   String
-  status      String   @default("PENDING") 
-  createdAt   DateTime @default(now())
-  
-  memberId    Int?
-  member      Member?  @relation(fields: [memberId], references: [id])
+  id         Int      @id @default(autoincrement())
+  churchCode String
+  firstName  String
+  lastName   String?
+  phone      String
+  email      String?
+  amount     Float
+  reference  String
+  status     String   @default("PENDING")
+  createdAt  DateTime @default(now())
+
+  memberId Int?
+  member   Member? @relation(fields: [memberId], references: [id])
 }
 
 model AuditLog {
-  id          String   @id @default(uuid())
-  adminId     String   // The ID of the admin or system process making the change
-  action      String   // e.g., 'CREATE', 'UPDATE', 'DELETE'
-  modelName   String   // The table being modified (e.g., 'Collection', 'Member', 'Policy')
-  recordId    String   // The specific ID of the row being altered
-  oldData     Json?    // A complete snapshot of the row BEFORE the change
-  newData     Json?    // A complete snapshot of the row AFTER the change
-  ipAddress   String?  // (Optional) Track the network location of the admin
-  createdAt   DateTime @default(now())
+  id        String   @id @default(uuid())
+  adminId   String // The ID of the admin or system process making the change
+  action    String // e.g., 'CREATE', 'UPDATE', 'DELETE'
+  modelName String // The table being modified (e.g., 'Collection', 'Member', 'Policy')
+  recordId  String // The specific ID of the row being altered
+  oldData   Json? // A complete snapshot of the row BEFORE the change
+  newData   Json? // A complete snapshot of the row AFTER the change
+  ipAddress String? // (Optional) Track the network location of the admin
+  createdAt DateTime @default(now())
 
   @@index([adminId])
   @@index([modelName, recordId])
 }
 
 model RiskFlag {
-  id          Int      @id @default(autoincrement())
+  id          Int    @id @default(autoincrement())
   memberPhone String
-  member      Member   @relation(fields: [memberPhone], references: [phone])
-  
-  flagType    String   // "VELOCITY_SPIKE", "DUPLICATE_CLAIM", "FICA_EXPIRED"
-  severity    String   // "LOW", "MEDIUM", "CRITICAL"
-  description String   // e.g., "User paid from 3 different IPs in 24 hours"
-  status      String   @default("OPEN") // OPEN, INVESTIGATING, RESOLVED
-  
-  createdAt   DateTime @default(now())
+  member      Member @relation(fields: [memberPhone], references: [phone])
+
+  flagType    String // "VELOCITY_SPIKE", "DUPLICATE_CLAIM", "FICA_EXPIRED"
+  severity    String // "LOW", "MEDIUM", "CRITICAL"
+  description String // e.g., "User paid from 3 different IPs in 24 hours"
+  status      String @default("OPEN") // OPEN, INVESTIGATING, RESOLVED
+
+  createdAt DateTime @default(now())
 }
