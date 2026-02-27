@@ -10,6 +10,9 @@ const axios = require('axios');
 const sgMail = require('@sendgrid/mail'); 
 const { PrismaClient } = require('@prisma/client');
 const { startCronJobs } = require('./services/scheduler');
+const blastEngineRoute = require('./routes/blastEngine');
+const webhooksRoute = require('./routes/webhooks');
+const crmClaimsRoute = require('./routes/crmClaims');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -41,6 +44,9 @@ app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'leg
 app.use('/kyc', require('./routes/kyc').router);
 app.use('/api/surepol', require('./routes/surepol'));
 app.use('/api/prospect', require('./routes/prospectKYC'));
+app.use('/', blastEngineRoute);
+app.use('/', webhooksRoute);
+app.use('/', crmClaimsRoute);
 
 // The massive files we just extracted!
 app.use('/api/whatsapp', require('./routes/whatsappRouter'));
@@ -53,6 +59,7 @@ try { require('./routes/link')(app, { prisma }); } catch (e) { console.error("�
 try { require('./routes/collectionbot')(app, { prisma }); } catch (e) { console.error("⚠️ Collection routes error:", e); }
 try { require('./routes/web')(app, upload, { prisma }); } catch (e) { console.error("⚠️ Web routes error:", e); }
 try { require('./routes/collections')(app); } catch (e) { console.error("⚠️ Old Collection routes error:", e); }
+
 
 // ==========================================
 // 4. CRON & SERVER INIT
