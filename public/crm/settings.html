@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Society Settings</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 p-6 font-sans">
+
+    <div class="max-w-4xl mx-auto bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div class="bg-gray-800 p-6 text-white flex justify-between items-center">
+            <div>
+                <h2 class="text-2xl font-bold">⚙️ Organization Settings</h2>
+                <p class="text-sm text-gray-400 mt-1">Manage your contact details, financials, and banking info.</p>
+            </div>
+            <span id="org-code-badge" class="bg-gray-700 px-3 py-1 rounded text-sm font-mono font-bold border border-gray-600">...</span>
+        </div>
+
+        <form id="settings-form" class="p-8 space-y-8">
+            
+            <div>
+                <h3 class="text-lg font-bold text-gray-800 border-b pb-2 mb-4">📞 General Contact Info</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">Official Email</label>
+                        <input type="email" id="email" class="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">Admin WhatsApp Number</label>
+                        <input type="text" id="adminPhone" placeholder="e.g. 27820000000" class="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-bold text-gray-700 mb-1">Main Contact Person (Name)</label>
+                        <input type="text" id="contactPerson" class="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <h3 class="text-lg font-bold text-gray-800 border-b pb-2 mb-4">💰 Financial & Policy Settings</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">Default Monthly Premium (R)</label>
+                        <input type="number" id="defaultPremium" class="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-blue-700 font-bold bg-blue-50">
+                        <p class="text-xs text-gray-500 mt-1">This is the default amount new members are billed.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <h3 class="text-lg font-bold text-gray-800 border-b pb-2 mb-4">🏦 Banking Details (For NetCash payouts)</h3>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">Bank Name</label>
+                        <input type="text" id="bankName" placeholder="e.g. FNB" class="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">Account Number</label>
+                        <input type="text" id="accountNumber" class="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">Branch Code</label>
+                        <input type="text" id="branchCode" class="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono">
+                    </div>
+                </div>
+            </div>
+
+            <div class="pt-4 flex justify-end">
+                <button type="submit" id="save-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded shadow transition">
+                    💾 Save Changes
+                </button>
+            </div>
+
+        </form>
+    </div>
+
+    <script>
+        // 1. Get code from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const CHURCH_CODE = urlParams.get('code');
+
+        if(CHURCH_CODE) {
+            document.getElementById('org-code-badge').innerText = CHURCH_CODE;
+            loadSettings();
+        }
+
+        // 2. Fetch current data
+        async function loadSettings() {
+            try {
+                const res = await fetch(`/api/crm/settings/${CHURCH_CODE}`);
+                const result = await res.json();
+                
+                if(result.success && result.data) {
+                    const data = result.data;
+                    document.getElementById('email').value = data.email || '';
+                    document.getElementById('adminPhone').value = data.adminPhone || '';
+                    document.getElementById('contactPerson').value = data.contactPerson || '';
+                    document.getElementById('defaultPremium').value = data.defaultPremium || 150;
+                    document.getElementById('bankName').value = data.bankName || '';
+                    document.getElementById('accountNumber').value = data.accountNumber || '';
+                    document.getElementById('branchCode').value = data.branchCode || '';
+                }
+            } catch (error) {
+                console.error("Failed to load settings:", error);
+            }
+        }
+
+        // 3. Save changes
+        document.getElementById('settings-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('save-btn');
+            btn.innerText = "Saving...";
+            btn.classList.add('opacity-50');
+
+            const payload = {
+                email: document.getElementById('email').value,
+                adminPhone: document.getElementById('adminPhone').value,
+                contactPerson: document.getElementById('contactPerson').value,
+                defaultPremium: document.getElementById('defaultPremium').value,
+                bankName: document.getElementById('bankName').value,
+                accountNumber: document.getElementById('accountNumber').value,
+                branchCode: document.getElementById('branchCode').value
+            };
+
+            try {
+                const res = await fetch(`/api/crm/settings/${CHURCH_CODE}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const result = await res.json();
+                if(result.success) {
+                    btn.innerText = "✅ Saved Successfully!";
+                    btn.classList.replace('bg-blue-600', 'bg-green-600');
+                    setTimeout(() => {
+                        btn.innerText = "💾 Save Changes";
+                        btn.classList.replace('bg-green-600', 'bg-blue-600');
+                        btn.classList.remove('opacity-50');
+                    }, 2000);
+                } else {
+                    alert("Error saving: " + result.error);
+                    btn.innerText = "💾 Save Changes";
+                    btn.classList.remove('opacity-50');
+                }
+            } catch (error) {
+                console.error("Save error:", error);
+                alert("Network error occurred.");
+            }
+        });
+    </script>
+</body>
+</html>

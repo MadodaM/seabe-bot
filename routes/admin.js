@@ -982,7 +982,20 @@ module.exports = (app, { prisma }) => {
         doc.end();
     });
 
-    router.get('/admin/:code/settings', checkSession, (req, res) => res.send(renderPage(req.org, 'settings', `<div class="card"><h3>Settings</h3><p>${req.org.name}</p></div>`)));
+    // 🎯 The Embedded Settings Tab
+    router.get('/admin/:code/settings', checkSession, (req, res) => {
+        const content = `
+            <style>
+                .container { max-width: 1000px !important; padding: 0 !important; }
+            </style>
+            <iframe 
+                src="/crm/settings.html?code=${req.params.code}" 
+                style="width: 100%; height: 85vh; border: none; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);"
+                title="Settings Vault"
+            ></iframe>
+        `;
+        res.send(renderPage(req.org, 'settings', content));
+    });
     
     router.get('/admin/:code/ads', checkSession, (req, res) => res.send(renderPage(req.org, 'ads', `<div class="card"><h3>Ads</h3><p>Coming Soon</p></div>`)));
     
@@ -1029,6 +1042,41 @@ module.exports = (app, { prisma }) => {
     // 🔌 2. MOUNT THE NEW API ROUTES HERE (Right before app.use)
     app.use('/api/crm/claims', claimsEngine);
     app.use('/api/crm/collections', blastEngine);
+	
+	// ==========================================
+    // ⚙️ API: SETTINGS MODULE
+    // ==========================================
+    
+    // 1. Fetch current settings
+    router.get('/api/crm/settings/:code', async (req, res) => {
+        try {
+            const org = await prisma.church.findUnique({ where: { code: req.params.code } });
+            res.json({ success: true, data: org });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // 2. Save updated settings
+    router.put('/api/crm/settings/:code', express.json(), async (req, res) => {
+        try {
+            const org = await prisma.church.update({
+                where: { code: req.params.code },
+                data: {
+                    email: req.body.email,
+                    adminPhone: req.body.adminPhone,
+                    contactPerson: req.body.contactPerson,
+                    defaultPremium: parseFloat(req.body.defaultPremium) || 150,
+                    bankName: req.body.bankName,
+                    accountNumber: req.body.accountNumber,
+                    branchCode: req.body.branchCode
+                }
+            });
+            res.json({ success: true, message: "Settings saved successfully!" });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
 
     app.use('/', router);
 };
