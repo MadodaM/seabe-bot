@@ -1022,15 +1022,19 @@ module.exports = (app, { prisma }) => {
             const { message } = req.body;
             if (!message) return res.status(400).json({ success: false, error: "Message is required" });
 
-            // 1. Get the org and ALL ACTIVE members
+            // 1. Get the org and ALL ACTIVE members (checking both relation types)
             const org = await prisma.church.findUnique({ 
                 where: { code: req.params.code },
-                include: { members: { where: { status: 'ACTIVE' } } } 
+                include: { 
+                    churchMembers: { where: { status: 'ACTIVE' } },
+                    societyMembers: { where: { status: 'ACTIVE' } }
+                } 
             });
 
             if (!org) return res.status(404).json({ success: false, error: "Organization not found" });
             
-            const activeMembers = org.members;
+            // Combine them just in case the members are split across the two relations
+            const activeMembers = [...(org.churchMembers || []), ...(org.societyMembers || [])];
             if (activeMembers.length === 0) {
                 return res.status(400).json({ success: false, error: "No active members found to broadcast to." });
             }
