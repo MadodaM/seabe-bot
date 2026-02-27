@@ -24,6 +24,7 @@ if (process.env.SENDGRID_KEY) sgMail.setApiKey(process.env.SENDGRID_KEY);
 // 1. GLOBAL MIDDLEWARES
 // ==========================================
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.urlencoded({ extended: true })); // Required for Twilio Webhooks
 app.use(bodyParser.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use('/public', express.static(path.join(__dirname, 'public')));
@@ -47,6 +48,7 @@ app.use('/api/prospect', require('./routes/prospectKYC'));
 app.use('/', blastEngineRoute);
 app.use('/', webhooksRoute);
 app.use('/', crmClaimsRoute);
+
 
 // The massive files we just extracted!
 app.use('/api/whatsapp', require('./routes/whatsappRouter'));
