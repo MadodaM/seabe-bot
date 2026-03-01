@@ -308,6 +308,43 @@ router.post('/', (req, res) => {
                     return;
                 }
             }
+			
+			// 🚀 NEW: Catch Quote Acceptance
+                if (incomingMsg.includes('accept the quote')) {
+                    session.step = 'AWAITING_MEMBER_ID';
+                    await sendWhatsApp(cleanPhone, "🎉 Fantastic! Your quote has been accepted.\n\nTo finalize your policy registration, we must complete a quick KYC compliance check.\n\nPlease reply directly to this message with a clear photo of your *ID Document* (Green Book or Smart ID).");
+                    return;
+                }
+
+                // 🚀 NEW: Catch KYC ID Upload
+                if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ID') {
+                    const idUrl = req.body.MediaUrl0; // Twilio Media URL
+                    
+                    // Save the ID photo to the member's profile
+                    await prisma.member.update({
+                        where: { phone: cleanPhone },
+                        data: { idPhotoUrl: idUrl, status: 'PENDING_KYC' }
+                    });
+
+                    session.step = 'AWAITING_MEMBER_ADDRESS';
+                    await sendWhatsApp(cleanPhone, "✅ ID Document received safely.\n\nFinally, please reply with a photo of your *Proof of Address* (e.g., a utility bill or bank statement not older than 3 months).");
+                    return;
+                }
+
+                // 🚀 NEW: Catch KYC Proof of Address Upload
+                if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ADDRESS') {
+                    const addressUrl = req.body.MediaUrl0;
+                    
+                    // Save the address photo and flag for Admin Review
+                    await prisma.member.update({
+                        where: { phone: cleanPhone },
+                        data: { proofOfAddressUrl: addressUrl }
+                    });
+
+                    delete userSession[cleanPhone]; // Done onboarding
+                    await sendWhatsApp(cleanPhone, "✅ Proof of Address received.\n\n🎉 *Registration Complete!*\nYour documents have been securely vaulted for Admin Review. You will be notified once your policy is fully activated.\n\nReply *Hi* anytime to view your policy details.");
+                    return;
+                }
 
             // 3. Catch completely unregistered users
             if (!member) {

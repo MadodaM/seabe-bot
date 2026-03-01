@@ -560,24 +560,40 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     });
 	
 	// ==========================================
-    // 📄 API: SEND QUOTE PDF TO WHATSAPP
+    // 📄 API: SEND QUOTE PDF TO WHATSAPP (BULLETPROOF)
     // ==========================================
+    
+    // Ensure the uploads directory exists
+    const uploadsDir = path.join(__dirname, '../uploads');
+    if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    // 1. Explicit Route to Serve the PDF to Twilio
+    app.get('/api/public/quote-file/:filename', (req, res) => {
+        const filePath = path.join(uploadsDir, req.params.filename);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.sendFile(filePath);
+    });
+
+    // 2. The PDF Receiver and Sender
     app.post('/api/public/send-quote', express.json({ limit: '10mb' }), async (req, res) => {
         const { phone, pdfBase64, orgName } = req.body;
         
         try {
-            // 1. Convert Base64 back into a physical PDF file
+            // Strip the base64 prefix
             const base64Data = pdfBase64.replace(/^data:application\/pdf;base64,/, "");
             const fileName = `Quote_${Date.now()}.pdf`;
-            const filePath = path.join(__dirname, '../public/crm', fileName);
+            const filePath = path.join(uploadsDir, fileName);
             
-            // Save it to the public folder so Twilio can read it
+            // Save locally
             fs.writeFileSync(filePath, base64Data, 'base64');
 
+            // Generate the explicit URL
             const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
-            const fileUrl = `${host}/crm/${fileName}`;
+            const fileUrl = `${host}/api/public/quote-file/${fileName}`;
 
-            // 2. Send via Twilio
+            // Send via Twilio
             if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
                 const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
                 const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
