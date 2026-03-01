@@ -65,7 +65,8 @@ const renderPage = (org, activeTab, content) => {
         ${claimsTab}
         ${eventsTab}
         <a href="/admin/${org.code}/team" style="${navStyle('team')}">🛡️ Team</a>
-        <a href="/admin/${org.code}/broadcast" style="${navStyle('team')}">📢 Broadcasts</a>
+        <a href="/admin/${org.code}/broadcast" style="${navStyle('broadcast')}">📢 Broadcasts</a>
+        <a href="/admin/${org.code}/vendors" style="${navStyle('vendors')}">🛒 Vendors</a>
         <a href="/admin/${org.code}/collections" style="${navStyle('collections')}">💰 Revenue Recovery</a>
         <a href="/admin/${org.code}/surepol" style="${navStyle('surepol')}">⚰️ Surepol (Burial)</a>
         <a href="/admin/${org.code}/settings" style="${navStyle('settings')}">⚙️ Settings</a>
@@ -117,6 +118,19 @@ module.exports = (app, { prisma }) => {
         if (!org || org.otp !== req.body.otp) return res.send("Invalid OTP");
         res.setHeader('Set-Cookie', `session_${org.code}=active; HttpOnly; Path=/; Max-Age=3600`);
         res.redirect(`/admin/${org.code}/dashboard`);
+    });
+	
+	// --- Vendors ---
+	router.get('/admin/:code/vendors', checkSession, (req, res) => {
+        const content = `
+            <style> .container { max-width: 1200px !important; padding: 0 !important; } </style>
+            <iframe 
+                src="/crm/vendors.html?code=${req.params.code}" 
+                style="width: 100%; height: 85vh; border: none; border-radius: 8px;"
+                title="Vendor Directory"
+            ></iframe>
+        `;
+        res.send(renderPage(req.org, 'vendors', content));
     });
 
     // --- DASHBOARD ---
@@ -929,10 +943,7 @@ module.exports = (app, { prisma }) => {
                         <div style="display:flex; gap:10px; margin-top:10px;">
                             <button name="action" value="approve" class="btn" style="flex:1; background:#27ae60; padding:15px; font-size:16px;">✅ Approve KYC</button> 
                             <button name="action" value="reject" class="btn" style="flex:1; background:#e74c3c; padding:15px; font-size:16px;">❌ Reject Documents</button>
-							<button onclick="manualOverride(${claim.id})" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 px-4 rounded shadow text-sm"> 
-							⚠️ Manual Override
-						</button>
-													
+																	
                         </div>
                     </form>
                 </div>
@@ -1209,36 +1220,52 @@ module.exports = (app, { prisma }) => {
         }
     });
 	
-	// The Override Logic
-async function manualOverride(claimId) {
-    const manualId = prompt("Enter the exact ID Number from the Death Certificate:");
+	// ==========================================
+    // 🛒 API: VENDOR MANAGEMENT
+    // ==========================================
     
-    if (!manualId || manualId.trim() === "") {
-        alert("Override cancelled. ID number is required.");
-        return;
-    }
-
-    if (confirm(`Force approve this claim with ID: ${manualId}?`)) {
+    // 1. Fetch all vendors for this society
+    router.get('/api/crm/vendors/:code', async (req, res) => {
         try {
-            // NOTE: Ensure CHURCH_CODE is defined in your script
-            const res = await fetch(`/api/crm/claims/${CHURCH_CODE}/override`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ claimId: claimId, manualIdNumber: manualId.trim() })
-            });
+            const org = await prisma.church.findUnique({ where: { code: req.params.code } });
+            if (!org) return res.status(404).json({ success: false, error: "Organization not found" });
             
-            const result = await res.json();
-            if (result.success) {
-                alert("✅ " + result.message);
-                location.reload(); // Refresh to see the new Approved status
-            } else {
-                alert("❌ Failed: " + result.error);
-            }
-        } catch (e) {
-            alert("Network error.");
+            const vendors = await prisma.vendor.findMany({
+                where: { churchId: org.id },
+                orderBy: { name: 'asc' }
+            });
+            res.json({ success: true, vendors });
+        } catch (error) {
+            console.error("Fetch Vendors Error:", error);
+            res.status(500).json({ success: false, error: "Failed to load vendors." });
         }
-    }
-}
+    });
+
+    // 2. Add a new vendor
+    router.post('/api/crm/vendors/:code', express.json(), async (req, res) => {
+        try {
+            const { name, category, phone, email, bankDetails } = req.body;
+            
+            const org = await prisma.church.findUnique({ where: { code: req.params.code } });
+            if (!org) return res.status(404).json({ success: false, error: "Organization not found" });
+
+            const newVendor = await prisma.vendor.create({
+                data: {
+                    churchId: org.id,
+                    name,
+                    category,
+                    phone,
+                    email,
+                    bankDetails
+                }
+            });
+
+            res.json({ success: true, message: "Vendor added successfully!", vendor: newVendor });
+        } catch (error) {
+            console.error("Add Vendor Error:", error);
+            res.status(500).json({ success: false, error: "Failed to save vendor." });
+        }
+    });
 
     app.use('/', router);
 };
