@@ -122,9 +122,7 @@ module.exports = (app, { prisma }) => {
 	
 	// --- Vendors ---
     
-    // --- Vendors ---
-    
-    // 1. Explicitly serve the HTML directly from memory (Bypassing the missing file issue!)
+// 1. Explicitly serve the HTML directly from memory
     router.get('/crm/vendors.html', (req, res) => {
         res.send(`
 <!DOCTYPE html>
@@ -132,7 +130,7 @@ module.exports = (app, { prisma }) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vendor Directory</title>
+    <title>Vendor Directory & RFQ</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-50 font-sans p-6">
@@ -141,11 +139,16 @@ module.exports = (app, { prisma }) => {
         <div class="flex justify-between items-center mb-6">
             <div>
                 <h1 class="text-2xl font-bold text-gray-800">🛒 Vendor Directory</h1>
-                <p class="text-sm text-gray-500">Manage your approved suppliers for events and funerals.</p>
+                <p class="text-sm text-gray-500">Manage suppliers and send automated quote requests.</p>
             </div>
-            <button onclick="toggleModal('addVendorModal')" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow">
-                + Add New Vendor
-            </button>
+            <div class="space-x-2">
+                <button onclick="toggleModal('rfqModal')" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 px-4 rounded shadow transition">
+                    🚀 Send RFQ
+                </button>
+                <button onclick="toggleModal('addVendorModal')" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow transition">
+                    + Add Vendor
+                </button>
+            </div>
         </div>
 
         <div class="bg-white rounded-lg shadow overflow-hidden border border-gray-200">
@@ -165,7 +168,7 @@ module.exports = (app, { prisma }) => {
         </div>
     </div>
 
-    <div id="addVendorModal" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden flex items-center justify-center">
+    <div id="addVendorModal" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden flex items-center justify-center z-50">
         <div class="bg-white rounded-lg p-8 max-w-md w-full shadow-2xl">
             <h2 class="text-xl font-bold mb-4 border-b pb-2">Add New Vendor</h2>
             <form id="add-vendor-form" class="space-y-4">
@@ -186,12 +189,39 @@ module.exports = (app, { prisma }) => {
                 </div>
                 <div>
                     <label class="block text-sm font-bold text-gray-700">WhatsApp / Phone Number</label>
-                    <input type="text" id="v-phone" required placeholder="e.g., 27821234567" class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500">
-                    <p class="text-xs text-gray-500 mt-1">Required for automated RFQs.</p>
+                    <input type="text" id="v-phone" required placeholder="e.g., 0821234567" class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500">
                 </div>
                 <div class="flex justify-end space-x-3 pt-4 border-t">
                     <button type="button" onclick="toggleModal('addVendorModal')" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
-                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Save Vendor</button>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="rfqModal" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-8 max-w-md w-full shadow-2xl border-t-4 border-orange-500">
+            <h2 class="text-xl font-bold mb-1">🚀 Request for Quote (RFQ)</h2>
+            <p class="text-xs text-gray-500 mb-4 pb-2 border-b">Blast a WhatsApp message to all vendors in a category.</p>
+            <form id="rfq-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-bold text-gray-700">Select Vendor Category</label>
+                    <select id="rfq-category" class="w-full p-2 border rounded focus:ring-2 focus:ring-orange-500 bg-gray-50">
+                        <option>Catering</option>
+                        <option>Tent & Chair Hire</option>
+                        <option>Undertaker / Hearse</option>
+                        <option>Florist</option>
+                        <option>Logistics / Bus</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700">Requirement Details</label>
+                    <textarea id="rfq-details" rows="4" required placeholder="e.g., Need a 5x10m tent and 50 chairs for a funeral this Saturday in Orkney. Please quote." class="w-full p-2 border rounded focus:ring-2 focus:ring-orange-500"></textarea>
+                </div>
+                <div id="rfq-status" class="hidden text-sm font-bold text-center p-2 rounded"></div>
+                <div class="flex justify-end space-x-3 pt-4 border-t">
+                    <button type="button" onclick="toggleModal('rfqModal')" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
+                    <button type="submit" id="rfq-submit-btn" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 px-4 rounded shadow">Blast RFQ</button>
                 </div>
             </form>
         </div>
@@ -202,20 +232,18 @@ module.exports = (app, { prisma }) => {
         const CHURCH_CODE = urlParams.get('code');
 
         function toggleModal(id) {
-            const modal = document.getElementById(id);
-            modal.classList.toggle('hidden');
+            document.getElementById(id).classList.toggle('hidden');
         }
 
         async function loadVendors() {
             try {
                 const res = await fetch(\`/api/crm/vendors/\${CHURCH_CODE}\`);
                 const data = await res.json();
-                
                 const tbody = document.getElementById('vendor-table-body');
                 tbody.innerHTML = '';
 
                 if (data.vendors.length === 0) {
-                    tbody.innerHTML = \`<tr><td colspan="4" class="px-6 py-4 text-center text-gray-500">No vendors added yet. Click 'Add New Vendor' to start.</td></tr>\`;
+                    tbody.innerHTML = \`<tr><td colspan="4" class="px-6 py-4 text-center text-gray-500">No vendors added yet. Click 'Add Vendor' to start.</td></tr>\`;
                     return;
                 }
 
@@ -223,43 +251,71 @@ module.exports = (app, { prisma }) => {
                     tbody.innerHTML += \`
                         <tr class="hover:bg-gray-50">
                             <td class="px-6 py-4 whitespace-nowrap font-medium text-gray-900">\${v.name}</td>
-                            <td class="px-6 py-4 whitespace-nowrap">
-                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">\${v.category}</span>
-                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap"><span class="px-2 inline-flex text-xs font-semibold rounded-full bg-blue-100 text-blue-800">\${v.category}</span></td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">\${v.phone}</td>
-                            <td class="px-6 py-4 whitespace-nowrap">
-                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full \${v.status === 'ACTIVE' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">\${v.status}</span>
-                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap"><span class="px-2 inline-flex text-xs font-semibold rounded-full bg-green-100 text-green-800">ACTIVE</span></td>
                         </tr>
                     \`;
                 });
-            } catch (e) {
-                console.error(e);
-            }
+            } catch (e) { console.error(e); }
         }
 
+        // Handle Add Vendor
         document.getElementById('add-vendor-form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            
             const payload = {
                 name: document.getElementById('v-name').value,
                 category: document.getElementById('v-category').value,
                 phone: document.getElementById('v-phone').value,
             };
-
             const res = await fetch(\`/api/crm/vendors/\${CHURCH_CODE}\`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
             });
-
             const result = await res.json();
             if (result.success) {
                 toggleModal('addVendorModal');
                 document.getElementById('add-vendor-form').reset();
                 loadVendors(); 
-            } else {
-                alert("Error: " + result.error);
+            } else alert("Error: " + result.error);
+        });
+
+        // Handle Send RFQ
+        document.getElementById('rfq-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('rfq-submit-btn');
+            const statusBox = document.getElementById('rfq-status');
+            
+            btn.innerText = "Sending...";
+            btn.disabled = true;
+            statusBox.classList.add('hidden');
+
+            const payload = {
+                category: document.getElementById('rfq-category').value,
+                details: document.getElementById('rfq-details').value
+            };
+
+            try {
+                const res = await fetch(\`/api/crm/vendors/\${CHURCH_CODE}/rfq\`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+                });
+                const result = await res.json();
+                
+                statusBox.classList.remove('hidden');
+                if (result.success) {
+                    statusBox.className = "text-sm font-bold text-center p-2 rounded bg-green-100 text-green-800 mt-4";
+                    statusBox.innerText = "✅ " + result.message;
+                    setTimeout(() => { toggleModal('rfqModal'); statusBox.classList.add('hidden'); }, 3000);
+                    document.getElementById('rfq-form').reset();
+                } else {
+                    statusBox.className = "text-sm font-bold text-center p-2 rounded bg-red-100 text-red-800 mt-4";
+                    statusBox.innerText = "❌ " + result.error;
+                }
+            } catch (error) {
+                statusBox.className = "text-sm font-bold text-center p-2 rounded bg-red-100 text-red-800 mt-4";
+                statusBox.innerText = "❌ System Error";
+            } finally {
+                btn.innerText = "Blast RFQ";
+                btn.disabled = false;
             }
         });
 
@@ -281,6 +337,46 @@ module.exports = (app, { prisma }) => {
             ></iframe>
         `;
         res.send(renderPage(req.org, 'vendors', content));
+    });
+	
+	// 3. Send RFQ Blast via WhatsApp
+    router.post('/api/crm/vendors/:code/rfq', express.json(), async (req, res) => {
+        try {
+            const { category, details } = req.body;
+            
+            const org = await prisma.church.findUnique({ where: { code: req.params.code } });
+            if (!org) return res.status(404).json({ success: false, error: "Organization not found" });
+
+            // Find all vendors in this specific category
+            const vendors = await prisma.vendor.findMany({
+                where: { churchId: org.id, category: category }
+            });
+
+            if (vendors.length === 0) {
+                return res.status(400).json({ success: false, error: `No vendors found in the '${category}' category.` });
+            }
+
+            let sentCount = 0;
+            for (const vendor of vendors) {
+                if (vendor.phone) {
+                    // Format the WhatsApp Message
+                    const msg = `📢 *Request For Quote (RFQ)*\n\n*From:* ${org.name}\n*Category:* ${category}\n\n*Requirement:*\n${details}\n\n_Please reply directly to this message with your price estimate._`;
+                    
+                    // Clean the phone number for Twilio (+27 format)
+                    let cleanPhone = vendor.phone.replace(/\D/g, '');
+                    if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+                    
+                    // Send the message
+                    await sendWhatsApp(cleanPhone, msg).catch(e => console.error("RFQ Send Error", e));
+                    sentCount++;
+                }
+            }
+
+            res.json({ success: true, message: `RFQ blasted to ${sentCount} vendor(s)!` });
+        } catch (error) {
+            console.error("RFQ Blast Error:", error);
+            res.status(500).json({ success: false, error: "Failed to send RFQ blast." });
+        }
     });
 
     // --- DASHBOARD ---
