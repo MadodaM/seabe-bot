@@ -121,7 +121,15 @@ module.exports = (app, { prisma }) => {
     });
 	
 	// --- Vendors ---
-	router.get('/admin/:code/vendors', checkSession, (req, res) => {
+    
+    // 1. Explicitly force Express to serve the HTML file
+    const path = require('path');
+    router.get('/crm/vendors.html', (req, res) => {
+        res.sendFile(path.join(__dirname, '../public/crm/vendors.html'));
+    });
+
+    // 2. The Admin Iframe Dashboard
+    router.get('/admin/:code/vendors', checkSession, (req, res) => {
         const content = `
             <style> .container { max-width: 1200px !important; padding: 0 !important; } </style>
             <iframe 
