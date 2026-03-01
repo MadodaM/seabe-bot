@@ -282,6 +282,7 @@ router.post('/', (req, res) => {
                 }
 
                 // 🚀 NEW: The "New Member" Dynamic Quoter
+                // 🚀 NEW: The "New Member" Dynamic Quoter
                 if (session.step === 'SELECT_QUOTE_PLAN') {
                     const plans = await prisma.policyPlan.findMany({ 
                         where: { churchId: session.churchId } 
@@ -292,9 +293,10 @@ router.post('/', (req, res) => {
                     if (selectedIndex >= 0 && selectedIndex < plans.length) {
                         const plan = plans[selectedIndex];
                         
-                        // Generate the link to the web quote calculator
+                        // Generate the link with the user's phone and bot number included
                         const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
-                        const quoteLink = `${host}/quote.html?code=${session.churchCode}`;
+                        const botNum = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+                        const quoteLink = `${host}/quote.html?code=${session.churchCode}&phone=${cleanPhone}&bot=${botNum}`;
 
                         const msg = `*Quote: ${plan.planName}*\nBase Premium: *R${plan.monthlyPremium} / month*\n\n*Benefits Included:*\n${plan.benefitsSummary}\n\nTo add extended family (children/adults) and complete your registration, click your secure link below:\n👉 ${quoteLink}\n\nReply *Exit* to return to the start.`;
                         

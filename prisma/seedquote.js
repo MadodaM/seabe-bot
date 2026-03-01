@@ -21,7 +21,7 @@ async function main() {
     await prisma.policyPlan.deleteMany({});
     await prisma.policyAddon.deleteMany({});
 
-	// 3. Create TFBS Plans & Addons (Base + Dependent pricing)
+    // 3. Create TFBS Plans & Addons (Base + Dependent pricing)
     await prisma.policyPlan.createMany({
         data: [
             { churchId: tfbs.id, planName: 'Plan A', targetGroup: 'Principal Member (Single)', monthlyPremium: 140, benefitsSummary: 'Coffin, 40 Chairs, Tent, Veg 1x7, Sheep or Groceries' },
@@ -29,20 +29,19 @@ async function main() {
         ]
     });
 
-    // 👇 Change monthlyPremium to monthlyCost here!
     await prisma.policyAddon.createMany({
         data: [
-            { churchId: tfbs.id, addonName: 'Additional Child (Under 21)', monthlyCost: 20 },
-            { churchId: tfbs.id, addonName: 'Additional Adult (Extended Family)', monthlyCost: 30 }
+            { churchId: tfbs.id, addonName: 'Additional Child (Under 21)', monthlyPremium: 20 },
+            { churchId: tfbs.id, addonName: 'Additional Adult (Extended Family)', monthlyPremium: 30 }
         ]
     });
 
-    // 4. Create Insika Plans (Flat rate + Joining Fees moved to summary)
+    // 4. Create Insika Plans (Flat rate + Joining Fees)
     await prisma.policyPlan.createMany({
         data: [
-            { churchId: insika.id, planName: 'Silver Plan', targetGroup: 'Family (Up to 65 yrs)', monthlyPremium: 140, benefitsSummary: 'R100 Joining Fee. Coffin (Open Face), Hearse, Family Car, Tent, 40 Chairs, Veg 1x7' },
-            { churchId: insika.id, planName: 'Society Plan A', targetGroup: 'Up to 8 People', monthlyPremium: 55, benefitsSummary: 'R150 Joining Fee. R5,000 Cash Payout for Principal and Dependents' },
-            { churchId: insika.id, planName: 'Society Bantu Plan', targetGroup: 'Up to 10 People', monthlyPremium: 150, benefitsSummary: 'R150 Joining Fee. R15,000 Cash Payout for Principal, R12,000 for Dependents' }
+            { churchId: insika.id, planName: 'Silver Plan', targetGroup: 'Family (Up to 65 yrs)', monthlyPremium: 140, joiningFee: 100, benefitsSummary: 'Coffin (Open Face), Hearse, Family Car, Tent, 40 Chairs, Veg 1x7' },
+            { churchId: insika.id, planName: 'Society Plan A', targetGroup: 'Up to 8 People', monthlyPremium: 55, joiningFee: 150, coverAmount: 5000, maxMembers: 8, benefitsSummary: 'R5,000 Cash Payout for Principal and Dependents' },
+            { churchId: insika.id, planName: 'Society Bantu Plan', targetGroup: 'Up to 10 People', monthlyPremium: 150, joiningFee: 150, coverAmount: 15000, maxMembers: 10, benefitsSummary: 'R15,000 Cash Payout for Principal, R12,000 for Dependents' }
         ]
     });
 

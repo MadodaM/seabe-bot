@@ -156,28 +156,23 @@
         }
 
         // 🚀 4. Generate PDF and Redirect to WhatsApp
+        // 🚀 4. Generate PDF and Send to WhatsApp
         function acceptQuoteAndDownload() {
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF();
-            
             const orgName = document.getElementById('org-name').innerText;
             
-            // PDF Header
+            // --- PDF STYLING (Same as before) ---
             doc.setFont("helvetica", "bold");
             doc.setFontSize(22);
             doc.text(orgName, 20, 20);
-            
             doc.setFontSize(14);
             doc.setTextColor(100);
             doc.text("Official Policy Quote", 20, 30);
-            
             doc.setFontSize(10);
             doc.text(`Date: ${new Date().toLocaleDateString()}`, 20, 40);
-            
             doc.setDrawColor(200);
-            doc.line(20, 45, 190, 45); // Line
-
-            // Base Plan
+            doc.line(20, 45, 190, 45); 
             doc.setTextColor(0);
             doc.setFont("helvetica", "bold");
             doc.text("Base Plan:", 20, 55);
@@ -186,8 +181,6 @@
             doc.text(`ZAR ${parseFloat(planSelect.value).toFixed(2)}`, 170, 62, { align: "right" });
             
             let yPos = 75;
-            
-            // Addons loop
             const addonInputs = document.querySelectorAll('.addon-input');
             let hasAddons = false;
             
@@ -202,9 +195,8 @@
                         hasAddons = true;
                     }
                     const cost = parseFloat(input.dataset.cost) * qty;
-                    // Grab the name from the sibling span
                     const addonNameRaw = input.previousElementSibling.innerText; 
-                    const cleanName = addonNameRaw.split(' (+')[0]; // Remove the (+R30) part
+                    const cleanName = addonNameRaw.split(' (+')[0]; 
                     
                     doc.text(`${qty}x ${cleanName}`, 20, yPos);
                     doc.text(`ZAR ${cost.toFixed(2)}`, 170, yPos, { align: "right" });
@@ -212,28 +204,45 @@
                 }
             });
 
-            // Total
             yPos += 10;
-            doc.line(20, yPos, 190, yPos); // Line
+            doc.line(20, yPos, 190, yPos); 
             yPos += 10;
             doc.setFontSize(14);
             doc.setFont("helvetica", "bold");
             doc.text("Total Estimated Premium:", 20, yPos);
             doc.text(`ZAR ${finalTotal.toFixed(2)} / month`, 170, yPos, { align: "right" });
 
-            // Trigger Download
+            // --- 🚀 NEW SEND LOGIC ---
+            const btn = document.getElementById('accept-btn');
+            btn.innerText = "⏳ Sending Quote to WhatsApp...";
+            btn.disabled = true;
+
+            const phone = urlParams.get('phone');
+            const botNumber = urlParams.get('bot') || "27821234567"; // Fallback to a default if missing
+            const pdfBase64 = doc.output('datauristring'); // Get PDF as Base64 text
+
+            // Always download a local copy just in case
             doc.save(`Quote_${orgName.replace(/ /g, '_')}.pdf`);
 
-            // Format message to send back to WhatsApp bot
-            const waMsg = `Hello! I would like to accept the quote for the *${finalPlanName}* at *R${finalTotal.toFixed(2)}/month*. Please send me the final registration link.`;
-            
-            // Alert user & redirect to WhatsApp Bot (using your Twilio Bot number)
-            setTimeout(() => {
-                alert("✅ Quote PDF Downloaded! We will now redirect you back to WhatsApp to complete your registration.");
-                // Replace this with your actual Twilio / WhatsApp Bot Number
-                const botNumber = "27123456789"; 
+            const waMsg = `Hello! I accept the quote for the *${finalPlanName}* at *R${finalTotal.toFixed(2)}/month*. Let's finish my registration.`;
+
+            if (phone) {
+                // Send PDF to backend API
+                fetch('/api/public/send-quote', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, pdfBase64, orgName })
+                }).then(() => {
+                    // Redirect to WhatsApp chat after successful send
+                    window.location.href = `https://wa.me/${botNumber}?text=${encodeURIComponent(waMsg)}`;
+                }).catch(() => {
+                    alert("⚠️ PDF generated locally, but failed to send to WhatsApp. Redirecting to chat...");
+                    window.location.href = `https://wa.me/${botNumber}?text=${encodeURIComponent(waMsg)}`;
+                });
+            } else {
+                // If they opened the link directly without a phone number
                 window.location.href = `https://wa.me/${botNumber}?text=${encodeURIComponent(waMsg)}`;
-            }, 1500);
+            }
         }
 
         // Initialize

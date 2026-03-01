@@ -558,4 +558,43 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
         `;
         res.send(html);
     });
+	
+	// ==========================================
+    // 📄 API: SEND QUOTE PDF TO WHATSAPP
+    // ==========================================
+    app.post('/api/public/send-quote', express.json({ limit: '10mb' }), async (req, res) => {
+        const { phone, pdfBase64, orgName } = req.body;
+        
+        try {
+            // 1. Convert Base64 back into a physical PDF file
+            const base64Data = pdfBase64.replace(/^data:application\/pdf;base64,/, "");
+            const fileName = `Quote_${Date.now()}.pdf`;
+            const filePath = path.join(__dirname, '../public/crm', fileName);
+            
+            // Save it to the public folder so Twilio can read it
+            fs.writeFileSync(filePath, base64Data, 'base64');
+
+            const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+            const fileUrl = `${host}/crm/${fileName}`;
+
+            // 2. Send via Twilio
+            if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
+                const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+                const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+                
+                await twilioClient.messages.create({
+                    from: `whatsapp:${cleanTwilioNumber}`,
+                    to: `whatsapp:${phone}`,
+                    body: `📄 Here is your official quote from *${orgName}*.`,
+                    mediaUrl: [fileUrl]
+                });
+            }
+
+            res.json({ success: true });
+        } catch (error) {
+            console.error("PDF Send Error:", error);
+            res.status(500).json({ success: false });
+        }
+    });
+	
 };
