@@ -254,7 +254,7 @@ module.exports = (app, { prisma }) => {
                         <div style="font-size:11px; color:#555; margin-top:5px; max-width:250px;">${c.adminNotes || ''}</div>
                     </td>
                     <td>${docLink}</td>
-                    <td><button class="btn" style="width:auto; padding:6px 12px; font-size:12px; background:#2c3e50;" onclick="alert('Review action coming next!')">Review</button></td>
+                    <td><button class="btn" style="width:auto; padding:6px 12px; font-size:12px; background:#e67e22; border:none; color:white;" onclick="manualOverride(${c.id})">⚠️ Override</button></td>
                 </tr>`;
             }).join('');
         }
@@ -412,6 +412,35 @@ module.exports = (app, { prisma }) => {
 
             <script>
                 // (Leave all your existing scripts inside here untouched!)
+				// The Override Logic
+                async function manualOverride(claimId) {
+                    const manualId = prompt("Enter the exact ID Number from the Death Certificate:");
+                    
+                    if (!manualId || manualId.trim() === "") {
+                        alert("Override cancelled. ID number is required.");
+                        return;
+                    }
+
+                    if (confirm(\`Force approve this claim with ID: \${manualId}?\`)) {
+                        try {
+                            const res = await fetch(\`/api/crm/claims/${req.org.code}/override\`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ claimId: claimId, manualIdNumber: manualId.trim() })
+                            });
+                            
+                            const result = await res.json();
+                            if (result.success) {
+                                alert("✅ " + result.message);
+                                location.reload(); // Refresh to see the new Approved status
+                            } else {
+                                alert("❌ Failed: " + result.error);
+                            }
+                        } catch (e) {
+                            alert("Network error.");
+                        }
+                    }
+                }
                 document.getElementById('searchMemberBtn').addEventListener('click', async () => {
                     const btn = document.getElementById('searchMemberBtn');
                     const input = document.getElementById('searchIdInput');
