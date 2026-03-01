@@ -122,13 +122,155 @@ module.exports = (app, { prisma }) => {
 	
 	// --- Vendors ---
     
-    // 1. Explicitly force Express to serve the HTML file
-    const path = require('path');
+    // --- Vendors ---
+    
+    // 1. Explicitly serve the HTML directly from memory (Bypassing the missing file issue!)
     router.get('/crm/vendors.html', (req, res) => {
-        res.sendFile(path.join(__dirname, '../public/crm/vendors.html'));
+        res.send(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vendor Directory</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 font-sans p-6">
+
+    <div class="max-w-6xl mx-auto">
+        <div class="flex justify-between items-center mb-6">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-800">🛒 Vendor Directory</h1>
+                <p class="text-sm text-gray-500">Manage your approved suppliers for events and funerals.</p>
+            </div>
+            <button onclick="toggleModal('addVendorModal')" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow">
+                + Add New Vendor
+            </button>
+        </div>
+
+        <div class="bg-white rounded-lg shadow overflow-hidden border border-gray-200">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-100">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vendor Name</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                    </tr>
+                </thead>
+                <tbody id="vendor-table-body" class="bg-white divide-y divide-gray-200">
+                    <tr><td colspan="4" class="px-6 py-4 text-center text-gray-500">Loading vendors...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="addVendorModal" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden flex items-center justify-center">
+        <div class="bg-white rounded-lg p-8 max-w-md w-full shadow-2xl">
+            <h2 class="text-xl font-bold mb-4 border-b pb-2">Add New Vendor</h2>
+            <form id="add-vendor-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-bold text-gray-700">Company Name</label>
+                    <input type="text" id="v-name" required class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700">Category</label>
+                    <select id="v-category" class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500">
+                        <option>Catering</option>
+                        <option>Tent & Chair Hire</option>
+                        <option>Undertaker / Hearse</option>
+                        <option>Florist</option>
+                        <option>Logistics / Bus</option>
+                        <option>Other</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700">WhatsApp / Phone Number</label>
+                    <input type="text" id="v-phone" required placeholder="e.g., 27821234567" class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500">
+                    <p class="text-xs text-gray-500 mt-1">Required for automated RFQs.</p>
+                </div>
+                <div class="flex justify-end space-x-3 pt-4 border-t">
+                    <button type="button" onclick="toggleModal('addVendorModal')" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Save Vendor</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const CHURCH_CODE = urlParams.get('code');
+
+        function toggleModal(id) {
+            const modal = document.getElementById(id);
+            modal.classList.toggle('hidden');
+        }
+
+        async function loadVendors() {
+            try {
+                const res = await fetch(\`/api/crm/vendors/\${CHURCH_CODE}\`);
+                const data = await res.json();
+                
+                const tbody = document.getElementById('vendor-table-body');
+                tbody.innerHTML = '';
+
+                if (data.vendors.length === 0) {
+                    tbody.innerHTML = \`<tr><td colspan="4" class="px-6 py-4 text-center text-gray-500">No vendors added yet. Click 'Add New Vendor' to start.</td></tr>\`;
+                    return;
+                }
+
+                data.vendors.forEach(v => {
+                    tbody.innerHTML += \`
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4 whitespace-nowrap font-medium text-gray-900">\${v.name}</td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">\${v.category}</span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">\${v.phone}</td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full \${v.status === 'ACTIVE' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">\${v.status}</span>
+                            </td>
+                        </tr>
+                    \`;
+                });
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        document.getElementById('add-vendor-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const payload = {
+                name: document.getElementById('v-name').value,
+                category: document.getElementById('v-category').value,
+                phone: document.getElementById('v-phone').value,
+            };
+
+            const res = await fetch(\`/api/crm/vendors/\${CHURCH_CODE}\`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const result = await res.json();
+            if (result.success) {
+                toggleModal('addVendorModal');
+                document.getElementById('add-vendor-form').reset();
+                loadVendors(); 
+            } else {
+                alert("Error: " + result.error);
+            }
+        });
+
+        loadVendors();
+    </script>
+</body>
+</html>
+        `);
     });
 
-    // 2. The Admin Iframe Dashboard
+    // 2. The Admin Iframe Dashboard (Untouched)
     router.get('/admin/:code/vendors', checkSession, (req, res) => {
         const content = `
             <style> .container { max-width: 1200px !important; padding: 0 !important; } </style>
