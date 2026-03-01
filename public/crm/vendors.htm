@@ -128,13 +128,12 @@
             if (result.success) {
                 toggleModal('addVendorModal');
                 document.getElementById('add-vendor-form').reset();
-                loadVendors(); // Refresh table
+                loadVendors(); 
             } else {
                 alert("Error: " + result.error);
             }
         });
 
-        // Initialize
         loadVendors();
     </script>
 </body>
