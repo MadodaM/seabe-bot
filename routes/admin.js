@@ -1136,12 +1136,32 @@ module.exports = (app, { prisma }) => {
             if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
 
             if (action === 'approve') {
-                await prisma.member.update({ where: { id: member.id }, data: { isIdVerified: true, verifiedAt: new Date(), rejectionReason: null } });
-                try { await sendWhatsApp(cleanPhone, `✅ *KYC Approved!*\n\nHi ${member.firstName}, your identity documents and proof of address have been successfully verified by ${req.org.name}.`); } catch(e){ console.error(e.message); }
+                // 🚀 FLIP THE SWITCH: Set isIdVerified AND status to ACTIVE
+                await prisma.member.update({ 
+                    where: { id: member.id }, 
+                    data: { 
+                        isIdVerified: true, 
+                        verifiedAt: new Date(), 
+                        rejectionReason: null,
+                        status: 'ACTIVE' // <--- The magic key that activates the policy!
+                    } 
+                });
+                
+                try { 
+                    await sendWhatsApp(cleanPhone, `✅ *KYC Approved & Policy Active!*\n\nHi ${member.firstName}, your documents have been successfully verified by ${req.org.name}.\n\nYour policy is now officially *ACTIVE*. You can reply with *Hi* at any time to view your policy details, check your waiting period, or make a payment.`); 
+                } catch(e){ console.error(e.message); }
+                
             } else {
+                // Rejection Logic
                 const rejectMsg = reason || "Documents were not clear or incomplete";
-                await prisma.member.update({ where: { id: member.id }, data: { isIdVerified: false, rejectionReason: rejectMsg } });
-                try { await sendWhatsApp(cleanPhone, `❌ *KYC Verification Failed*\n\nHi ${member.firstName}, your recent document upload was rejected by the administrator.\n\n*Reason:* ${rejectMsg}\n\nPlease reply with *3* to generate a new secure link and re-upload your documents.`); } catch(e){ console.error(e.message); }
+                await prisma.member.update({ 
+                    where: { id: member.id }, 
+                    data: { isIdVerified: false, rejectionReason: rejectMsg, status: 'PENDING_KYC' } 
+                });
+                
+                try { 
+                    await sendWhatsApp(cleanPhone, `❌ *KYC Verification Failed*\n\nHi ${member.firstName}, your recent document upload was rejected.\n\n*Reason:* ${rejectMsg}\n\nPlease reply directly to this message with clear photos of your ID and Proof of Address to try again.`); 
+                } catch(e){ console.error(e.message); }
             }
         }
         res.redirect(`/admin/${req.org.code}/verifications`);
