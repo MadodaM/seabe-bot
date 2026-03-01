@@ -1296,5 +1296,32 @@ module.exports = (app, { prisma }) => {
         }
     });
 
+	// ============================================================
+    // 🧮 API: FETCH DYNAMIC QUOTE DATA
+    // ============================================================
+    app.get('/api/public/quote-data/:code', async (req, res) => {
+        try {
+            const org = await prisma.church.findUnique({
+                where: { code: req.params.code },
+                include: {
+                    plans: true,   // Fetching the dynamic plans
+                    addons: true   // Fetching the dynamic addons
+                }
+            });
+
+            if (!org) return res.status(404).json({ error: "Organization not found" });
+
+            res.json({
+                success: true,
+                orgName: org.name,
+                plans: org.plans,
+                addons: org.addons
+            });
+        } catch (error) {
+            console.error(error);
+            res.status(500).json({ error: "Failed to fetch quote data" });
+        }
+    });
+
     app.use('/', router);
 };
