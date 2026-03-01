@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dynamic Policy Quote</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
 <body class="bg-gray-100 font-sans p-4 md:p-8">
 
@@ -23,13 +24,13 @@
                     <label class="block text-sm font-bold text-gray-700 mb-2">1. Select Your Base Plan</label>
                     <select id="plan-select" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-gray-50">
                         <option value="0" data-benefits="">-- Choose a Plan --</option>
-                        </select>
+                    </select>
                     <p id="plan-benefits" class="text-xs text-green-700 mt-2 font-medium bg-green-50 p-3 rounded-lg hidden"></p>
                 </div>
 
                 <div id="addons-container" class="space-y-3 hidden">
                     <label class="block text-sm font-bold text-gray-700 mb-2">2. Add Extended Family (Optional)</label>
-                    </div>
+                </div>
 
                 <div class="bg-gray-800 text-white p-6 rounded-xl flex justify-between items-center shadow-inner mt-8">
                     <div>
@@ -42,21 +43,30 @@
                     </div>
                 </div>
 
+                <button type="button" id="accept-btn" onclick="acceptQuoteAndDownload()" disabled class="w-full mt-6 bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
+                    📥 Download PDF & Accept Quote
+                </button>
+
             </form>
         </div>
     </div>
 
     <script>
         const urlParams = new URLSearchParams(window.location.search);
-        const CHURCH_CODE = urlParams.get('code') || 'BS-001'; // Fallback for testing
+        const CHURCH_CODE = urlParams.get('code') || 'TFBS'; // Swapped fallback to TFBS
 
         const planSelect = document.getElementById('plan-select');
         const benefitsBox = document.getElementById('plan-benefits');
         const addonsContainer = document.getElementById('addons-container');
         const totalPriceEl = document.getElementById('total-price');
+        const acceptBtn = document.getElementById('accept-btn'); // 🚀 New Button Reference
 
         let currentPlans = [];
         let currentAddons = [];
+        
+        // 🚀 Variables to hold state for the PDF
+        let finalTotal = 0;
+        let finalPlanName = '';
 
         // 1. Fetch data from the database
         async function loadQuoteData() {
@@ -84,6 +94,7 @@
                 const option = document.createElement('option');
                 option.value = plan.monthlyPremium;
                 option.dataset.benefits = plan.benefitsSummary;
+                option.dataset.planname = plan.planName; // 🚀 Save plan name for PDF
                 option.textContent = `${plan.planName} - ${plan.targetGroup} (R${plan.monthlyPremium})`;
                 planSelect.appendChild(option);
             });
@@ -94,8 +105,8 @@
                 currentAddons.forEach(addon => {
                     addonsContainer.innerHTML += `
                         <div class="flex justify-between items-center bg-gray-50 p-3 rounded border">
-                            <span class="text-sm text-gray-700">${addon.addonName} (+R${addon.monthlyCost})</span>
-                            <input type="number" min="0" value="0" class="addon-input w-20 p-2 border rounded text-center" data-cost="${addon.monthlyCost}">
+                            <span class="text-sm text-gray-700 addon-name">${addon.addonName} (+R${addon.monthlyCost})</span>
+                            <input type="number" min="0" max="10" value="0" class="addon-input w-20 p-2 border rounded text-center" data-cost="${addon.monthlyCost}">
                         </div>
                     `;
                 });
@@ -103,6 +114,7 @@
 
             // Add Event Listeners to recalculate on change
             planSelect.addEventListener('change', calculateTotal);
+            // Need to re-bind inputs since we used innerHTML
             document.querySelectorAll('.addon-input').forEach(input => {
                 input.addEventListener('input', calculateTotal);
             });
@@ -111,19 +123,25 @@
         // 3. The Calculation Engine
         function calculateTotal() {
             let total = 0;
+            const selectedOption = planSelect.options[planSelect.selectedIndex];
 
+            // 🚀 Disable button if no plan is selected
+            if (selectedOption.value === "0") {
+                acceptBtn.disabled = true;
+                benefitsBox.classList.add('hidden');
+                totalPriceEl.textContent = "R0.00";
+                return;
+            }
+
+            acceptBtn.disabled = false;
+            finalPlanName = selectedOption.dataset.planname;
+            
             // Add Base Plan
-            const selectedPlanPrice = parseFloat(planSelect.value);
-            total += selectedPlanPrice;
+            total += parseFloat(selectedOption.value);
 
             // Show Benefits
-            const selectedOption = planSelect.options[planSelect.selectedIndex];
-            if(selectedOption.value !== "0") {
-                benefitsBox.textContent = "Includes: " + selectedOption.dataset.benefits;
-                benefitsBox.classList.remove('hidden');
-            } else {
-                benefitsBox.classList.add('hidden');
-            }
+            benefitsBox.textContent = "Includes: " + selectedOption.dataset.benefits;
+            benefitsBox.classList.remove('hidden');
 
             // Add Extras
             document.querySelectorAll('.addon-input').forEach(input => {
@@ -132,8 +150,90 @@
                 total += (qty * cost);
             });
 
-            // Update UI
+            // Update UI & State
+            finalTotal = total;
             totalPriceEl.textContent = "R" + total.toFixed(2);
+        }
+
+        // 🚀 4. Generate PDF and Redirect to WhatsApp
+        function acceptQuoteAndDownload() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            
+            const orgName = document.getElementById('org-name').innerText;
+            
+            // PDF Header
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(22);
+            doc.text(orgName, 20, 20);
+            
+            doc.setFontSize(14);
+            doc.setTextColor(100);
+            doc.text("Official Policy Quote", 20, 30);
+            
+            doc.setFontSize(10);
+            doc.text(`Date: ${new Date().toLocaleDateString()}`, 20, 40);
+            
+            doc.setDrawColor(200);
+            doc.line(20, 45, 190, 45); // Line
+
+            // Base Plan
+            doc.setTextColor(0);
+            doc.setFont("helvetica", "bold");
+            doc.text("Base Plan:", 20, 55);
+            doc.setFont("helvetica", "normal");
+            doc.text(finalPlanName, 20, 62);
+            doc.text(`ZAR ${parseFloat(planSelect.value).toFixed(2)}`, 170, 62, { align: "right" });
+            
+            let yPos = 75;
+            
+            // Addons loop
+            const addonInputs = document.querySelectorAll('.addon-input');
+            let hasAddons = false;
+            
+            addonInputs.forEach(input => {
+                const qty = parseInt(input.value) || 0;
+                if (qty > 0) {
+                    if (!hasAddons) {
+                        doc.setFont("helvetica", "bold");
+                        doc.text("Extended Family Dependents:", 20, yPos);
+                        doc.setFont("helvetica", "normal");
+                        yPos += 7;
+                        hasAddons = true;
+                    }
+                    const cost = parseFloat(input.dataset.cost) * qty;
+                    // Grab the name from the sibling span
+                    const addonNameRaw = input.previousElementSibling.innerText; 
+                    const cleanName = addonNameRaw.split(' (+')[0]; // Remove the (+R30) part
+                    
+                    doc.text(`${qty}x ${cleanName}`, 20, yPos);
+                    doc.text(`ZAR ${cost.toFixed(2)}`, 170, yPos, { align: "right" });
+                    yPos += 7;
+                }
+            });
+
+            // Total
+            yPos += 10;
+            doc.line(20, yPos, 190, yPos); // Line
+            yPos += 10;
+            doc.setFontSize(14);
+            doc.setFont("helvetica", "bold");
+            doc.text("Total Estimated Premium:", 20, yPos);
+            doc.text(`ZAR ${finalTotal.toFixed(2)} / month`, 170, yPos, { align: "right" });
+
+            // Trigger Download
+            doc.save(`Quote_${orgName.replace(/ /g, '_')}.pdf`);
+
+            // Format message to send back to WhatsApp bot
+            const waMsg = `Hello! I would like to accept the quote for the *${finalPlanName}* at *R${finalTotal.toFixed(2)}/month*. Please send me the final registration link.`;
+            
+            // Alert user & redirect to WhatsApp Bot (using your Twilio Bot number)
+            setTimeout(() => {
+                alert("✅ Quote PDF Downloaded! We will now redirect you back to WhatsApp to complete your registration.");
+                // Replace this with your actual Twilio / WhatsApp Bot Number
+                const botNumber = "27123456789"; 
+                window.location.href = `https://wa.me/${botNumber}?text=${encodeURIComponent(waMsg)}`;
+            }, 1500);
         }
 
         // Initialize
