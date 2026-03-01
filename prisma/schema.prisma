@@ -101,11 +101,19 @@ model Church {
   churchMembers  Member[] @relation("ChurchMembers")
   societyMembers Member[] @relation("SocietyMembers")
 
-  transactions Transaction[]
-  events       Event[]
-  claims       Claim[]
-  ads          Ad[]
-  news         News[]
+  transactions   Transaction[]
+  events         Event[]
+  claims         Claim[]
+  ads            Ad[]
+  news           News[]
+  // Procurement Relations
+  vendors        Vendor[]
+  rfqs           RequestForQuote[]
+  purchaseOrders PurchaseOrder[]
+
+  // 📋 Dynamic Policy Relations
+  plans  PolicyPlan[]
+  addons PolicyAddon[]
 }
 
 enum OrgType {
@@ -260,8 +268,8 @@ model Vendor {
   churchId       Int
   church         Church          @relation(fields: [churchId], references: [id])
   name           String
-  category       String          // e.g., Catering, Tent Hire, Venue, Florist
-  phone          String          // For WhatsApp RFQs
+  category       String // e.g., Catering, Tent Hire, Venue, Florist
+  phone          String // For WhatsApp RFQs
   email          String?
   bankDetails    String?
   status         String          @default("ACTIVE")
@@ -271,38 +279,62 @@ model Vendor {
 }
 
 model RequestForQuote {
-  id             Int             @id @default(autoincrement())
-  churchId       Int
-  church         Church          @relation(fields: [churchId], references: [id])
-  title          String          
-  description    String          @db.Text
-  requiredBy     DateTime
-  status         String          @default("OPEN") // OPEN, CLOSED, FULFILLED
-  quotes         Quote[]
-  createdAt      DateTime        @default(now())
+  id          Int      @id @default(autoincrement())
+  churchId    Int
+  church      Church   @relation(fields: [churchId], references: [id])
+  title       String
+  description String   @db.Text
+  requiredBy  DateTime
+  status      String   @default("OPEN") // OPEN, CLOSED, FULFILLED
+  quotes      Quote[]
+  createdAt   DateTime @default(now())
 }
 
 model Quote {
-  id             Int             @id @default(autoincrement())
-  rfqId          Int
-  rfq            RequestForQuote @relation(fields: [rfqId], references: [id])
-  vendorId       Int
-  vendor         Vendor          @relation(fields: [vendorId], references: [id])
-  amount         Float
-  notes          String?         @db.Text
-  status         String          @default("PENDING") // PENDING, ACCEPTED, REJECTED
-  createdAt      DateTime        @default(now())
+  id        Int             @id @default(autoincrement())
+  rfqId     Int
+  rfq       RequestForQuote @relation(fields: [rfqId], references: [id])
+  vendorId  Int
+  vendor    Vendor          @relation(fields: [vendorId], references: [id])
+  amount    Float
+  notes     String?         @db.Text
+  status    String          @default("PENDING") // PENDING, ACCEPTED, REJECTED
+  createdAt DateTime        @default(now())
 }
 
 model PurchaseOrder {
-  id             Int             @id @default(autoincrement())
-  poNumber       String          @unique 
-  churchId       Int
-  church         Church          @relation(fields: [churchId], references: [id])
-  vendorId       Int
-  vendor         Vendor          @relation(fields: [vendorId], references: [id])
-  amount         Float
-  lineItems      String          @db.Text // Storing as text/JSON string to avoid DB strictness
-  status         String          @default("ISSUED") // ISSUED, FULFILLED, PAID
-  createdAt      DateTime        @default(now())
+  id        Int      @id @default(autoincrement())
+  poNumber  String   @unique
+  churchId  Int
+  church    Church   @relation(fields: [churchId], references: [id])
+  vendorId  Int
+  vendor    Vendor   @relation(fields: [vendorId], references: [id])
+  amount    Float
+  lineItems String   @db.Text // Storing as text/JSON string to avoid DB strictness
+  status    String   @default("ISSUED") // ISSUED, FULFILLED, PAID
+  createdAt DateTime @default(now())
+}
+
+// ==========================================
+// 📋 DYNAMIC POLICY PLANS
+// ==========================================
+
+model PolicyPlan {
+  id              Int      @id @default(autoincrement())
+  churchId        Int
+  church          Church   @relation(fields: [churchId], references: [id])
+  planName        String // e.g., "Plan A"
+  targetGroup     String // e.g., "Single Member", "Principal + Spouse + 6 Children"
+  monthlyPremium  Float // e.g., 160.00
+  benefitsSummary String   @db.Text // e.g., "Grocery + Vegetables + 2 Sheep + R500 Cash"
+  createdAt       DateTime @default(now())
+}
+
+model PolicyAddon {
+  id          Int      @id @default(autoincrement())
+  churchId    Int
+  church      Church   @relation(fields: [churchId], references: [id])
+  addonName   String // e.g., "Additional Child", "Additional Adult"
+  monthlyCost Float // e.g., 20.00, 30.00
+  createdAt   DateTime @default(now())
 }
