@@ -164,8 +164,10 @@ router.post('/', (req, res) => {
                 return;
             }
 
-            // 2. The Universal "Join" Flow
-            if (incomingMsg === 'join' || session.step === 'SEARCH' || session.step === 'JOIN_SELECT') {
+            // 2. The Universal "Join" Flow (UPDATED WITH QUOTING ENGINE)
+            const joinSteps = ['SEARCH', 'JOIN_SELECT', 'CHOOSE_MEMBER_TYPE', 'ENTER_POLICY_NUMBER', 'SELECT_QUOTE_PLAN'];
+            
+            if (incomingMsg === 'join' || joinSteps.includes(session.step)) {
                 
                 if (incomingMsg === 'join') {
                     session.step = 'SEARCH';
@@ -195,19 +197,111 @@ router.post('/', (req, res) => {
                 if (session.step === 'JOIN_SELECT') {
                     const index = parseInt(incomingMsg) - 1;
                     const org = session.searchResults ? session.searchResults[index] : null;
+                    
                     if (org) {
-                        const updateData = org.type === 'BURIAL_SOCIETY' ? { societyCode: org.code } : { churchCode: org.code };
-                        
-                        await prisma.member.upsert({
-                            where: { phone: cleanPhone },
-                            update: updateData,
-                            create: { phone: cleanPhone, firstName: 'Member', lastName: 'New', ...updateData }
-                        });
-                        
-                        delete userSession[cleanPhone]; 
-                        await sendWhatsApp(cleanPhone, `✅ Successfully linked to *${org.name}*!\n\nReply *${org.type === 'BURIAL_SOCIETY' ? 'Society' : 'Hi'}* to access your menu.`);
+                        // 🚀 NEW: Intercept the flow if it's a Burial Society
+                        if (org.type === 'BURIAL_SOCIETY') {
+                            session.churchId = org.id;
+                            session.churchCode = org.code;
+                            session.step = 'CHOOSE_MEMBER_TYPE';
+                            
+                            const msg = `Welcome to *${org.name}*!\n\nHow can we help you today?\n\n1️⃣ I am an Existing Member\n2️⃣ I am a New Member (Get a Quote)`;
+                            await sendWhatsApp(cleanPhone, msg);
+                            return;
+                        } else {
+                            // OLD logic: If it's a church, link them immediately
+                            const updateData = { churchCode: org.code };
+                            await prisma.member.upsert({
+                                where: { phone: cleanPhone },
+                                update: updateData,
+                                create: { phone: cleanPhone, firstName: 'Member', lastName: 'New', ...updateData }
+                            });
+                            
+                            delete userSession[cleanPhone]; 
+                            await sendWhatsApp(cleanPhone, `✅ Successfully linked to *${org.name}*!\n\nReply *Hi* to access your menu.`);
+                            return;
+                        }
                     } else {
                         await sendWhatsApp(cleanPhone, "⚠️ Invalid selection. Please reply with a valid number from the list, or type *Exit*.");
+                        return;
+                    }
+                }
+
+                // 🚀 NEW: Handling the New vs Existing Split
+                if (session.step === 'CHOOSE_MEMBER_TYPE') {
+                    if (incomingMsg === '1') {
+                        session.step = 'ENTER_POLICY_NUMBER';
+                        await sendWhatsApp(cleanPhone, `Great! Please reply with your exact *ID Number* so we can locate your existing profile.`);
+                    } else if (incomingMsg === '2') {
+                        // Fetch dynamic plans from the database for the quote
+                        const plans = await prisma.policyPlan.findMany({ 
+                            where: { churchId: session.churchId } 
+                        });
+
+                        if (plans.length === 0) {
+                            delete userSession[cleanPhone];
+                            await sendWhatsApp(cleanPhone, `We are currently updating our digital plans. Please contact the office directly.\n\nReply *Join* to start over.`);
+                        } else {
+                            session.step = 'SELECT_QUOTE_PLAN';
+                            let planMsg = `*Available Plans:*\n\n`;
+                            plans.forEach((p, index) => {
+                                planMsg += `${index + 1}️⃣ *${p.planName}* - R${p.monthlyPremium}/pm\n_Covers: ${p.targetGroup}_\n\n`;
+                            });
+                            planMsg += `Reply with the number of the plan to see full benefits and get your quote.`;
+                            await sendWhatsApp(cleanPhone, planMsg);
+                        }
+                    } else {
+                        await sendWhatsApp(cleanPhone, `Invalid option. Please reply 1 or 2.`);
+                    }
+                    return;
+                }
+
+                // 🚀 NEW: The "Existing Member" Lookup
+                if (session.step === 'ENTER_POLICY_NUMBER') {
+                    // Search the database for this ID number under this specific society
+                    const memberMatch = await prisma.member.findFirst({
+                        where: {
+                            societyCode: session.churchCode,
+                            idNumber: incomingMsg 
+                        }
+                    });
+
+                    if (memberMatch) {
+                        // Success! Link this WhatsApp number to the member profile
+                        await prisma.member.update({ 
+                            where: { id: memberMatch.id }, 
+                            data: { phone: cleanPhone } 
+                        });
+                        
+                        delete userSession[cleanPhone];
+                        await sendWhatsApp(cleanPhone, `✅ Profile Linked!\n\nWelcome back, ${memberMatch.firstName}.\n\nReply *Society* to access your main menu (View Policy, Payments, Claims).`);
+                    } else {
+                        await sendWhatsApp(cleanPhone, `❌ We couldn't find a policy matching "${incomingMsg}". Please check your ID number and try again, or type *Exit* to restart.`);
+                    }
+                    return;
+                }
+
+                // 🚀 NEW: The "New Member" Dynamic Quoter
+                if (session.step === 'SELECT_QUOTE_PLAN') {
+                    const plans = await prisma.policyPlan.findMany({ 
+                        where: { churchId: session.churchId } 
+                    });
+                    
+                    const selectedIndex = parseInt(incomingMsg) - 1;
+
+                    if (selectedIndex >= 0 && selectedIndex < plans.length) {
+                        const plan = plans[selectedIndex];
+                        
+                        // Generate the link to the web quote calculator
+                        const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+                        const quoteLink = `${host}/quote.html?code=${session.churchCode}`;
+
+                        const msg = `*Quote: ${plan.planName}*\nBase Premium: *R${plan.monthlyPremium} / month*\n\n*Benefits Included:*\n${plan.benefitsSummary}\n\nTo add extended family (children/adults) and complete your registration, click your secure link below:\n👉 ${quoteLink}\n\nReply *Exit* to return to the start.`;
+                        
+                        delete userSession[cleanPhone]; // Reset state after quoting
+                        await sendWhatsApp(cleanPhone, msg);
+                    } else {
+                        await sendWhatsApp(cleanPhone, `Invalid selection. Please reply with a valid plan number.`);
                     }
                     return;
                 }
