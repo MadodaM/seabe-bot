@@ -19,12 +19,12 @@ router.post('/', (req, res) => {
     const incomingMsg = (req.body.Body || '').trim().toLowerCase();
     const cleanPhone = (req.body.From || '').replace('whatsapp:', '');
 
-    // 1. Respond to Twilio IMMEDIATELY
+// 1. Respond to Twilio IMMEDIATELY
     res.type('text/xml').send('<Response></Response>');
 
     (async () => {
         let session = {};
-        let clearSessionFlag = false; // Flag used to wipe the DB row when a flow finishes
+        let clearSessionFlag = false; 
 
         try {
             // ================================================
@@ -32,7 +32,6 @@ router.post('/', (req, res) => {
             // ================================================
             const dbSession = await prisma.botSession.findUnique({ where: { phone: cleanPhone } });
             if (dbSession) {
-                // Merge DB state into our working memory
                 session = { step: dbSession.step, mode: dbSession.mode, ...(dbSession.data || {}) };
             }
 
@@ -41,6 +40,25 @@ router.post('/', (req, res) => {
                 where: { phone: cleanPhone },
                 include: { church: true, society: true }
             });
+
+            // ================================================
+            // 🚦 GLOBAL RESET & COURSE SNOOZE (MOVED TO TOP!)
+            // ================================================
+            const exitKeywords = ['exit', 'cancel', 'menu', 'home'];
+            if (exitKeywords.includes(incomingMsg)) {
+                clearSessionFlag = true; 
+                
+                // If they were stuck in a quiz, unlock them and 'snooze' the lesson
+                if (member) {
+                    await prisma.enrollment.updateMany({
+                        where: { memberId: member.id, quizState: 'AWAITING_QUIZ' },
+                        data: { quizState: 'IDLE', updatedAt: new Date() } // Resets the clock
+                    });
+                }
+                
+                await sendWhatsApp(cleanPhone, "🔄 Session cleared & courses paused.\n\nReply *Join* to switch organizations, *Hi* for Church, or *Society* for Burial menus.");
+                return;
+            }
 
             // ================================================
             // 🎓 LMS Phase B: AI QUIZ EVALUATOR
@@ -111,15 +129,6 @@ router.post('/', (req, res) => {
             }
 
             // ================================================
-            // 🚦 GLOBAL RESET
-            // ================================================
-            if (incomingMsg === 'exit' || incomingMsg === 'cancel') {
-                clearSessionFlag = true; 
-                await sendWhatsApp(cleanPhone, "🔄 Session cleared. Reply *Join* to switch organizations, *Hi* for Church, or *Society* for Burial menus.");
-                return;
-            }
-
-            // ================================================
             // 🎓 LMS Phase A: COURSE ENROLLMENT
             // ================================================
             const lmsTriggers = ['mentorship', 'grow', 'learn', 'courses'];
@@ -147,6 +156,35 @@ router.post('/', (req, res) => {
                 session.step = 'AWAITING_COURSE_SELECTION';
                 session.availableCourses = courses; 
                 await sendWhatsApp(cleanPhone, msg);
+                return;
+            }
+
+            if (session.step === 'AWAITING_COURSE_SELECTION') {
+                const selectedIndex = parseInt(incomingMsg) - 1;
+                const courses = session.availableCourses;
+
+                if (selectedIndex >= 0 && selectedIndex < courses.length) {
+                    const selectedCourse = courses[selectedIndex];
+                    const enrollment = await prisma.enrollment.create({
+                        data: {
+                            memberId: member.id,
+                            courseId: selectedCourse.id,
+                            status: selectedCourse.price === 0 ? 'ACTIVE' : 'PENDING_PAYMENT'
+                        }
+                    });
+
+                    if (selectedCourse.price === 0) {
+                        session.step = 'LMS_ACTIVE';
+                        await sendWhatsApp(cleanPhone, `🎉 You are now enrolled in *${selectedCourse.title}*!\n\nLook out for your first module tomorrow morning at 07:00 AM.`);
+                    } else {
+                        const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+                        const paymentLink = `${host}/pay?enrollmentId=${enrollment.id}&amount=${selectedCourse.price}`;
+                        await sendWhatsApp(cleanPhone, `🎓 *${selectedCourse.title}*\n\nTo unlock your modules, please complete your subscription payment of *R${selectedCourse.price}*.\n\n💳 *Pay securely here:*\n👉 ${paymentLink}\n\nOnce paid, your modules will unlock automatically!`);
+                    }
+                    clearSessionFlag = true; 
+                } else {
+                    await sendWhatsApp(cleanPhone, "Invalid selection. Please reply with a valid course number.");
+                }
                 return;
             }
 
