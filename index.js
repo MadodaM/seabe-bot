@@ -64,7 +64,7 @@ app.use('/', webhooksRoute);
 app.use('/', crmClaimsRoute);
 app.use('/', require('./routes/paymentRoutes'));
 app.use('/', require('./routes/link')(app, { prisma })); // Note: Moved to use as middleware if possible
-app.use('/', require('./routes/collectionbot')(app, { prisma }));
+app.use('/', require('./routes/collectionbot')(app, { prisma }));		
 
 // ==========================================
 // 4. CRON & SERVER INIT

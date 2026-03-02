@@ -2,6 +2,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+
 async function processAndImportCoursePDF(pdfBuffer, mimeType, churchId, price = 0) {
     try {
         console.log("⏳ Sending PDF to Gemini for LMS Extraction...");
