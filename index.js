@@ -16,7 +16,6 @@ const webhooksRoute = require('./routes/webhooks');
 const crmClaimsRoute = require('./routes/crmClaims');
 const ficaPortalRoutes = require('./routes/ficaPortal');
 
-
 const app = express();
 const prisma = new PrismaClient();
 const upload = multer({ dest: 'uploads/' }); 
@@ -43,28 +42,30 @@ app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'p
 app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
 
 // ==========================================
-// 3. MOUNT DEDICATED ROUTERS
+// 3. MOUNT DEDICATED ROUTERS (ORDER MATTERS)
 // ==========================================
 
-// 🚀 MOVE THESE TO THE TOP (High Priority / Specific Paths)
+// 🚀 1. SPECIFIC SYSTEM MODULES FIRST
 try { require('./routes/platform')(app, { prisma }); } catch (e) { console.error("⚠️ Platform routes error:", e); }
 try { require('./routes/admin')(app, { prisma }); } catch (e) { console.error("⚠️ Client Admin routes error:", e); }
 try { require('./routes/web')(app, upload, { prisma }); } catch (e) { console.error("⚠️ Web routes error:", e); }
 
-// API & Specific Path Routers
+// 📱 2. API & WHATSAPP ENDPOINTS
 app.use('/api/whatsapp', require('./routes/whatsappRouter'));
-app.use('/kyc', require('./routes/kyc').router);
-app.use('/api/surepol', require('./routes/surepol'));
-app.use('/api/prospect', require('./routes/prospectKYC'));
-app.use('/api/fica', ficaPortalRoutes);
+try { app.use('/kyc', require('./routes/kyc').router); } catch(e){}
+try { app.use('/api/surepol', require('./routes/surepol')); } catch(e){}
+try { app.use('/api/prospect', require('./routes/prospectKYC')); } catch(e){}
 
-// ⚓ MOUNT ROOT-LEVEL CATCH-ALLS LAST
+// ⚓ 3. GENERIC ROOT ('/') CATCH-ALLS LAST
 app.use('/', blastEngineRoute);
 app.use('/', webhooksRoute);
 app.use('/', crmClaimsRoute);
-app.use('/', require('./routes/paymentRoutes'));
-app.use('/', require('./routes/link')(app, { prisma })); // Note: Moved to use as middleware if possible
-app.use('/', require('./routes/collectionbot')(app, { prisma }));		
+try { app.use('/', require('./routes/paymentRoutes')); } catch(e){}
+
+// 🛠️ 4. DIRECT INJECT FILES (Fixed Syntax)
+try { require('./routes/link')(app, { prisma }); } catch (e) { console.error("⚠️ Link routes error:", e); }
+try { require('./routes/collectionbot')(app, { prisma }); } catch (e) { console.error("⚠️ Collection routes error:", e); }
+try { require('./routes/collections')(app); } catch (e) { console.error("⚠️ Old Collection routes error:", e); }
 
 // ==========================================
 // 4. CRON & SERVER INIT
@@ -76,8 +77,8 @@ if (process.env.NODE_ENV !== 'test') {
     app.listen(PORT, () => {
         console.log(`✅ Seabe Engine running securely on port ${PORT}`);
         try {
-            startCronJobs(); // 👈 START THE AUTOMATION ENGINE
-			startDripCampaign(); // Turn on the LMS Heartbeat
+            startCronJobs(); 
+            startDripCampaign(); // Turn on the LMS Heartbeat
             console.log(`✅ Automated Cron Jobs scheduled.`);
         } catch (e) {
             console.log("⚠️ Scheduler module failed to start.");
