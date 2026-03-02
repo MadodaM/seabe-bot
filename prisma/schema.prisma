@@ -338,3 +338,36 @@ model PolicyAddon {
   monthlyCost Float // e.g., 20.00, 30.00
   createdAt   DateTime @default(now())
 }
+
+// --- LEARNING MANAGEMENT SYSTEM (LMS) ---
+
+model Course {
+  id          Int            @id @default(autoincrement())
+  churchId    Int
+  church      Church         @relation(fields: [churchId], references: [id])
+  title       String
+  description String?
+  price       Float          // 0 for free
+  modules     CourseModule[]
+  enrollments Enrollment[]
+}
+
+model CourseModule {
+  id          Int      @id @default(autoincrement())
+  courseId    Int
+  course      Course   @relation(fields: [courseId], references: [id])
+  title       String
+  contentUrl  String   // Link to PDF, Video, or Audio file
+  order       Int      // 1 for Foundation Module, 2 for Next, etc.
+}
+
+model Enrollment {
+  id          Int      @id @default(autoincrement())
+  memberId    Int
+  member      Member   @relation(fields: [memberId], references: [id])
+  courseId    Int
+  course      Course   @relation(fields: [courseId], references: [id])
+  status      String   @default("PENDING_PAYMENT") // ACTIVE, COMPLETED
+  progress    Int      @default(0) // Which module they are currently on
+  createdAt   DateTime @default(now())
+}

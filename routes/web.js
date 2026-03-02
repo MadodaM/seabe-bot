@@ -1,5 +1,6 @@
 // routes/web.js
 // PURPOSE: Public Website (Home, Register, Demo, Terms)
+const express = require('express');
 const sgMail = require('@sendgrid/mail');
 const fs = require('fs');
 const path = require('path');
@@ -441,6 +442,49 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     });
 
     app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1>"));
+	
+	// ==========================================
+    // 💳 API: PAYMENT WEBHOOK (LMS UNLOCK)
+    // ==========================================
+    app.post('/api/webhooks/payment-success', express.json(), async (req, res) => {
+        // Ozow/Netcash will send the enrollmentId back to you in this payload
+        const { enrollmentId, status } = req.body; 
+
+        if (status === 'SUCCESS') {
+            try {
+                // 1. Mark Enrollment as Active
+                const enrollment = await prisma.enrollment.update({
+                    where: { id: parseInt(enrollmentId) },
+                    data: { status: 'ACTIVE', progress: 1 },
+                    include: { member: true, course: { include: { modules: true } } }
+                });
+
+                // 2. Find the Foundation Module (Order = 1)
+                const foundationModule = enrollment.course.modules.find(m => m.order === 1);
+
+                // 3. Blast the WhatsApp Unlock Message
+                if (process.env.TWILIO_SID && foundationModule) {
+                    const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+                    const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+                    
+                    const msg = `🎉 *Payment Confirmed!*\n\nWelcome to *${enrollment.course.title}*. Your subscription is active.\n\nHere is your *Foundation Module:*\n📘 *${foundationModule.title}*\n\nAccess the material here:\n👉 ${foundationModule.contentUrl}\n\nReply *Next* when you have completed this module to unlock Module 2!`;
+
+                    await twilioClient.messages.create({
+                        from: `whatsapp:${cleanTwilioNumber}`,
+                        to: `whatsapp:${enrollment.member.phone}`,
+                        body: msg
+                    });
+                }
+
+                res.status(200).send('Webhook Processed');
+            } catch (error) {
+                console.error("Webhook Error:", error);
+                res.status(500).send('Error');
+            }
+        } else {
+            res.status(400).send('Payment not successful');
+        }
+    });
 
     // GET: Ozow Sandbox Preview Page
     app.get('/ozow-sandbox-preview', (req, res) => {
