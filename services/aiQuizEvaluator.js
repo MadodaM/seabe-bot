@@ -106,4 +106,4 @@ async function evaluateQuiz(incomingMsg, cleanPhone, member, pendingQuiz, sendWh
     }
 }
 
-module.exports = { evaluateQuiz };
+module.exports = { evaluateQuiz };	

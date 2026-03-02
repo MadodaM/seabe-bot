@@ -379,3 +379,11 @@ model Enrollment {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @default(now()) @updatedAt
 }
+
+model BotSession {
+  phone     String   @id
+  step      String?
+  mode      String?
+  data      Json?    @default("{}")
+  updatedAt DateTime @updatedAt
+}

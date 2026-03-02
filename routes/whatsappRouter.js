@@ -15,8 +15,6 @@ const { handleSocietyMessage } = require('../bots/societyBot');
 const { handleChurchMessage } = require('../bots/churchBot');
 const { processTwilioClaim } = require('../services/aiClaimWorker');
 
-let userSession = {}; 
-
 router.post('/', (req, res) => {
     const incomingMsg = (req.body.Body || '').trim().toLowerCase();
     const cleanPhone = (req.body.From || '').replace('whatsapp:', '');
@@ -25,12 +23,20 @@ router.post('/', (req, res) => {
     res.type('text/xml').send('<Response></Response>');
 
     (async () => {
-        try {
-            if (!userSession[cleanPhone]) userSession[cleanPhone] = {};
-            const session = userSession[cleanPhone];
-            const numMedia = parseInt(req.body.NumMedia || '0'); 
+        let session = {};
+        let clearSessionFlag = false; // Flag used to wipe the DB row when a flow finishes
 
-            // Include the related 'church' object so we can read its type and code
+        try {
+            // ================================================
+            // 🧠 LOAD SESSION FROM DATABASE
+            // ================================================
+            const dbSession = await prisma.botSession.findUnique({ where: { phone: cleanPhone } });
+            if (dbSession) {
+                // Merge DB state into our working memory
+                session = { step: dbSession.step, mode: dbSession.mode, ...(dbSession.data || {}) };
+            }
+
+            const numMedia = parseInt(req.body.NumMedia || '0'); 
             const member = await prisma.member.findUnique({
                 where: { phone: cleanPhone },
                 include: { church: true, society: true }
@@ -108,7 +114,7 @@ router.post('/', (req, res) => {
             // 🚦 GLOBAL RESET
             // ================================================
             if (incomingMsg === 'exit' || incomingMsg === 'cancel') {
-                delete userSession[cleanPhone];
+                clearSessionFlag = true; 
                 await sendWhatsApp(cleanPhone, "🔄 Session cleared. Reply *Join* to switch organizations, *Hi* for Church, or *Society* for Burial menus.");
                 return;
             }
@@ -160,13 +166,13 @@ router.post('/', (req, res) => {
 
                     if (selectedCourse.price === 0) {
                         session.step = 'LMS_ACTIVE';
-                        await sendWhatsApp(cleanPhone, `🎉 You are now enrolled in *${selectedCourse.title}*!\n\nLook out for your first module in the next 30 minutes!`);
+                        await sendWhatsApp(cleanPhone, `🎉 You are now enrolled in *${selectedCourse.title}*!\n\nLook out for your first module tomorrow morning at 07:00 AM.`);
                     } else {
                         const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
                         const paymentLink = `${host}/pay?enrollmentId=${enrollment.id}&amount=${selectedCourse.price}`;
-                        await sendWhatsApp(cleanPhone, `🎓 *${selectedCourse.title}*\n\nTo unlock your modules, please complete your subscription payment of *R${selectedCourse.price}*.\n\n💳 *Pay securely here:*\n👉 ${paymentLink}\n\nOnce paid, your first module will arrive within 30 minutes!`);
+                        await sendWhatsApp(cleanPhone, `🎓 *${selectedCourse.title}*\n\nTo unlock your modules, please complete your subscription payment of *R${selectedCourse.price}*.\n\n💳 *Pay securely here:*\n👉 ${paymentLink}\n\nOnce paid, your modules will unlock automatically!`);
                     }
-                    delete userSession[cleanPhone]; 
+                    clearSessionFlag = true; 
                 } else {
                     await sendWhatsApp(cleanPhone, "Invalid selection. Please reply with a valid course number.");
                 }
@@ -176,7 +182,7 @@ router.post('/', (req, res) => {
             // ================================================
             // 🔍 UNIVERSAL JOIN & QUOTE FLOW
             // ================================================
-            const joinSteps = ['SEARCH', 'JOIN_SELECT', 'CHOOSE_MEMBER_TYPE', 'ENTER_POLICY_NUMBER', 'SELECT_QUOTE_PLAN'];
+            const joinSteps = ['SEARCH', 'JOIN_SELECT', 'CHOOSE_MEMBER_TYPE', 'ENTER_POLICY_NUMBER', 'SELECT_QUOTE_PLAN', 'AWAITING_QUOTE_ACCEPTANCE'];
             if (incomingMsg === 'join' || joinSteps.includes(session.step)) {
                 
                 if (incomingMsg === 'join') {
@@ -216,18 +222,12 @@ router.post('/', (req, res) => {
                             await sendWhatsApp(cleanPhone, `Welcome to *${org.name}*!\n\nHow can we help you today?\n\n1️⃣ I am an Existing Member\n2️⃣ I am a New Member (Get a Quote)`);
                             return;
                         } else {
-                            // ✅ FIX: Using the Prisma 'connect' syntax to properly map the relationship
                             await prisma.member.upsert({
                                 where: { phone: cleanPhone },
                                 update: { church: { connect: { id: org.id } } },
-                                create: { 
-                                    phone: cleanPhone, 
-                                    firstName: 'Member', 
-                                    lastName: 'New', 
-                                    church: { connect: { id: org.id } } 
-                                }
+                                create: { phone: cleanPhone, firstName: 'Member', lastName: 'New', church: { connect: { id: org.id } } }
                             });
-                            delete userSession[cleanPhone]; 
+                            clearSessionFlag = true; 
                             await sendWhatsApp(cleanPhone, `✅ Successfully linked to *${org.name}*!\n\nReply *Hi* to access your menu.`);
                             return;
                         }
@@ -244,7 +244,7 @@ router.post('/', (req, res) => {
                     } else if (incomingMsg === '2') {
                         const plans = await prisma.policyPlan.findMany({ where: { churchId: session.churchId } });
                         if (plans.length === 0) {
-                            delete userSession[cleanPhone];
+                            clearSessionFlag = true;
                             await sendWhatsApp(cleanPhone, `We are currently updating our digital plans. Please contact the office directly.\n\nReply *Join* to start over.`);
                         } else {
                             session.step = 'SELECT_QUOTE_PLAN';
@@ -267,7 +267,7 @@ router.post('/', (req, res) => {
                     });
                     if (memberMatch) {
                         await prisma.member.update({ where: { id: memberMatch.id }, data: { phone: cleanPhone } });
-                        delete userSession[cleanPhone];
+                        clearSessionFlag = true;
                         await sendWhatsApp(cleanPhone, `✅ Profile Linked!\n\nWelcome back, ${memberMatch.firstName}.\n\nReply *Society* to access your main menu (View Policy, Payments, Claims).`);
                     } else {
                         await sendWhatsApp(cleanPhone, `❌ We couldn't find a policy matching "${incomingMsg}". Please check your ID number and try again, or type *Exit* to restart.`);
@@ -287,10 +287,8 @@ router.post('/', (req, res) => {
 
                         const msg = `*Quote: ${plan.planName}*\nBase Premium: *R${plan.monthlyPremium} / month*\n\n*Benefits Included:*\n${plan.benefitsSummary}\n\nTo add extended family (children/adults) and complete your registration, click your secure link below:\n👉 ${quoteLink}\n\nReply *Exit* to return to the start.`;
                         
-                        // ✅ FIX: Do NOT delete the session! Advance the step and save their premium.
                         session.step = 'AWAITING_QUOTE_ACCEPTANCE';
                         session.monthlyPremium = plan.monthlyPremium; 
-                        
                         await sendWhatsApp(cleanPhone, msg);
                     } else {
                         await sendWhatsApp(cleanPhone, `Invalid selection. Please reply with a valid plan number.`);
@@ -309,15 +307,12 @@ router.post('/', (req, res) => {
             }
 
             if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ID') {
-                // ✅ Safety Check: Did the session expire?
                 if (!session.churchId) {
                     await sendWhatsApp(cleanPhone, "⚠️ Your session has expired. Please reply with *Join* to restart your registration.");
                     return;
                 }
-
                 const idUrl = req.body.MediaUrl0; 
                 const mimeType = req.body.MediaContentType0 || 'image/jpeg';
-                
                 await sendWhatsApp(cleanPhone, "⏳ *AI Processing...*\nReading your ID document. Please wait a moment.");
 
                 try {
@@ -335,38 +330,17 @@ router.post('/', (req, res) => {
                     const extractedData = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
 
                     if (extractedData.confidenceScore > 75) {
-                        // ✅ FIX: Database write now includes the monthlyPremium to activate their policy!
                         await prisma.member.upsert({
                             where: { phone: cleanPhone },
-                            update: { 
-                                idPhotoUrl: idUrl, 
-                                firstName: extractedData.firstName,
-                                lastName: extractedData.lastName,
-                                idNumber: extractedData.idNumber,
-                                isIdVerified: true,
-                                monthlyPremium: session.monthlyPremium
-                            },
-                            create: {
-                                phone: cleanPhone,
-                                church: { connect: { id: session.churchId } },
-                                firstName: extractedData.firstName,
-                                lastName: extractedData.lastName,
-                                idNumber: extractedData.idNumber,
-                                idPhotoUrl: idUrl,
-                                isIdVerified: true,
-                                status: 'PENDING_KYC',
-                                monthlyPremium: session.monthlyPremium
-                            }
+                            update: { idPhotoUrl: idUrl, firstName: extractedData.firstName, lastName: extractedData.lastName, idNumber: extractedData.idNumber, isIdVerified: true, monthlyPremium: session.monthlyPremium },
+                            create: { phone: cleanPhone, church: { connect: { id: session.churchId } }, firstName: extractedData.firstName, lastName: extractedData.lastName, idNumber: extractedData.idNumber, idPhotoUrl: idUrl, isIdVerified: true, status: 'PENDING_KYC', monthlyPremium: session.monthlyPremium }
                         });
-
                         session.step = 'AWAITING_MEMBER_ADDRESS';
                         await sendWhatsApp(cleanPhone, `✅ *ID Verified Successfully!*\n\nWelcome, *${extractedData.firstName} ${extractedData.lastName}*\n(ID: ${extractedData.idNumber})\n\nAlmost done! Finally, please reply with a photo of your *Proof of Address* (e.g., a utility bill or bank statement).`);
                     } else {
                         throw new Error("AI Confidence too low.");
                     }
                 } catch (error) {
-                    console.error("KYC AI Extraction Error:", error);
-                    // Fallback saves them for admin review
                     await prisma.member.upsert({
                         where: { phone: cleanPhone },
                         update: { idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC', monthlyPremium: session.monthlyPremium },
@@ -391,8 +365,7 @@ router.post('/', (req, res) => {
                         where: { phone: cleanPhone },
                         data: { proofOfAddressUrl: addressUrl, status: newStatus, ...(memberRecord.isIdVerified && { verifiedAt: new Date() }) }
                     });
-
-                    delete userSession[cleanPhone]; 
+                    clearSessionFlag = true; 
                     await sendWhatsApp(cleanPhone, welcomeMsg);
                 } catch (error) {
                     await sendWhatsApp(cleanPhone, "⚠️ There was an issue saving your document. Please try sending the photo again.");
@@ -406,6 +379,7 @@ router.post('/', (req, res) => {
             if (numMedia > 0 && session.step === 'AWAITING_CLAIM_DOCUMENT') {
                 const code = member?.church?.code || member?.society?.code || session.churchCode;
                 processTwilioClaim(cleanPhone, req.body.MediaUrl0, code);
+                clearSessionFlag = true;
                 await sendWhatsApp(cleanPhone, "⏳ *Document Received!*\n\nOur Gemini AI is now processing the claim. I will message you once the scan is complete.");
                 return;
             }
@@ -418,7 +392,6 @@ router.post('/', (req, res) => {
                 return;
             }
 
-            // ✅ FIX: Directly accessing the relationship object returned by Prisma
             if (!member.church) {
                 await sendWhatsApp(cleanPhone, "⚠️ You are not currently linked to any organization. Please reply *Join* to search for yours.");
                 return;
@@ -458,6 +431,24 @@ router.post('/', (req, res) => {
 
         } catch (e) {
             console.error("❌ ROUTER CRASH:", e);
+        } finally {
+            // ================================================
+            // 💾 THE MAGIC: AUTO-SAVE SESSION TO DATABASE
+            // ================================================
+            try {
+                if (clearSessionFlag) {
+                    await prisma.botSession.deleteMany({ where: { phone: cleanPhone } });
+                } else if (Object.keys(session).length > 0) {
+                    const { step, mode, ...dataObj } = session;
+                    await prisma.botSession.upsert({
+                        where: { phone: cleanPhone },
+                        update: { step: step || null, mode: mode || null, data: dataObj },
+                        create: { phone: cleanPhone, step: step || null, mode: mode || null, data: dataObj }
+                    });
+                }
+            } catch (saveErr) {
+                console.error("❌ Failed to save session state to database:", saveErr);
+            }
         }
     })();
 });
