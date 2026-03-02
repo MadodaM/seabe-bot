@@ -6,6 +6,7 @@ const prisma = new PrismaClient();
 const sgMail = require('@sendgrid/mail'); 
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { evaluateQuiz } = require('../services/aiQuizEvaluator');
 
 // Bot & AI Imports
 const { getAISupportReply } = require('../services/aiSupport');
@@ -54,6 +55,22 @@ router.post('/', (req, res) => {
                 where: { phone: cleanPhone },
                 include: { church: true, society: true }
             });
+			
+			// ================================================
+            // 🎓 LMS Phase B: AI QUIZ EVALUATOR
+            // ================================================
+            if (member) {
+                const pendingQuiz = await prisma.enrollment.findFirst({
+                    where: { memberId: member.id, quizState: 'AWAITING_QUIZ', status: 'ACTIVE' },
+                    include: { course: { include: { modules: true } } }
+                });
+
+                if (pendingQuiz) {
+                    // Hand off the logic to our dedicated service!
+                    await evaluateQuiz(incomingMsg, cleanPhone, member, pendingQuiz, sendWhatsApp);
+                    return; // Stop processing any other router commands!
+                }
+            }
 
             // ================================================
             // 🛠️ ADMIN TRIGGER: SECURE EMAIL REPORT
