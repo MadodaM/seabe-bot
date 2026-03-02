@@ -1,3 +1,4 @@
+// services/aiQuizEvaluator.js
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -7,8 +8,6 @@ const prisma = new PrismaClient();
  * Grades student responses using Gemini and advances their course progress.
  */
 async function evaluateQuiz(incomingMsg, cleanPhone, member, pendingQuiz, sendWhatsApp) {
-    await sendWhatsApp(cleanPhone, "⏳ *AI is reviewing your answer...*");
-
     try {
         // Find the specific module the user is currently on
         const currentModule = pendingQuiz.course.modules.find(m => m.order === pendingQuiz.progress);
@@ -17,7 +16,18 @@ async function evaluateQuiz(incomingMsg, cleanPhone, member, pendingQuiz, sendWh
             throw new Error("Could not find the current module in database.");
         }
 
-        // 1. Handle Graceful Skip
+        // ==========================================
+        // 🔄 NEW: THE RESEND COMMAND
+        // ==========================================
+        if (incomingMsg === 'resend' || incomingMsg === 'lesson' || incomingMsg === 'help') {
+            const lessonMessage = `🔄 *Resending Lesson...*\n\n📖 *${pendingQuiz.course.title}*\nModule ${currentModule.order}: ${currentModule.title}\n\n${currentModule.dailyLessonText}\n\n❓ *Quick Assessment:*\n${currentModule.quizQuestion}\n\n_(Reply with your answer when ready!)_`;
+            await sendWhatsApp(cleanPhone, lessonMessage);
+            return; // Stop here so Gemini doesn't try to grade the word "resend"
+        }
+
+        // ==========================================
+        // ⏭️ THE SKIP COMMAND
+        // ==========================================
         if (incomingMsg === 'skip') {
             const nextProgress = pendingQuiz.progress + 1;
             const totalModules = pendingQuiz.course.modules.length;
@@ -31,13 +41,15 @@ async function evaluateQuiz(incomingMsg, cleanPhone, member, pendingQuiz, sendWh
                 }
             });
 
-            await sendWhatsApp(cleanPhone, "⏭️ *Quiz Skipped.*\n\nNo problem! Your progress is saved. I'll send you the next lesson tomorrow morning.");
+            await sendWhatsApp(cleanPhone, "⏭️ *Quiz Skipped.*\n\nNo problem! Your progress is saved. Your next module is queued up for delivery.");
             return;
         }
 
+        await sendWhatsApp(cleanPhone, "⏳ *AI is reviewing your answer...*");
+
         // 2. Initialize Gemini
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); 
         
         // 3. The Grading Prompt
         const prompt = `
@@ -70,7 +82,7 @@ async function evaluateQuiz(incomingMsg, cleanPhone, member, pendingQuiz, sendWh
                 // 🎉 COURSE COMPLETION
                 await prisma.enrollment.update({
                     where: { id: pendingQuiz.id },
-                    data: { status: 'COMPLETED', quizState: 'IDLE' }
+                    data: { status: 'COMPLETED', quizState: 'IDLE', updatedAt: new Date() }
                 });
                 
                 await sendWhatsApp(cleanPhone, `🎓 *COURSE COMPLETED!*\n\n${evaluation.feedback}\n\nCongratulations, ${member.firstName}! You have successfully finished the course. Keep an eye out for your digital certificate!`);
@@ -78,14 +90,14 @@ async function evaluateQuiz(incomingMsg, cleanPhone, member, pendingQuiz, sendWh
                 // 📈 LEVEL UP
                 await prisma.enrollment.update({
                     where: { id: pendingQuiz.id },
-                    data: { progress: newProgress, quizState: 'IDLE' }
+                    data: { progress: newProgress, quizState: 'IDLE', updatedAt: new Date() }
                 });
                 
-                await sendWhatsApp(cleanPhone, `✅ *Well done!*\n\n${evaluation.feedback}\n\nYour progress is saved. Look out for tomorrow's lesson at 07:00 AM!`);
+                await sendWhatsApp(cleanPhone, `✅ *Well done!*\n\n${evaluation.feedback}\n\nYour progress is saved. Look out for the next lesson soon!`);
             }
         } else {
             // 🔄 RETRY
-            await sendWhatsApp(cleanPhone, `💡 *Thinking...*\n\n${evaluation.feedback}\n\n(Try replying again, or type *skip* to move to the next lesson)`);
+            await sendWhatsApp(cleanPhone, `💡 *Thinking...*\n\n${evaluation.feedback}\n\n_(Try replying again, type *resend* to read the lesson again, or type *skip* to move on)_`);
         }
 
     } catch (error) {
