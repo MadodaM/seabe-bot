@@ -52,6 +52,7 @@ try { require('./routes/web')(app, upload, { prisma }); } catch (e) { console.er
 
 // 📱 2. API & WHATSAPP ENDPOINTS
 app.use('/api/whatsapp', require('./routes/whatsappRouter'));
+app.use('/api/public', require('./routes/quoteGenerator')); 
 try { app.use('/kyc', require('./routes/kyc').router); } catch(e){}
 try { app.use('/api/surepol', require('./routes/surepol')); } catch(e){}
 try { app.use('/api/prospect', require('./routes/prospectKYC')); } catch(e){}
@@ -61,6 +62,8 @@ app.use('/', blastEngineRoute);
 app.use('/', webhooksRoute);
 app.use('/', crmClaimsRoute);
 try { app.use('/', require('./routes/paymentRoutes')); } catch(e){}
+
+
 
 // 🛠️ 4. DIRECT INJECT FILES (Fixed Syntax)
 try { require('./routes/link')(app, { prisma }); } catch (e) { console.error("⚠️ Link routes error:", e); }
