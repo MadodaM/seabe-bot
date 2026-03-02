@@ -160,11 +160,11 @@ router.post('/', (req, res) => {
 
                     if (selectedCourse.price === 0) {
                         session.step = 'LMS_ACTIVE';
-                        await sendWhatsApp(cleanPhone, `🎉 You are now enrolled in *${selectedCourse.title}*!\n\nLook out for your first module tomorrow morning at 07:00 AM.`);
+                        await sendWhatsApp(cleanPhone, `🎉 You are now enrolled in *${selectedCourse.title}*!\n\nLook out for your first module in the next 30 minutes!`);
                     } else {
                         const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
                         const paymentLink = `${host}/pay?enrollmentId=${enrollment.id}&amount=${selectedCourse.price}`;
-                        await sendWhatsApp(cleanPhone, `🎓 *${selectedCourse.title}*\n\nTo unlock your modules, please complete your subscription payment of *R${selectedCourse.price}*.\n\n💳 *Pay securely here:*\n👉 ${paymentLink}\n\nOnce paid, your modules will unlock automatically!`);
+                        await sendWhatsApp(cleanPhone, `🎓 *${selectedCourse.title}*\n\nTo unlock your modules, please complete your subscription payment of *R${selectedCourse.price}*.\n\n💳 *Pay securely here:*\n👉 ${paymentLink}\n\nOnce paid, your first module will arrive within 30 minutes!`);
                     }
                     delete userSession[cleanPhone]; 
                 } else {
@@ -287,7 +287,10 @@ router.post('/', (req, res) => {
 
                         const msg = `*Quote: ${plan.planName}*\nBase Premium: *R${plan.monthlyPremium} / month*\n\n*Benefits Included:*\n${plan.benefitsSummary}\n\nTo add extended family (children/adults) and complete your registration, click your secure link below:\n👉 ${quoteLink}\n\nReply *Exit* to return to the start.`;
                         
-                        delete userSession[cleanPhone]; 
+                        // ✅ FIX: Do NOT delete the session! Advance the step and save their premium.
+                        session.step = 'AWAITING_QUOTE_ACCEPTANCE';
+                        session.monthlyPremium = plan.monthlyPremium; 
+                        
                         await sendWhatsApp(cleanPhone, msg);
                     } else {
                         await sendWhatsApp(cleanPhone, `Invalid selection. Please reply with a valid plan number.`);
@@ -299,15 +302,19 @@ router.post('/', (req, res) => {
             // ================================================
             // 🛡️ KYC & ONBOARDING UPLOADS (AI OCR)
             // ================================================
-            if (incomingMsg.includes('accept the quote')) {
-                userSession[cleanPhone] = userSession[cleanPhone] || {};
-                userSession[cleanPhone].step = 'AWAITING_MEMBER_ID';
-                
+            if (incomingMsg.includes('accept the quote') || session.step === 'AWAITING_QUOTE_ACCEPTANCE') {
+                session.step = 'AWAITING_MEMBER_ID';
                 await sendWhatsApp(cleanPhone, "🎉 Fantastic! Your quote has been accepted.\n\nTo finalize your policy registration, we must complete a quick KYC compliance check.\n\nPlease reply directly to this message with a clear photo of your *ID Document* (Green Book or Smart ID).");
                 return;
             }
 
             if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ID') {
+                // ✅ Safety Check: Did the session expire?
+                if (!session.churchId) {
+                    await sendWhatsApp(cleanPhone, "⚠️ Your session has expired. Please reply with *Join* to restart your registration.");
+                    return;
+                }
+
                 const idUrl = req.body.MediaUrl0; 
                 const mimeType = req.body.MediaContentType0 || 'image/jpeg';
                 
@@ -320,7 +327,7 @@ router.post('/', (req, res) => {
                     const base64Image = Buffer.from(arrayBuffer).toString('base64');
 
                     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-                    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" }); 
+                    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); 
                     
                     const prompt = `You are a strict KYC compliance bot for an insurance company. Read this South African ID (Green book or Smart Card). Extract the person's first name(s), last name (surname), and 13-digit ID number. Return ONLY a raw JSON object with no markdown formatting. Format: {"firstName": "John", "lastName": "Doe", "idNumber": "1234567890123", "confidenceScore": 95}`;
                     
@@ -328,7 +335,7 @@ router.post('/', (req, res) => {
                     const extractedData = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
 
                     if (extractedData.confidenceScore > 75) {
-                        // ✅ FIX: Using connect syntax here as well
+                        // ✅ FIX: Database write now includes the monthlyPremium to activate their policy!
                         await prisma.member.upsert({
                             where: { phone: cleanPhone },
                             update: { 
@@ -336,7 +343,8 @@ router.post('/', (req, res) => {
                                 firstName: extractedData.firstName,
                                 lastName: extractedData.lastName,
                                 idNumber: extractedData.idNumber,
-                                isIdVerified: true 
+                                isIdVerified: true,
+                                monthlyPremium: session.monthlyPremium
                             },
                             create: {
                                 phone: cleanPhone,
@@ -346,7 +354,8 @@ router.post('/', (req, res) => {
                                 idNumber: extractedData.idNumber,
                                 idPhotoUrl: idUrl,
                                 isIdVerified: true,
-                                status: 'PENDING_KYC'
+                                status: 'PENDING_KYC',
+                                monthlyPremium: session.monthlyPremium
                             }
                         });
 
@@ -357,19 +366,11 @@ router.post('/', (req, res) => {
                     }
                 } catch (error) {
                     console.error("KYC AI Extraction Error:", error);
-                    // ✅ FIX: Using connect syntax in fallback
+                    // Fallback saves them for admin review
                     await prisma.member.upsert({
                         where: { phone: cleanPhone },
-                        update: { idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC' },
-                        create: { 
-                            phone: cleanPhone, 
-                            church: { connect: { id: session.churchId } }, 
-                            firstName: 'Pending', 
-                            lastName: 'Admin Review', 
-                            idPhotoUrl: idUrl, 
-                            isIdVerified: false, 
-                            status: 'PENDING_KYC' 
-                        }
+                        update: { idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC', monthlyPremium: session.monthlyPremium },
+                        create: { phone: cleanPhone, church: { connect: { id: session.churchId } }, firstName: 'Pending', lastName: 'Admin Review', idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC', monthlyPremium: session.monthlyPremium }
                     });
                     session.step = 'AWAITING_MEMBER_ADDRESS';
                     await sendWhatsApp(cleanPhone, "⚠️ *Automatic Verification Failed*\n\nWe couldn't clearly read the ID automatically. It has been securely forwarded for manual review.\n\nTo continue, please reply with a photo of your *Proof of Address*.");
