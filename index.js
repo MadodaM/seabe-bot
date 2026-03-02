@@ -10,10 +10,12 @@ const axios = require('axios');
 const sgMail = require('@sendgrid/mail'); 
 const { PrismaClient } = require('@prisma/client');
 const { startCronJobs } = require('./services/scheduler');
+const { startDripCampaign } = require('./services/dripCampaign');
 const blastEngineRoute = require('./routes/blastEngine');
 const webhooksRoute = require('./routes/webhooks');
 const crmClaimsRoute = require('./routes/crmClaims');
 const ficaPortalRoutes = require('./routes/ficaPortal');
+
 
 const app = express();
 const prisma = new PrismaClient();
@@ -76,6 +78,7 @@ if (process.env.NODE_ENV !== 'test') {
         console.log(`✅ Seabe Engine running securely on port ${PORT}`);
         try {
             startCronJobs(); // 👈 START THE AUTOMATION ENGINE
+			startDripCampaign(); // Turn on the LMS Heartbeat
             console.log(`✅ Automated Cron Jobs scheduled.`);
         } catch (e) {
             console.log("⚠️ Scheduler module failed to start.");

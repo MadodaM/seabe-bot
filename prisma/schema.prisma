@@ -355,21 +355,27 @@ model Course {
 }
 
 model CourseModule {
-  id         Int    @id @default(autoincrement())
-  courseId   Int
-  course     Course @relation(fields: [courseId], references: [id])
-  title      String
-  contentUrl String // Link to PDF, Video, or Audio file
-  order      Int // 1 for Foundation Module, 2 for Next, etc.
+  id              Int      @id @default(autoincrement())
+  courseId        Int
+  course          Course   @relation(fields: [courseId], references: [id])
+  title           String
+  contentUrl      String?  // Optional PDF/Video link
+  dailyLessonText String?  // 07:00 AM WhatsApp Blast
+  quizQuestion    String?  // 12:00 PM Check on Learning
+  quizAnswer      String?  // The correct answer/rubric for AI to check against
+  quizExplanation String?  // The AI's fallback explanation
+  order           Int      // Day 1, Day 2, etc.
 }
 
 model Enrollment {
-  id        Int      @id @default(autoincrement())
-  memberId  Int
-  member    Member   @relation(fields: [memberId], references: [id])
-  courseId  Int
-  course    Course   @relation(fields: [courseId], references: [id])
-  status    String   @default("PENDING_PAYMENT") // ACTIVE, COMPLETED
-  progress  Int      @default(0) // Which module they are currently on
-  createdAt DateTime @default(now())
+  id            Int      @id @default(autoincrement())
+  memberId      Int
+  member        Member   @relation(fields: [memberId], references: [id])
+  courseId      Int
+  course        Course   @relation(fields: [courseId], references: [id])
+  status        String   @default("PENDING_PAYMENT") // ACTIVE, COMPLETED
+  progress      Int      @default(1) // Which Module/Day they are on
+  quizState     String   @default("IDLE") // IDLE, AWAITING_QUIZ
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
 }
