@@ -31,8 +31,8 @@ async function main() {
 
     await prisma.policyAddon.createMany({
         data: [
-            { churchId: tfbs.id, addonName: 'Additional Child (Under 21)', monthlyPremium: 20 },
-            { churchId: tfbs.id, addonName: 'Additional Adult (Extended Family)', monthlyPremium: 30 }
+            { churchId: tfbs.id, addonName: 'Additional Child (Under 21)', monthlyCost: 20 },
+            { churchId: tfbs.id, addonName: 'Additional Adult (Extended Family)', monthlyCost: 30 }
         ]
     });
 

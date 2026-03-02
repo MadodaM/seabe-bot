@@ -16,7 +16,7 @@ model Member {
   id                Int       @id @default(autoincrement())
   firstName         String
   lastName          String
-  phone             String    @unique
+  phone             String
   email             String?
   createdAt         DateTime  @default(now())
   monthlyPremium    Float? // <--- ADD THIS LINE
@@ -130,8 +130,9 @@ model Transaction {
   id         Int      @id @default(autoincrement())
   churchCode String
   church     Church   @relation(fields: [churchCode], references: [code])
-  phone      String
-  member     Member?  @relation(fields: [phone], references: [phone]) // Optional link for history
+  phone      String   // Keep this for easy Twilio replies
+  memberId   Int?     // Add this new field
+  member     Member?  @relation(fields: [memberId], references: [id])
   type       String // OFFERING, TITHE, PREM, TICKET
   amount     Float
   reference  String   @unique
@@ -186,8 +187,8 @@ model Claim {
   church     Church @relation(fields: [churchCode], references: [code])
 
   // Link to Member
-  memberPhone String
-  member      Member @relation(fields: [memberPhone], references: [phone])
+  memberId    Int?
+  member      Member? @relation(fields: [memberId], references: [id])
 
   beneficiaryName String
   payoutAmount    Float
@@ -250,8 +251,8 @@ model AuditLog {
 
 model RiskFlag {
   id          Int    @id @default(autoincrement())
-  memberPhone String
-  member      Member @relation(fields: [memberPhone], references: [phone])
+  memberId    Int
+  member      Member @relation(fields: [memberId], references: [id])
 
   flagType    String // "VELOCITY_SPIKE", "DUPLICATE_CLAIM", "FICA_EXPIRED"
   severity    String // "LOW", "MEDIUM", "CRITICAL"
@@ -330,6 +331,10 @@ model PolicyPlan {
   monthlyPremium  Float // e.g., 160.00
   benefitsSummary String   @db.Text // e.g., "Grocery + Vegetables + 2 Sheep + R500 Cash"
   createdAt       DateTime @default(now())
+  
+  joiningFee      Float?   
+  coverAmount     Float?   
+  maxMembers      Int?
 }
 
 model PolicyAddon {

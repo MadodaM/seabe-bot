@@ -5,7 +5,7 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const { sendWhatsApp } = require('../services/whatsapp');
+const { sendWhatsApp } = require('../services/twilioClient'); // Ensure this points to your twilioClient
 
 // 📊 GET ALL CLAIMS FOR A BURIAL SOCIETY
 router.get('/api/crm/claims/:churchCode', async (req, res) => {
@@ -14,11 +14,18 @@ router.get('/api/crm/claims/:churchCode', async (req, res) => {
     try {
         console.log(`📊 Fetching Claims Vault for ${churchCode}...`);
 
-        // Fetch all claims for this specific organization, newest first
-        const allClaims = await prisma.claim.findMany({
+        // 🚀 NEW: Include the member relation to get the phone number
+        const rawClaims = await prisma.claim.findMany({
             where: { churchCode: churchCode },
+            include: { member: true }, 
             orderBy: { createdAt: 'desc' } 
         });
+
+        // 🚀 NEW: Map the claims so the frontend still sees 'memberPhone'
+        const allClaims = rawClaims.map(c => ({
+            ...c,
+            memberPhone: c.member ? c.member.phone : (c.claimantPhone || 'Unknown') 
+        }));
 
         // 🧠 The "Smart Sort": Grouping the claims for the UI
         const flaggedClaims = allClaims.filter(c => c.status.includes('FLAGGED'));
@@ -55,26 +62,30 @@ router.put('/api/crm/claims/:id/status', async (req, res) => {
     try {
         console.log(`⚖️ Admin is marking Claim #${claimId} as ${status}...`);
 
-        // 1. Update the database
+        // 1. Update the database & Include the member to get their phone
         const updatedClaim = await prisma.claim.update({
             where: { id: claimId },
             data: { 
                 status: status,
                 adminNotes: reason ? `Admin Note: ${reason}` : undefined,
                 updatedAt: new Date()
-            }
+            },
+            include: { member: true } // 🚀 NEW
         });
 
         // 2. Notify the Family via WhatsApp
         let message = '';
         if (status === 'APPROVED') {
-            message = `✅ *Claim Approved*\n\nYour claim for ID ending in *${updatedClaim.deceasedIdNumber.slice(-4)}* has been fully approved by the society administrators.\n\nThe payout will be processed to the beneficiary bank account on file shortly.`;
+            message = `✅ *Claim Approved*\n\nYour claim for ID ending in *${(updatedClaim.deceasedIdNumber || '0000').slice(-4)}* has been fully approved by the society administrators.\n\nThe payout will be processed to the beneficiary bank account on file shortly.`;
         } else if (status === 'DECLINED') {
-            message = `⚠️ *Claim Update*\n\nYour claim for ID ending in *${updatedClaim.deceasedIdNumber.slice(-4)}* has been reviewed.\n\nUnfortunately, it has been declined at this time. Reason: ${reason || 'Does not meet policy requirements'}.\n\nPlease reply *1* to speak with an administrator.`;
+            message = `⚠️ *Claim Update*\n\nYour claim for ID ending in *${(updatedClaim.deceasedIdNumber || '0000').slice(-4)}* has been reviewed.\n\nUnfortunately, it has been declined at this time. Reason: ${reason || 'Does not meet policy requirements'}.\n\nPlease reply *1* to speak with an administrator.`;
         }
 
-        if (message && updatedClaim.claimantPhone) {
-            await sendWhatsApp(updatedClaim.claimantPhone, message);
+        // 🚀 NEW: Find the correct phone number to text
+        const phoneToSend = updatedClaim.claimantPhone || (updatedClaim.member ? updatedClaim.member.phone : null);
+
+        if (message && phoneToSend) {
+            await sendWhatsApp(phoneToSend, message);
         }
 
         return res.status(200).json({ success: true, claim: updatedClaim });
