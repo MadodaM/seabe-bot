@@ -33,4 +33,22 @@ const sendWhatsApp = async (to, body) => {
     }
 };
 
-module.exports = { sendWhatsApp };
+const sendWhatsAppMedia = async (to, caption, mediaUrl) => {
+    if (!twilioClient) return console.log("⚠️ Twilio Keys Missing!");
+    const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+    
+    try {
+        await twilioClient.messages.create({
+            from: `whatsapp:${cleanTwilioNumber}`, 
+            to: `whatsapp:${to}`,
+            body: caption,
+            mediaUrl: [mediaUrl] // Twilio requires media URLs in an array
+        });
+        console.log(`🖼️ Certificate delivered to ${to}`);
+    } catch (err) {
+        console.error("❌ Twilio Media Send Error:", err.message);
+    }
+};
+
+// Update the export at the bottom:
+module.exports = { sendWhatsApp, sendWhatsAppMedia };

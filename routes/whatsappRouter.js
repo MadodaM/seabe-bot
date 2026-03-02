@@ -19,7 +19,7 @@ router.post('/', (req, res) => {
     const incomingMsg = (req.body.Body || '').trim().toLowerCase();
     const cleanPhone = (req.body.From || '').replace('whatsapp:', '');
 
-// 1. Respond to Twilio IMMEDIATELY
+    // 1. Respond to Twilio IMMEDIATELY
     res.type('text/xml').send('<Response></Response>');
 
     (async () => {
@@ -42,9 +42,19 @@ router.post('/', (req, res) => {
             });
 
             // ================================================
-            // 🚦 GLOBAL RESET & COURSE SNOOZE (MOVED TO TOP!)
+            // 🚦 GLOBAL RESET & COURSE SNOOZE
             // ================================================
-           // ✅ Context-aware reset message
+            const exitKeywords = ['exit', 'cancel', 'menu', 'home'];
+            if (exitKeywords.includes(incomingMsg)) {
+                clearSessionFlag = true; 
+                
+                if (member) {
+                    await prisma.enrollment.updateMany({
+                        where: { memberId: member.id, quizState: 'AWAITING_QUIZ' },
+                        data: { quizState: 'IDLE', updatedAt: new Date() } 
+                    });
+                }
+                
                 let resetMsg = "🔄 Session cleared & courses paused.\n\nReply *Join* to switch organizations.";
                 if (member && member.church) {
                     if (member.church.type === 'BURIAL_SOCIETY') resetMsg += "\nReply *Society* for your main menu.";
@@ -55,9 +65,6 @@ router.post('/', (req, res) => {
                 }
                 
                 await sendWhatsApp(cleanPhone, resetMsg);
-                return;
-                               
-                await sendWhatsApp(cleanPhone, "🔄 Session cleared & courses paused.\n\nReply *Join* to switch organizations, *Amen* for Church, or *Society* for Burial Society menus.");
                 return;
             }
 
@@ -189,35 +196,6 @@ router.post('/', (req, res) => {
                 return;
             }
 
-            if (session.step === 'AWAITING_COURSE_SELECTION') {
-                const selectedIndex = parseInt(incomingMsg) - 1;
-                const courses = session.availableCourses;
-
-                if (selectedIndex >= 0 && selectedIndex < courses.length) {
-                    const selectedCourse = courses[selectedIndex];
-                    const enrollment = await prisma.enrollment.create({
-                        data: {
-                            memberId: member.id,
-                            courseId: selectedCourse.id,
-                            status: selectedCourse.price === 0 ? 'ACTIVE' : 'PENDING_PAYMENT'
-                        }
-                    });
-
-                    if (selectedCourse.price === 0) {
-                        session.step = 'LMS_ACTIVE';
-                        await sendWhatsApp(cleanPhone, `🎉 You are now enrolled in *${selectedCourse.title}*!\n\nLook out for your first module tomorrow morning at 07:00 AM.`);
-                    } else {
-                        const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
-                        const paymentLink = `${host}/pay?enrollmentId=${enrollment.id}&amount=${selectedCourse.price}`;
-                        await sendWhatsApp(cleanPhone, `🎓 *${selectedCourse.title}*\n\nTo unlock your modules, please complete your subscription payment of *R${selectedCourse.price}*.\n\n💳 *Pay securely here:*\n👉 ${paymentLink}\n\nOnce paid, your modules will unlock automatically!`);
-                    }
-                    clearSessionFlag = true; 
-                } else {
-                    await sendWhatsApp(cleanPhone, "Invalid selection. Please reply with a valid course number.");
-                }
-                return;
-            }
-
             // ================================================
             // 🔍 UNIVERSAL JOIN & QUOTE FLOW
             // ================================================
@@ -261,7 +239,6 @@ router.post('/', (req, res) => {
                             await sendWhatsApp(cleanPhone, `Welcome to *${org.name}*!\n\nHow can we help you today?\n\n1️⃣ I am an Existing Member\n2️⃣ I am a New Member (Get a Quote)`);
                             return;
                         } else if (org.type === 'NON_PROFIT' || org.type === 'SERVICE_PROVIDER') {
-                            // 🚀 NEW: NPO & Service Provider Welcome
                             await prisma.member.upsert({
                                 where: { phone: cleanPhone },
                                 update: { church: { connect: { id: org.id } } },
@@ -271,7 +248,6 @@ router.post('/', (req, res) => {
                             await sendWhatsApp(cleanPhone, `✅ Successfully linked to *${org.name}*!\n\n📚 Reply *Courses* to view our digital learning programs, or *Menu* to access your dashboard.`);
                             return;
                         } else {
-                            // ⛪ Classic Church Welcome
                             await prisma.member.upsert({
                                 where: { phone: cleanPhone },
                                 update: { church: { connect: { id: org.id } } },
@@ -461,16 +437,14 @@ router.post('/', (req, res) => {
                 }
             }
 
-            // Expand triggers to include standard business terms for NGOs/Providers
-            const orgTriggers = ['hi', 'menu', 'hello', 'pay', 'amen', 'dashboard'];
+            const orgTriggers = ['tithe', 'menu', 'hello', 'pay', 'amen', 'dashboard'];
             if (orgTriggers.includes(incomingMsg) || session.mode === 'CHURCH') {
                 if (member.church && member.church.type !== 'BURIAL_SOCIETY') {
                     session.mode = 'CHURCH';
-                    // NOTE: Your churchBot now acts as the default menu for Churches, NPOs, and Providers!
                     await handleChurchMessage(cleanPhone, incomingMsg, session, member);
                     return;
                 } else {
-                    await sendWhatsApp(cleanPhone, "⚠️ You are not linked to an organization. Reply *Join* to search for yours.");
+                    await sendWhatsApp(cleanPhone, "⚠️ You are not linked to a Church. Reply *Join* to find one.");
                     return;
                 }
             }

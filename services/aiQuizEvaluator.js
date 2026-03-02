@@ -2,6 +2,8 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { sendWhatsAppMedia } = require('./twilioClient');
+const { generateCertificate } = require('./certificateGenerator');
 
 /**
  * AI Quiz Evaluator
@@ -85,7 +87,16 @@ async function evaluateQuiz(incomingMsg, cleanPhone, member, pendingQuiz, sendWh
                     data: { status: 'COMPLETED', quizState: 'IDLE', updatedAt: new Date() }
                 });
                 
-                await sendWhatsApp(cleanPhone, `🎓 *COURSE COMPLETED!*\n\n${evaluation.feedback}\n\nCongratulations, ${member.firstName}! You have successfully finished the course. Keep an eye out for your digital certificate!`);
+                // Send the text congratulation
+                await sendWhatsApp(cleanPhone, `🎓 *COURSE COMPLETED!*\n\n${evaluation.feedback}\n\nCongratulations, ${member.firstName}! You have successfully finished the course. Generating your certificate now...`);
+                
+                // 🎨 Generate and send the Certificate!
+                const certUrl = await generateCertificate(member.firstName + " " + member.lastName, pendingQuiz.course.title);
+                
+                if (certUrl) {
+                    await new Promise(resolve => setTimeout(resolve, 3000)); // Brief pause for dramatic effect
+                    await sendWhatsAppMedia(cleanPhone, `Here is your official certificate for *${pendingQuiz.course.title}*! Feel free to share it. 🌟`, certUrl);
+                }
             } else {
                 // 📈 LEVEL UP
                 await prisma.enrollment.update({
