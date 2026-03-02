@@ -327,8 +327,20 @@ router.post('/', (req, res) => {
             // 🛡️ KYC & ONBOARDING UPLOADS (AI OCR)
             // ================================================
             if (incomingMsg.includes('accept the quote') || session.step === 'AWAITING_QUOTE_ACCEPTANCE') {
+                
+                // 🚀 1. Extract the custom premium from the web redirect message
+                const premiumMatch = incomingMsg.match(/at \*r([0-9.]+)\/month\*/i);
+                if (premiumMatch) {
+                    session.monthlyPremium = parseFloat(premiumMatch[1]);
+                }
+
+                // 🚀 2. Generate an official Policy Number
+                if (!session.policyNumber) {
+                    session.policyNumber = 'POL-' + Math.floor(10000000 + Math.random() * 90000000); // e.g. POL-12345678
+                }
+
                 session.step = 'AWAITING_MEMBER_ID';
-                await sendWhatsApp(cleanPhone, "🎉 Fantastic! Your quote has been accepted.\n\nTo finalize your policy registration, we must complete a quick KYC compliance check.\n\nPlease reply directly to this message with a clear photo of your *ID Document* (Green Book or Smart ID).");
+                await sendWhatsApp(cleanPhone, `🎉 Fantastic! Your quote has been accepted.\n\nTo officially activate Policy *${session.policyNumber}*, we must complete a quick KYC compliance check.\n\nPlease reply directly to this message with a clear photo of your *ID Document* (Green Book or Smart ID).`);
                 return;
             }
 
@@ -356,10 +368,30 @@ router.post('/', (req, res) => {
                     const extractedData = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
 
                     if (extractedData.confidenceScore > 75) {
+                        // 🚀 3. STAMP THE PREMIUM AND POLICY NUMBER INTO THE DATABASE
                         await prisma.member.upsert({
                             where: { phone: cleanPhone },
-                            update: { idPhotoUrl: idUrl, firstName: extractedData.firstName, lastName: extractedData.lastName, idNumber: extractedData.idNumber, isIdVerified: true, monthlyPremium: session.monthlyPremium },
-                            create: { phone: cleanPhone, church: { connect: { id: session.churchId } }, firstName: extractedData.firstName, lastName: extractedData.lastName, idNumber: extractedData.idNumber, idPhotoUrl: idUrl, isIdVerified: true, status: 'PENDING_KYC', monthlyPremium: session.monthlyPremium }
+                            update: { 
+                                idPhotoUrl: idUrl, 
+                                firstName: extractedData.firstName, 
+                                lastName: extractedData.lastName, 
+                                idNumber: extractedData.idNumber, 
+                                isIdVerified: true, 
+                                monthlyPremium: session.monthlyPremium,
+                                policyNumber: session.policyNumber
+                            },
+                            create: { 
+                                phone: cleanPhone, 
+                                church: { connect: { id: session.churchId } }, 
+                                firstName: extractedData.firstName, 
+                                lastName: extractedData.lastName, 
+                                idNumber: extractedData.idNumber, 
+                                idPhotoUrl: idUrl, 
+                                isIdVerified: true, 
+                                status: 'PENDING_KYC', 
+                                monthlyPremium: session.monthlyPremium,
+                                policyNumber: session.policyNumber
+                            }
                         });
                         session.step = 'AWAITING_MEMBER_ADDRESS';
                         await sendWhatsApp(cleanPhone, `✅ *ID Verified Successfully!*\n\nWelcome, *${extractedData.firstName} ${extractedData.lastName}*\n(ID: ${extractedData.idNumber})\n\nAlmost done! Finally, please reply with a photo of your *Proof of Address* (e.g., a utility bill or bank statement).`);
@@ -369,11 +401,39 @@ router.post('/', (req, res) => {
                 } catch (error) {
                     await prisma.member.upsert({
                         where: { phone: cleanPhone },
-                        update: { idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC', monthlyPremium: session.monthlyPremium },
-                        create: { phone: cleanPhone, church: { connect: { id: session.churchId } }, firstName: 'Pending', lastName: 'Admin Review', idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC', monthlyPremium: session.monthlyPremium }
+                        update: { idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC', monthlyPremium: session.monthlyPremium, policyNumber: session.policyNumber },
+                        create: { phone: cleanPhone, church: { connect: { id: session.churchId } }, firstName: 'Pending', lastName: 'Admin Review', idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC', monthlyPremium: session.monthlyPremium, policyNumber: session.policyNumber }
                     });
                     session.step = 'AWAITING_MEMBER_ADDRESS';
                     await sendWhatsApp(cleanPhone, "⚠️ *Automatic Verification Failed*\n\nWe couldn't clearly read the ID automatically. It has been securely forwarded for manual review.\n\nTo continue, please reply with a photo of your *Proof of Address*.");
+                }
+                return;
+            }
+
+            if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ADDRESS') {
+                const addressUrl = req.body.MediaUrl0;
+                try {
+                    const memberRecord = await prisma.member.findUnique({ where: { phone: cleanPhone } });
+                    const newStatus = memberRecord.isIdVerified ? 'ACTIVE' : 'PENDING_KYC';
+                    
+                    const welcomeMsg = memberRecord.isIdVerified 
+                        ? `🎉 *REGISTRATION COMPLETE & POLICY ACTIVE!*\n\nPolicy Number: *${memberRecord.policyNumber}*\nMonthly Premium: *R${memberRecord.monthlyPremium.toFixed(2)}*\n\nYour policy is now fully active. You can reply with *Menu* at any time to view your policy details or make a payment.`
+                        : "✅ *Documents Received!*\n\nYour Proof of Address and ID have been vaulted for Admin Review. You will receive a WhatsApp notification as soon as your policy is officially activated!";
+
+                    // 🚀 4. Set the Joined Date so reports work properly
+                    await prisma.member.update({
+                        where: { phone: cleanPhone },
+                        data: { 
+                            proofOfAddressUrl: addressUrl, 
+                            status: newStatus, 
+                            joinedAt: new Date(), 
+                            ...(memberRecord.isIdVerified && { verifiedAt: new Date() }) 
+                        }
+                    });
+                    clearSessionFlag = true; 
+                    await sendWhatsApp(cleanPhone, welcomeMsg);
+                } catch (error) {
+                    await sendWhatsApp(cleanPhone, "⚠️ There was an issue saving your document. Please try sending the photo again.");
                 }
                 return;
             }
