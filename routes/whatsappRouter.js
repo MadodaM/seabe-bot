@@ -36,7 +36,7 @@ router.post('/', (req, res) => {
             });
 
             // ================================================
-            // 🎓 LMS: AI QUIZ EVALUATOR
+            // 🎓 LMS Phase B: AI QUIZ EVALUATOR
             // ================================================
             if (member) {
                 const pendingQuiz = await prisma.enrollment.findFirst({
@@ -45,7 +45,7 @@ router.post('/', (req, res) => {
                 });
                 if (pendingQuiz) {
                     await evaluateQuiz(incomingMsg, cleanPhone, member, pendingQuiz, sendWhatsApp);
-                    return;
+                    return; 
                 }
             }
 
@@ -63,40 +63,324 @@ router.post('/', (req, res) => {
                     });
                     if (!org) {
                         await sendWhatsApp(cleanPhone, `🚫 Organization *${targetCode}* not found.`);
+                    } else if (org.transactions.length === 0) {
+                        await sendWhatsApp(cleanPhone, `📉 No transactions found for *${org.name}*.`);
+                    } else if (!org.email) {
+                        await sendWhatsApp(cleanPhone, `⚠️ *${org.name}* has no email address configured.`);
                     } else {
                         let csvContent = "Date,Phone,Type,Amount,Reference\n";
                         let total = 0;
                         org.transactions.forEach(t => {
-                            csvContent += `${t.date.toISOString().split('T')[0]},${t.phone},${t.type},${t.amount.toFixed(2)},${t.reference}\n`;
+                            const date = t.date.toISOString().split('T')[0];
+                            const amount = t.amount.toFixed(2);
+                            csvContent += `${date},${t.phone},${t.type},${amount},${t.reference}\n`;
                             total += t.amount;
                         });
+                        csvContent += `\nTOTAL,,,${total.toFixed(2)},`;
+
                         const msg = {
                             to: org.email,
                             from: process.env.EMAIL_FROM || 'admin@seabe.tech',
                             subject: `📊 Monthly Report: ${org.name}`,
-                            text: `Total Processed: R${total.toFixed(2)}`,
-                            attachments: [{ content: Buffer.from(csvContent).toString('base64'), filename: `Report_${targetCode}.csv`, type: 'text/csv' }]
+                            text: `Attached is the latest transaction report for ${org.name}.\n\nTotal Processed: R${total.toFixed(2)}`,
+                            attachments: [{
+                                content: Buffer.from(csvContent).toString('base64'),
+                                filename: `Report_${targetCode}.csv`,
+                                type: 'text/csv',
+                                disposition: 'attachment'
+                            }]
                         };
-                        await sgMail.send(msg);
-                        await sendWhatsApp(cleanPhone, `✅ Report for *${org.name}* sent to *${org.email}*.`);
+
+                        try {
+                            await sgMail.send(msg);
+                            await sendWhatsApp(cleanPhone, `✅ Report for *${org.name}* has been emailed to *${org.email}*.`);
+                        } catch (error) {
+                            console.error("Email Error:", error);
+                            await sendWhatsApp(cleanPhone, "⚠️ Error sending email.");
+                        }
                     }
                 }
                 return; 
             }
 
             // ================================================
-            // 🚦 SESSION RESET & JOIN FLOW
+            // 🚦 GLOBAL RESET
             // ================================================
             if (incomingMsg === 'exit' || incomingMsg === 'cancel') {
                 delete userSession[cleanPhone];
-                await sendWhatsApp(cleanPhone, "🔄 Session cleared. Reply *Join* or *Hi*.");
+                await sendWhatsApp(cleanPhone, "🔄 Session cleared. Reply *Join* to switch organizations, *Hi* for Church, or *Society* for Burial menus.");
                 return;
             }
 
+            // ================================================
+            // 🎓 LMS Phase A: COURSE ENROLLMENT
+            // ================================================
+            const lmsTriggers = ['mentorship', 'grow', 'learn', 'courses'];
+            if (lmsTriggers.includes(incomingMsg)) {
+                if (!member || !member.churchId) {
+                    await sendWhatsApp(cleanPhone, "⚠️ You must be linked to an organization to view courses. Reply *Join* first.");
+                    return;
+                }
+                const courses = await prisma.course.findMany({
+                    where: { churchId: member.churchId },
+                    orderBy: { price: 'asc' }
+                });
+
+                if (courses.length === 0) {
+                    await sendWhatsApp(cleanPhone, "📚 *Learning Centre*\n\nThere are currently no active courses available. Check back later!");
+                    return;
+                }
+
+                let msg = `📚 *Learning & Mentorship Centre*\nSelect a course to enroll:\n\n`;
+                courses.forEach((c, index) => {
+                    msg += `*${index + 1}. ${c.title}*\nCost: ${c.price === 0 ? 'FREE' : 'R' + c.price}\n\n`;
+                });
+                msg += `Reply with the *Number* of the course you wish to join.`;
+
+                session.step = 'AWAITING_COURSE_SELECTION';
+                session.availableCourses = courses; 
+                await sendWhatsApp(cleanPhone, msg);
+                return;
+            }
+
+            if (session.step === 'AWAITING_COURSE_SELECTION') {
+                const selectedIndex = parseInt(incomingMsg) - 1;
+                const courses = session.availableCourses;
+
+                if (selectedIndex >= 0 && selectedIndex < courses.length) {
+                    const selectedCourse = courses[selectedIndex];
+                    const enrollment = await prisma.enrollment.create({
+                        data: {
+                            memberId: member.id,
+                            courseId: selectedCourse.id,
+                            status: selectedCourse.price === 0 ? 'ACTIVE' : 'PENDING_PAYMENT'
+                        }
+                    });
+
+                    if (selectedCourse.price === 0) {
+                        session.step = 'LMS_ACTIVE';
+                        await sendWhatsApp(cleanPhone, `🎉 You are now enrolled in *${selectedCourse.title}*!\n\nLook out for your first module tomorrow morning at 07:00 AM.`);
+                    } else {
+                        const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+                        const paymentLink = `${host}/pay?enrollmentId=${enrollment.id}&amount=${selectedCourse.price}`;
+                        await sendWhatsApp(cleanPhone, `🎓 *${selectedCourse.title}*\n\nTo unlock your modules, please complete your subscription payment of *R${selectedCourse.price}*.\n\n💳 *Pay securely here:*\n👉 ${paymentLink}\n\nOnce paid, your modules will unlock automatically!`);
+                    }
+                    delete userSession[cleanPhone]; 
+                } else {
+                    await sendWhatsApp(cleanPhone, "Invalid selection. Please reply with a valid course number.");
+                }
+                return;
+            }
+
+            // ================================================
+            // 🔍 UNIVERSAL JOIN & QUOTE FLOW
+            // ================================================
             const joinSteps = ['SEARCH', 'JOIN_SELECT', 'CHOOSE_MEMBER_TYPE', 'ENTER_POLICY_NUMBER', 'SELECT_QUOTE_PLAN'];
             if (incomingMsg === 'join' || joinSteps.includes(session.step)) {
-                // ... [This is where your searching/quoting logic lives] ...
-                // Re-insert your SEARCH and JOIN_SELECT code here if it was overwritten
+                
+                if (incomingMsg === 'join') {
+                    session.step = 'SEARCH';
+                    await sendWhatsApp(cleanPhone, "🔍 Let's find your organization!\n\nPlease reply with their name (e.g., 'AFM' or 'Kgosigadi'):");
+                    return;
+                }
+
+                if (session.step === 'SEARCH') {
+                    const results = await prisma.church.findMany({
+                        where: { name: { contains: incomingMsg, mode: 'insensitive' } },
+                        take: 5
+                    });
+
+                    if (results.length > 0) {
+                        session.searchResults = results;
+                        let reply = `🔍 Found ${results.length} matches:\n\n` + 
+                                results.map((r, i) => `*${i+1}.* ${r.type === 'BURIAL_SOCIETY' ? '🛡️' : '⛪'} ${r.name}`).join('\n') +
+                                `\n\nReply with the number to join.`;
+                        session.step = 'JOIN_SELECT';
+                        await sendWhatsApp(cleanPhone, reply);
+                    } else {
+                        await sendWhatsApp(cleanPhone, "⚠️ We couldn't find an organization with that name. Please try another search term:");
+                    }
+                    return;
+                }
+
+                if (session.step === 'JOIN_SELECT') {
+                    const index = parseInt(incomingMsg) - 1;
+                    const org = session.searchResults ? session.searchResults[index] : null;
+                    
+                    if (org) {
+                        if (org.type === 'BURIAL_SOCIETY') {
+                            session.churchId = org.id;
+                            session.churchCode = org.code;
+                            session.step = 'CHOOSE_MEMBER_TYPE';
+                            await sendWhatsApp(cleanPhone, `Welcome to *${org.name}*!\n\nHow can we help you today?\n\n1️⃣ I am an Existing Member\n2️⃣ I am a New Member (Get a Quote)`);
+                            return;
+                        } else {
+                            const updateData = { churchCode: org.code, churchId: org.id };
+                            await prisma.member.upsert({
+                                where: { phone: cleanPhone },
+                                update: updateData,
+                                create: { phone: cleanPhone, firstName: 'Member', lastName: 'New', ...updateData }
+                            });
+                            delete userSession[cleanPhone]; 
+                            await sendWhatsApp(cleanPhone, `✅ Successfully linked to *${org.name}*!\n\nReply *Hi* to access your menu.`);
+                            return;
+                        }
+                    } else {
+                        await sendWhatsApp(cleanPhone, "⚠️ Invalid selection. Please reply with a valid number from the list, or type *Exit*.");
+                        return;
+                    }
+                }
+
+                if (session.step === 'CHOOSE_MEMBER_TYPE') {
+                    if (incomingMsg === '1') {
+                        session.step = 'ENTER_POLICY_NUMBER';
+                        await sendWhatsApp(cleanPhone, `Great! Please reply with your exact *ID Number* so we can locate your existing profile.`);
+                    } else if (incomingMsg === '2') {
+                        const plans = await prisma.policyPlan.findMany({ where: { churchId: session.churchId } });
+                        if (plans.length === 0) {
+                            delete userSession[cleanPhone];
+                            await sendWhatsApp(cleanPhone, `We are currently updating our digital plans. Please contact the office directly.\n\nReply *Join* to start over.`);
+                        } else {
+                            session.step = 'SELECT_QUOTE_PLAN';
+                            let planMsg = `*Available Plans:*\n\n`;
+                            plans.forEach((p, index) => {
+                                planMsg += `${index + 1}️⃣ *${p.planName}* - R${p.monthlyPremium}/pm\n_Covers: ${p.targetGroup}_\n\n`;
+                            });
+                            planMsg += `Reply with the number of the plan to see full benefits and get your quote.`;
+                            await sendWhatsApp(cleanPhone, planMsg);
+                        }
+                    } else {
+                        await sendWhatsApp(cleanPhone, `Invalid option. Please reply 1 or 2.`);
+                    }
+                    return;
+                }
+
+                if (session.step === 'ENTER_POLICY_NUMBER') {
+                    const memberMatch = await prisma.member.findFirst({
+                        where: { societyCode: session.churchCode, idNumber: incomingMsg }
+                    });
+                    if (memberMatch) {
+                        await prisma.member.update({ where: { id: memberMatch.id }, data: { phone: cleanPhone } });
+                        delete userSession[cleanPhone];
+                        await sendWhatsApp(cleanPhone, `✅ Profile Linked!\n\nWelcome back, ${memberMatch.firstName}.\n\nReply *Society* to access your main menu (View Policy, Payments, Claims).`);
+                    } else {
+                        await sendWhatsApp(cleanPhone, `❌ We couldn't find a policy matching "${incomingMsg}". Please check your ID number and try again, or type *Exit* to restart.`);
+                    }
+                    return;
+                }
+
+                if (session.step === 'SELECT_QUOTE_PLAN') {
+                    const plans = await prisma.policyPlan.findMany({ where: { churchId: session.churchId } });
+                    const selectedIndex = parseInt(incomingMsg) - 1;
+
+                    if (selectedIndex >= 0 && selectedIndex < plans.length) {
+                        const plan = plans[selectedIndex];
+                        const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+                        const botNum = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+                        const quoteLink = `${host}/quote.html?code=${session.churchCode}&phone=${cleanPhone}&bot=${botNum}`;
+
+                        const msg = `*Quote: ${plan.planName}*\nBase Premium: *R${plan.monthlyPremium} / month*\n\n*Benefits Included:*\n${plan.benefitsSummary}\n\nTo add extended family (children/adults) and complete your registration, click your secure link below:\n👉 ${quoteLink}\n\nReply *Exit* to return to the start.`;
+                        
+                        delete userSession[cleanPhone]; 
+                        await sendWhatsApp(cleanPhone, msg);
+                    } else {
+                        await sendWhatsApp(cleanPhone, `Invalid selection. Please reply with a valid plan number.`);
+                    }
+                    return;
+                }
+            }
+
+            // ================================================
+            // 🛡️ KYC & ONBOARDING UPLOADS (AI OCR)
+            // ================================================
+            if (incomingMsg.includes('accept the quote')) {
+                userSession[cleanPhone] = userSession[cleanPhone] || {};
+                userSession[cleanPhone].step = 'AWAITING_MEMBER_ID';
+                userSession[cleanPhone].churchCode = userSession[cleanPhone].churchCode || 'TFBS'; // Fallback
+                
+                await sendWhatsApp(cleanPhone, "🎉 Fantastic! Your quote has been accepted.\n\nTo finalize your policy registration, we must complete a quick KYC compliance check.\n\nPlease reply directly to this message with a clear photo of your *ID Document* (Green Book or Smart ID).");
+                return;
+            }
+
+            if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ID') {
+                const idUrl = req.body.MediaUrl0; 
+                const mimeType = req.body.MediaContentType0 || 'image/jpeg';
+                
+                await sendWhatsApp(cleanPhone, "⏳ *AI Processing...*\nReading your ID document. Please wait a moment.");
+
+                try {
+                    const authHeader = 'Basic ' + Buffer.from(`${process.env.TWILIO_SID}:${process.env.TWILIO_AUTH}`).toString('base64');
+                    const imgResponse = await fetch(idUrl, { headers: { 'Authorization': authHeader } });
+                    const arrayBuffer = await imgResponse.arrayBuffer();
+                    const base64Image = Buffer.from(arrayBuffer).toString('base64');
+
+                    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+                    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); 
+                    
+                    const prompt = `You are a strict KYC compliance bot for an insurance company. Read this South African ID (Green book or Smart Card). Extract the person's first name(s), last name (surname), and 13-digit ID number. Return ONLY a raw JSON object with no markdown formatting. Format: {"firstName": "John", "lastName": "Doe", "idNumber": "1234567890123", "confidenceScore": 95}`;
+                    
+                    const result = await model.generateContent([ prompt, { inlineData: { data: base64Image, mimeType: mimeType } } ]);
+                    const extractedData = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
+
+                    if (extractedData.confidenceScore > 75) {
+                        await prisma.member.upsert({
+                            where: { phone: cleanPhone },
+                            update: { 
+                                idPhotoUrl: idUrl, 
+                                firstName: extractedData.firstName,
+                                lastName: extractedData.lastName,
+                                idNumber: extractedData.idNumber,
+                                isIdVerified: true 
+                            },
+                            create: {
+                                phone: cleanPhone,
+                                churchCode: session.churchCode || 'TFBS',
+                                firstName: extractedData.firstName,
+                                lastName: extractedData.lastName,
+                                idNumber: extractedData.idNumber,
+                                idPhotoUrl: idUrl,
+                                isIdVerified: true,
+                                status: 'PENDING_KYC'
+                            }
+                        });
+
+                        session.step = 'AWAITING_MEMBER_ADDRESS';
+                        await sendWhatsApp(cleanPhone, `✅ *ID Verified Successfully!*\n\nWelcome, *${extractedData.firstName} ${extractedData.lastName}*\n(ID: ${extractedData.idNumber})\n\nAlmost done! Finally, please reply with a photo of your *Proof of Address* (e.g., a utility bill or bank statement).`);
+                    } else {
+                        throw new Error("AI Confidence too low.");
+                    }
+                } catch (error) {
+                    console.error("KYC AI Extraction Error:", error);
+                    await prisma.member.upsert({
+                        where: { phone: cleanPhone },
+                        update: { idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC' },
+                        create: { phone: cleanPhone, churchCode: session.churchCode || 'TFBS', firstName: 'Pending', lastName: 'Admin Review', idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC' }
+                    });
+                    session.step = 'AWAITING_MEMBER_ADDRESS';
+                    await sendWhatsApp(cleanPhone, "⚠️ *Automatic Verification Failed*\n\nWe couldn't clearly read the ID automatically. It has been securely forwarded for manual review.\n\nTo continue, please reply with a photo of your *Proof of Address*.");
+                }
+                return;
+            }
+
+            if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ADDRESS') {
+                const addressUrl = req.body.MediaUrl0;
+                try {
+                    const memberRecord = await prisma.member.findUnique({ where: { phone: cleanPhone } });
+                    const newStatus = memberRecord.isIdVerified ? 'ACTIVE' : 'PENDING_KYC';
+                    const welcomeMsg = memberRecord.isIdVerified 
+                        ? "🎉 *REGISTRATION COMPLETE & POLICY ACTIVE!*\n\nYour policy is now fully active. You can reply with *Hi* at any time to view your policy details or make a payment."
+                        : "✅ *Documents Received!*\n\nYour Proof of Address and ID have been vaulted for Admin Review. You will receive a WhatsApp notification as soon as your policy is officially activated!";
+
+                    await prisma.member.update({
+                        where: { phone: cleanPhone },
+                        data: { proofOfAddressUrl: addressUrl, status: newStatus, ...(memberRecord.isIdVerified && { verifiedAt: new Date() }) }
+                    });
+
+                    delete userSession[cleanPhone]; 
+                    await sendWhatsApp(cleanPhone, welcomeMsg);
+                } catch (error) {
+                    await sendWhatsApp(cleanPhone, "⚠️ There was an issue saving your document. Please try sending the photo again.");
+                }
                 return;
             }
 
@@ -105,7 +389,20 @@ router.post('/', (req, res) => {
             // ================================================
             if (numMedia > 0 && session.step === 'AWAITING_CLAIM_DOCUMENT') {
                 processTwilioClaim(cleanPhone, req.body.MediaUrl0, member?.societyCode || member?.churchCode);
-                await sendWhatsApp(cleanPhone, "⏳ *Document Received!* AI Processing...");
+                await sendWhatsApp(cleanPhone, "⏳ *Document Received!*\n\nOur Gemini AI is now processing the claim. I will message you once the scan is complete.");
+                return;
+            }
+
+            // ================================================
+            // ⛔ UNREGISTERED & ORPHAN CATCHERS
+            // ================================================
+            if (!member) {
+                await sendWhatsApp(cleanPhone, "👋 Welcome to Seabe Pay! Please reply with *Join* to find your organization.");
+                return;
+            }
+
+            if (!member.churchCode && !member.societyCode) {
+                await sendWhatsApp(cleanPhone, "⚠️ You are not currently linked to any organization. Please reply *Join* to search for yours.");
                 return;
             }
 
@@ -113,16 +410,26 @@ router.post('/', (req, res) => {
             // 🏛️ BRANCH ROUTING (CHURCH vs SOCIETY)
             // ================================================
             if (incomingMsg === 'society' || session.mode === 'SOCIETY') {
-                session.mode = 'SOCIETY';
-                await handleSocietyMessage(cleanPhone, incomingMsg, session, member);
-                return;
+                if (member.societyCode) {
+                    session.mode = 'SOCIETY';
+                    await handleSocietyMessage(cleanPhone, incomingMsg, session, member);
+                    return;
+                } else {
+                    await sendWhatsApp(cleanPhone, "⚠️ You are not linked to a Burial Society. Reply *Join* to find one.");
+                    return;
+                }
             }
 
             const churchTriggers = ['hi', 'menu', 'hello', 'pay', 'amen'];
             if (churchTriggers.includes(incomingMsg) || session.mode === 'CHURCH') {
-                session.mode = 'CHURCH';
-                await handleChurchMessage(cleanPhone, incomingMsg, session, member);
-                return;
+                if (member.churchCode) {
+                    session.mode = 'CHURCH';
+                    await handleChurchMessage(cleanPhone, incomingMsg, session, member);
+                    return;
+                } else {
+                    await sendWhatsApp(cleanPhone, "⚠️ You are not linked to a Church. Reply *Join* to find one.");
+                    return;
+                }
             }
 
             // ================================================
