@@ -426,10 +426,24 @@ router.post('/', (req, res) => {
             // ================================================
             // 🏛️ BRANCH ROUTING (CHURCH, NPO, PROVIDERS)
             // ================================================
-            if (incomingMsg === 'society' || session.mode === 'SOCIETY') {
+            
+            // Map common entry words to 'menu' so sub-bots understand what to show
+            const menuKeywords = ['society', 'amen', 'hi', 'hello', 'menu', 'dashboard'];
+            const mappedMsg = menuKeywords.includes(incomingMsg) ? 'menu' : incomingMsg;
+
+            // Set explicit mode if they use a strict keyword
+            if (incomingMsg === 'society') session.mode = 'SOCIETY';
+            if (incomingMsg === 'amen') session.mode = 'CHURCH';
+
+            // Auto-detect mode if they just type "hi" or "menu" and don't have a mode set
+            if (menuKeywords.includes(incomingMsg) && !session.mode && member.church) {
+                session.mode = member.church.type === 'BURIAL_SOCIETY' ? 'SOCIETY' : 'CHURCH';
+            }
+
+            // Route to Society Bot
+            if (session.mode === 'SOCIETY') {
                 if (member.church && member.church.type === 'BURIAL_SOCIETY') {
-                    session.mode = 'SOCIETY';
-                    await handleSocietyMessage(cleanPhone, incomingMsg, session, member);
+                    await handleSocietyMessage(cleanPhone, mappedMsg, session, member);
                     return;
                 } else {
                     await sendWhatsApp(cleanPhone, "⚠️ You are not linked to a Burial Society. Reply *Join* to find one.");
@@ -437,14 +451,13 @@ router.post('/', (req, res) => {
                 }
             }
 
-            const orgTriggers = ['tithe', 'menu', 'hello', 'pay', 'amen', 'dashboard'];
-            if (orgTriggers.includes(incomingMsg) || session.mode === 'CHURCH') {
+            // Route to Church / NPO Bot
+            if (session.mode === 'CHURCH') {
                 if (member.church && member.church.type !== 'BURIAL_SOCIETY') {
-                    session.mode = 'CHURCH';
-                    await handleChurchMessage(cleanPhone, incomingMsg, session, member);
+                    await handleChurchMessage(cleanPhone, mappedMsg, session, member);
                     return;
                 } else {
-                    await sendWhatsApp(cleanPhone, "⚠️ You are not linked to a Church. Reply *Join* to find one.");
+                    await sendWhatsApp(cleanPhone, "⚠️ You are not linked to an organization. Reply *Join* to search for yours.");
                     return;
                 }
             }
