@@ -5,6 +5,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const sgMail = require('@sendgrid/mail'); 
 const axios = require('axios');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // Bot & AI Imports
 const { getAISupportReply } = require('../services/aiSupport');
@@ -327,46 +328,88 @@ router.post('/', (req, res) => {
                     return;
                 }
 
-                // 🚀 Catch KYC ID Upload (Uses UPSERT to create the database file!)
+                // 🚀 Catch KYC ID Upload (AI OCR Extraction)
                 if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ID') {
                     const idUrl = req.body.MediaUrl0; 
+                    const mimeType = req.body.MediaContentType0 || 'image/jpeg';
                     
-                    try {
-                        // UPSERT: Create the member record if this is their first time
-                        await prisma.member.upsert({
-                            where: { phone: cleanPhone },
-                            update: { idPhotoUrl: idUrl, status: 'PENDING_KYC' },
-                            create: {
-                                phone: cleanPhone,
-                                churchCode: session.churchCode || 'TFBS',
-                                firstName: 'New',
-                                lastName: 'Applicant',
-                                idPhotoUrl: idUrl,
-                                status: 'PENDING_KYC'
-                            }
-                        });
+                    // Let the user know the AI is "thinking"
+                    await sendWhatsApp(cleanPhone, "⏳ *AI Processing...*\nReading your ID document. Please wait a moment.");
 
-                        session.step = 'AWAITING_MEMBER_ADDRESS';
-                        await sendWhatsApp(cleanPhone, "✅ ID Document received safely.\n\nFinally, please reply with a photo of your *Proof of Address* (e.g., a utility bill or bank statement not older than 3 months).");
+                    try {
+                        // 1. Download image from Twilio securely
+                        const authHeader = 'Basic ' + Buffer.from(`${process.env.TWILIO_SID}:${process.env.TWILIO_AUTH}`).toString('base64');
+                        const imgResponse = await fetch(idUrl, { headers: { 'Authorization': authHeader } });
+                        const arrayBuffer = await imgResponse.arrayBuffer();
+                        const base64Image = Buffer.from(arrayBuffer).toString('base64');
+
+                        // 2. Run Gemini OCR
+                        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+                        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Fast and accurate for OCR
+                        
+                        const prompt = `You are a strict KYC compliance bot for an insurance company. Read this South African ID (Green book or Smart Card). Extract the person's first name(s), last name (surname), and 13-digit ID number. Return ONLY a raw JSON object with no markdown formatting. Format: {"firstName": "John", "lastName": "Doe", "idNumber": "1234567890123", "confidenceScore": 95}`;
+                        
+                        const result = await model.generateContent([
+                            prompt,
+                            { inlineData: { data: base64Image, mimeType: mimeType } }
+                        ]);
+                        
+                        // Clean up the JSON response
+                        const jsonText = result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim();
+                        const extractedData = JSON.parse(jsonText);
+
+                        if (extractedData.confidenceScore > 75) {
+                            // 3. UPSERT the member with their REAL Name and ID Number!
+                            await prisma.member.upsert({
+                                where: { phone: cleanPhone },
+                                update: { 
+                                    idPhotoUrl: idUrl, 
+                                    firstName: extractedData.firstName,
+                                    lastName: extractedData.lastName,
+                                    idNumber: extractedData.idNumber,
+                                    isIdVerified: true // Auto-verified by AI!
+                                },
+                                create: {
+                                    phone: cleanPhone,
+                                    churchCode: session.churchCode || 'TFBS',
+                                    firstName: extractedData.firstName,
+                                    lastName: extractedData.lastName,
+                                    idNumber: extractedData.idNumber,
+                                    idPhotoUrl: idUrl,
+                                    isIdVerified: true,
+                                    status: 'PENDING_KYC'
+                                }
+                            });
+
+                            session.step = 'AWAITING_MEMBER_ADDRESS';
+                            await sendWhatsApp(cleanPhone, `✅ *ID Verified Successfully!*\n\nWelcome, *${extractedData.firstName} ${extractedData.lastName}*\n(ID: ${extractedData.idNumber})\n\nAlmost done! Finally, please reply with a photo of your *Proof of Address* (e.g., a utility bill or bank statement).`);
+                        } else {
+                            throw new Error("AI Confidence too low. Document unclear.");
+                        }
                     } catch (error) {
-                        console.error("KYC ID Upload Error:", error);
-                        await sendWhatsApp(cleanPhone, "⚠️ There was an issue saving your document. Please try sending the photo again.");
+                        console.error("KYC AI Extraction Error:", error);
+                        await sendWhatsApp(cleanPhone, "⚠️ We couldn't clearly read the ID document. Please ensure the photo is well-lit, not blurry, and shows the entire document. Try sending it again.");
                     }
                     return;
                 }
 
-                // 🚀 Catch KYC Proof of Address Upload
+                // 🚀 Catch KYC Proof of Address Upload (Auto-Activate!)
                 if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ADDRESS') {
                     const addressUrl = req.body.MediaUrl0;
                     
                     try {
+                        // 🚀 Set the policy to ACTIVE immediately!
                         await prisma.member.update({
                             where: { phone: cleanPhone },
-                            data: { proofOfAddressUrl: addressUrl }
+                            data: { 
+                                proofOfAddressUrl: addressUrl,
+                                status: 'ACTIVE', // Automatically activate!
+                                verifiedAt: new Date()
+                            }
                         });
 
-                        delete userSession[cleanPhone]; // Done onboarding
-                        await sendWhatsApp(cleanPhone, "✅ Proof of Address received.\n\n🎉 *Registration Complete!*\nYour documents have been securely vaulted for Admin Review. You will be notified once your policy is fully activated.");
+                        delete userSession[cleanPhone]; 
+                        await sendWhatsApp(cleanPhone, "✅ Proof of Address received.\n\n🎉 *REGISTRATION COMPLETE & POLICY ACTIVE!*\n\nYour policy is now fully active. You can reply with *Hi* at any time to view your policy details, check your waiting period, or make a premium payment.");
                     } catch (error) {
                         console.error("KYC Address Upload Error:", error);
                         await sendWhatsApp(cleanPhone, "⚠️ There was an issue saving your document. Please try sending the photo again.");
