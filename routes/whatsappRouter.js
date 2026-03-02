@@ -328,24 +328,21 @@ router.post('/', (req, res) => {
                     return;
                 }
 
-                // 🚀 Catch KYC ID Upload (AI OCR Extraction)
+                // 🚀 Catch KYC ID Upload (AI OCR with Admin Fallback)
                 if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ID') {
                     const idUrl = req.body.MediaUrl0; 
                     const mimeType = req.body.MediaContentType0 || 'image/jpeg';
                     
-                    // Let the user know the AI is "thinking"
                     await sendWhatsApp(cleanPhone, "⏳ *AI Processing...*\nReading your ID document. Please wait a moment.");
 
                     try {
-                        // 1. Download image from Twilio securely
                         const authHeader = 'Basic ' + Buffer.from(`${process.env.TWILIO_SID}:${process.env.TWILIO_AUTH}`).toString('base64');
                         const imgResponse = await fetch(idUrl, { headers: { 'Authorization': authHeader } });
                         const arrayBuffer = await imgResponse.arrayBuffer();
                         const base64Image = Buffer.from(arrayBuffer).toString('base64');
 
-                        // 2. Run Gemini OCR
                         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-                        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Fast and accurate for OCR
+                        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); 
                         
                         const prompt = `You are a strict KYC compliance bot for an insurance company. Read this South African ID (Green book or Smart Card). Extract the person's first name(s), last name (surname), and 13-digit ID number. Return ONLY a raw JSON object with no markdown formatting. Format: {"firstName": "John", "lastName": "Doe", "idNumber": "1234567890123", "confidenceScore": 95}`;
                         
@@ -354,12 +351,26 @@ router.post('/', (req, res) => {
                             { inlineData: { data: base64Image, mimeType: mimeType } }
                         ]);
                         
-                        // Clean up the JSON response
                         const jsonText = result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim();
                         const extractedData = JSON.parse(jsonText);
 
                         if (extractedData.confidenceScore > 75) {
-                            // 3. UPSERT the member with their REAL Name and ID Number!
+                            
+                            // ==========================================
+                            // 🛡️ DHA VERIFICATION API (PLACEHOLDER)
+                            // ==========================================
+                            /*
+                            await sendWhatsApp(cleanPhone, "⏳ *Home Affairs Check...*\nVerifying identity details with the DHA database.");
+                            const dhaCheck = await fetch('https://api.your-kyc-provider.co.za/v1/verify', { ... });
+                            const dhaResult = await dhaCheck.json();
+                            if (!dhaResult.isValid || dhaResult.deceasedStatus === 'DECEASED' || !dhaResult.surnameMatch) {
+                                await sendWhatsApp(cleanPhone, "❌ *Verification Failed*\nThe ID number could not be verified. Please contact support.");
+                                return;
+                            }
+                            */
+                            // ==========================================
+
+                            // SUCCESS: UPSERT the member with REAL Name!
                             await prisma.member.upsert({
                                 where: { phone: cleanPhone },
                                 update: { 
@@ -367,7 +378,7 @@ router.post('/', (req, res) => {
                                     firstName: extractedData.firstName,
                                     lastName: extractedData.lastName,
                                     idNumber: extractedData.idNumber,
-                                    isIdVerified: true // Auto-verified by AI!
+                                    isIdVerified: true 
                                 },
                                 create: {
                                     phone: cleanPhone,
@@ -384,32 +395,61 @@ router.post('/', (req, res) => {
                             session.step = 'AWAITING_MEMBER_ADDRESS';
                             await sendWhatsApp(cleanPhone, `✅ *ID Verified Successfully!*\n\nWelcome, *${extractedData.firstName} ${extractedData.lastName}*\n(ID: ${extractedData.idNumber})\n\nAlmost done! Finally, please reply with a photo of your *Proof of Address* (e.g., a utility bill or bank statement).`);
                         } else {
-                            throw new Error("AI Confidence too low. Document unclear.");
+                            throw new Error("AI Confidence too low. Trigger manual review.");
                         }
                     } catch (error) {
-                        console.error("KYC AI Extraction Error:", error);
-                        await sendWhatsApp(cleanPhone, "⚠️ We couldn't clearly read the ID document. Please ensure the photo is well-lit, not blurry, and shows the entire document. Try sending it again.");
+                        console.error("KYC AI Extraction Error / Fallback triggered:", error);
+                        
+                        // 🚨 FALLBACK: Send to Admin for Manual Review
+                        await prisma.member.upsert({
+                            where: { phone: cleanPhone },
+                            update: { 
+                                idPhotoUrl: idUrl, 
+                                isIdVerified: false,
+                                status: 'PENDING_KYC' 
+                            },
+                            create: {
+                                phone: cleanPhone,
+                                churchCode: session.churchCode || 'TFBS',
+                                firstName: 'Pending',
+                                lastName: 'Admin Review',
+                                idPhotoUrl: idUrl,
+                                isIdVerified: false,
+                                status: 'PENDING_KYC'
+                            }
+                        });
+
+                        session.step = 'AWAITING_MEMBER_ADDRESS';
+                        await sendWhatsApp(cleanPhone, "⚠️ *Automatic Verification Failed*\n\nWe couldn't clearly read the ID automatically, but don't worry! Your document has been securely forwarded to an administrator for manual review.\n\nTo continue your application, please reply with a photo of your *Proof of Address* (e.g., a utility bill or bank statement).");
                     }
                     return;
                 }
 
-                // 🚀 Catch KYC Proof of Address Upload (Auto-Activate!)
+                // 🚀 Catch KYC Proof of Address Upload (Dynamic Activation)
                 if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ADDRESS') {
                     const addressUrl = req.body.MediaUrl0;
                     
                     try {
-                        // 🚀 Set the policy to ACTIVE immediately!
+                        // 1. Check if the AI auto-verified their ID earlier
+                        const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
+                        
+                        // 2. Decide if they become ACTIVE or stay PENDING_KYC for the admin
+                        const newStatus = member.isIdVerified ? 'ACTIVE' : 'PENDING_KYC';
+                        const welcomeMsg = member.isIdVerified 
+                            ? "🎉 *REGISTRATION COMPLETE & POLICY ACTIVE!*\n\nYour policy is now fully active. You can reply with *Hi* at any time to view your policy details, check your waiting period, or make a premium payment."
+                            : "✅ *Documents Received!*\n\nYour Proof of Address and ID have been securely vaulted for Admin Review. You will receive a WhatsApp notification as soon as your policy is officially activated by our team!";
+
                         await prisma.member.update({
                             where: { phone: cleanPhone },
                             data: { 
                                 proofOfAddressUrl: addressUrl,
-                                status: 'ACTIVE', // Automatically activate!
-                                verifiedAt: new Date()
+                                status: newStatus,
+                                ...(member.isIdVerified && { verifiedAt: new Date() }) // Only stamp the date if active
                             }
                         });
 
                         delete userSession[cleanPhone]; 
-                        await sendWhatsApp(cleanPhone, "✅ Proof of Address received.\n\n🎉 *REGISTRATION COMPLETE & POLICY ACTIVE!*\n\nYour policy is now fully active. You can reply with *Hi* at any time to view your policy details, check your waiting period, or make a premium payment.");
+                        await sendWhatsApp(cleanPhone, welcomeMsg);
                     } catch (error) {
                         console.error("KYC Address Upload Error:", error);
                         await sendWhatsApp(cleanPhone, "⚠️ There was an issue saving your document. Please try sending the photo again.");
