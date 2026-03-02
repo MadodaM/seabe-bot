@@ -56,7 +56,7 @@ router.post('/', (req, res) => {
                     });
                 }
                 
-                await sendWhatsApp(cleanPhone, "🔄 Session cleared & courses paused.\n\nReply *Join* to switch organizations, *Hi* for Church, or *Society* for Burial menus.");
+                await sendWhatsApp(cleanPhone, "🔄 Session cleared & courses paused.\n\nReply *Join* to switch organizations, *Amen* for Church, or *Society* for Burial Society menus.");
                 return;
             }
 
@@ -266,7 +266,7 @@ router.post('/', (req, res) => {
                                 create: { phone: cleanPhone, firstName: 'Member', lastName: 'New', church: { connect: { id: org.id } } }
                             });
                             clearSessionFlag = true; 
-                            await sendWhatsApp(cleanPhone, `✅ Successfully linked to *${org.name}*!\n\nReply *Hi* to access your menu.`);
+                            await sendWhatsApp(cleanPhone, `✅ Successfully linked to *${org.name}*!\n\nReply *Amen* to access your menu.`);
                             return;
                         }
                     } else {
@@ -396,7 +396,7 @@ router.post('/', (req, res) => {
                     const memberRecord = await prisma.member.findUnique({ where: { phone: cleanPhone } });
                     const newStatus = memberRecord.isIdVerified ? 'ACTIVE' : 'PENDING_KYC';
                     const welcomeMsg = memberRecord.isIdVerified 
-                        ? "🎉 *REGISTRATION COMPLETE & POLICY ACTIVE!*\n\nYour policy is now fully active. You can reply with *Hi* at any time to view your policy details or make a payment."
+                        ? "🎉 *REGISTRATION COMPLETE & POLICY ACTIVE!*\n\nYour policy is now fully active. You can reply with *society* at any time to view your policy details or make a payment."
                         : "✅ *Documents Received!*\n\nYour Proof of Address and ID have been vaulted for Admin Review. You will receive a WhatsApp notification as soon as your policy is officially activated!";
 
                     await prisma.member.update({
@@ -449,7 +449,7 @@ router.post('/', (req, res) => {
                 }
             }
 
-            const churchTriggers = ['hi', 'menu', 'hello', 'pay', 'amen'];
+            const churchTriggers = ['tithe', 'menu', 'hello', 'pay', 'amen'];
             if (churchTriggers.includes(incomingMsg) || session.mode === 'CHURCH') {
                 if (member.church && member.church.type !== 'BURIAL_SOCIETY') {
                     session.mode = 'CHURCH';
