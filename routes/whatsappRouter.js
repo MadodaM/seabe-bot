@@ -327,20 +327,32 @@ router.post('/', (req, res) => {
             // 🛡️ KYC & ONBOARDING UPLOADS (AI OCR)
             // ================================================
             if (incomingMsg.includes('accept the quote') || session.step === 'AWAITING_QUOTE_ACCEPTANCE') {
+                session.step = 'AWAITING_MEMBER_ID';
                 
-                // 🚀 1. Extract the custom premium from the web redirect message
-                const premiumMatch = incomingMsg.match(/at \*r([0-9.]+)\/month\*/i);
+                // 🚀 1. Extract the final calculated premium (including dependents) from the WhatsApp message!
+                // This looks for the pattern "r250.00/month" in the auto-generated text
+                const premiumMatch = incomingMsg.match(/r(\d+(\.\d+)?)\/month/);
                 if (premiumMatch) {
                     session.monthlyPremium = parseFloat(premiumMatch[1]);
                 }
 
-                // 🚀 2. Generate an official Policy Number
-                if (!session.policyNumber) {
-                    session.policyNumber = 'POL-' + Math.floor(10000000 + Math.random() * 90000000); // e.g. POL-12345678
+                // 🚀 2. Create the Member row IMMEDIATELY so the policy exists in the database before KYC
+                if (session.churchId) {
+                    await prisma.member.upsert({
+                        where: { phone: cleanPhone },
+                        update: { monthlyPremium: session.monthlyPremium },
+                        create: {
+                            phone: cleanPhone,
+                            firstName: 'Pending',
+                            lastName: 'Member',
+                            church: { connect: { id: session.churchId } },
+                            status: 'PENDING_KYC',
+                            monthlyPremium: session.monthlyPremium
+                        }
+                    });
                 }
 
-                session.step = 'AWAITING_MEMBER_ID';
-                await sendWhatsApp(cleanPhone, `🎉 Fantastic! Your quote has been accepted.\n\nTo officially activate Policy *${session.policyNumber}*, we must complete a quick KYC compliance check.\n\nPlease reply directly to this message with a clear photo of your *ID Document* (Green Book or Smart ID).`);
+                await sendWhatsApp(cleanPhone, "🎉 Fantastic! Your quote has been accepted.\n\nTo finalize your policy registration, we must complete a quick KYC compliance check.\n\nPlease reply directly to this message with a clear photo of your *ID Document* (Green Book or Smart ID).");
                 return;
             }
 
