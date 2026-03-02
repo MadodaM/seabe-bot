@@ -1,14 +1,15 @@
 // routes/platform.js
-// VERSION: 8.0 (Added SuperAdmin FICA & KYB Dashboard)
+// VERSION: 9.0 (Added AI Course Builder & Preserved FICA Dashboard)
 require('dotenv').config();
 
-const multer = require('multer');
-const upload = multer({ dest: 'uploads/' });
 const fs = require('fs');
 const { processAndImportCoursePDF } = require('../services/courseImporter');
 const express = require('express');
 const { provisionNetCashAccount } = require('../services/netcashProvisioner');
 const sgMail = require('@sendgrid/mail');
+const multer = require('multer');
+const upload = multer({ dest: 'uploads/' }); // For parsing PDF uploads
+
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'seabe123';
 const COOKIE_NAME = 'seabe_admin_session';
@@ -90,9 +91,9 @@ function renderAdminPage(title, content, error = null) {
                 <a href="/admin">📊 Dashboard</a>
                 <a href="/admin/global-radar">🌍 Global Radar</a>
                 <a href="/admin/churches">🏢 Organizations</a>
-				<a href="/admin/course-builder">🤖 AI Course Builder</a>
                 <a href="/admin/fica">🛡️ FICA & KYB</a> 
                 <a href="/admin/global-collections">💰 Global Collections</a>
+                <a href="/admin/course-builder">🤖 AI Course Builder</a>
                 <a href="/admin/events">🎟️ Events & Projects</a>
                 <a href="/admin/ads">📢 Broadcasts</a>
                 <a href="/admin/news">📰 News Feed</a>
@@ -175,7 +176,7 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-	// --- GLOBAL FRAUD & CLAIMS RADAR (IFRAME) ---
+    // --- GLOBAL FRAUD & CLAIMS RADAR (IFRAME) ---
     app.get('/admin/global-radar', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         
@@ -191,8 +192,8 @@ module.exports = function(app, { prisma }) {
         `;
         res.send(renderAdminPage('Global Radar', content));
     });
-	
-	// ============================================================
+
+    // ============================================================
     // 🎓 NEW: AI COURSE BUILDER (LMS)
     // ============================================================
     app.get('/admin/course-builder', async (req, res) => {
@@ -307,7 +308,7 @@ module.exports = function(app, { prisma }) {
     });
 
     // ============================================================
-    // 🛡️ NEW: FICA & KYB COMPLIANCE DASHBOARD
+    // 🛡️ FICA & KYB COMPLIANCE DASHBOARD
     // ============================================================
     app.get('/admin/fica', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
@@ -421,8 +422,8 @@ module.exports = function(app, { prisma }) {
             res.send(renderAdminPage('FICA Verifications', '', error.message));
         }
     });
-	
-	// ============================================================
+    
+    // ============================================================
     // ⚙️ API: FICA LEVEL 1 APPROVAL
     // ============================================================
     app.post('/api/prospect/admin/approve-level-1', async (req, res) => {
@@ -452,7 +453,6 @@ module.exports = function(app, { prisma }) {
                 }).catch(e => console.error("Email error:", e));
             }
 
-            // 👇 THIS is the line and bracket that were likely missing!
             res.json({ message: "Level 1 Approved. Email sent to client requesting Level 2 docs." });
         } catch (error) {
             console.error(error);
