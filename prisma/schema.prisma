@@ -49,6 +49,7 @@ model Member {
   claims       Claim[]
   collections  Collection[]
   riskFlags    RiskFlag[]
+  enrollments  Enrollment[]
 }
 
 model Dependent {
@@ -95,7 +96,8 @@ model Church {
   tosAcceptedAt DateTime? // 👈 Add this so web.js can save the Terms agreement
 
   // Relations
-  admins Admin[]
+  admins  Admin[]
+  courses Course[]
 
   // Member Relations
   churchMembers  Member[] @relation("ChurchMembers")
@@ -347,27 +349,27 @@ model Course {
   church      Church         @relation(fields: [churchId], references: [id])
   title       String
   description String?
-  price       Float          // 0 for free
+  price       Float // 0 for free
   modules     CourseModule[]
   enrollments Enrollment[]
 }
 
 model CourseModule {
-  id          Int      @id @default(autoincrement())
-  courseId    Int
-  course      Course   @relation(fields: [courseId], references: [id])
-  title       String
-  contentUrl  String   // Link to PDF, Video, or Audio file
-  order       Int      // 1 for Foundation Module, 2 for Next, etc.
+  id         Int    @id @default(autoincrement())
+  courseId   Int
+  course     Course @relation(fields: [courseId], references: [id])
+  title      String
+  contentUrl String // Link to PDF, Video, or Audio file
+  order      Int // 1 for Foundation Module, 2 for Next, etc.
 }
 
 model Enrollment {
-  id          Int      @id @default(autoincrement())
-  memberId    Int
-  member      Member   @relation(fields: [memberId], references: [id])
-  courseId    Int
-  course      Course   @relation(fields: [courseId], references: [id])
-  status      String   @default("PENDING_PAYMENT") // ACTIVE, COMPLETED
-  progress    Int      @default(0) // Which module they are currently on
-  createdAt   DateTime @default(now())
+  id        Int      @id @default(autoincrement())
+  memberId  Int
+  member    Member   @relation(fields: [memberId], references: [id])
+  courseId  Int
+  course    Course   @relation(fields: [courseId], references: [id])
+  status    String   @default("PENDING_PAYMENT") // ACTIVE, COMPLETED
+  progress  Int      @default(0) // Which module they are currently on
+  createdAt DateTime @default(now())
 }
