@@ -45,27 +45,26 @@ app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'leg
 // ==========================================
 // 3. MOUNT DEDICATED ROUTERS
 // ==========================================
-// App Routes
+
+// 🚀 MOVE THESE TO THE TOP (High Priority / Specific Paths)
+try { require('./routes/platform')(app, { prisma }); } catch (e) { console.error("⚠️ Platform routes error:", e); }
+try { require('./routes/admin')(app, { prisma }); } catch (e) { console.error("⚠️ Client Admin routes error:", e); }
+try { require('./routes/web')(app, upload, { prisma }); } catch (e) { console.error("⚠️ Web routes error:", e); }
+
+// API & Specific Path Routers
+app.use('/api/whatsapp', require('./routes/whatsappRouter'));
 app.use('/kyc', require('./routes/kyc').router);
 app.use('/api/surepol', require('./routes/surepol'));
 app.use('/api/prospect', require('./routes/prospectKYC'));
+app.use('/api/fica', ficaPortalRoutes);
+
+// ⚓ MOUNT ROOT-LEVEL CATCH-ALLS LAST
 app.use('/', blastEngineRoute);
 app.use('/', webhooksRoute);
 app.use('/', crmClaimsRoute);
-
-
-// The massive files we just extracted!
-app.use('/api/whatsapp', require('./routes/whatsappRouter'));
 app.use('/', require('./routes/paymentRoutes'));
-
-// Modular File Mounts (Wrapped to prevent crashes if missing)
-try { require('./routes/platform')(app, { prisma }); } catch (e) { console.error("⚠️ Platform routes error:", e); }
-try { require('./routes/admin')(app, { prisma }); } catch (e) { console.error("⚠️ Client Admin routes error:", e); } // 👈 This will now print the REAL bug!
-try { require('./routes/link')(app, { prisma }); } catch (e) { console.error("⚠️ Link routes error:", e); }
-try { require('./routes/collectionbot')(app, { prisma }); } catch (e) { console.error("⚠️ Collection routes error:", e); }
-try { require('./routes/web')(app, upload, { prisma }); } catch (e) { console.error("⚠️ Web routes error:", e); }
-try { require('./routes/collections')(app); } catch (e) { console.error("⚠️ Old Collection routes error:", e); }
-
+app.use('/', require('./routes/link')(app, { prisma })); // Note: Moved to use as middleware if possible
+app.use('/', require('./routes/collectionbot')(app, { prisma }));
 
 // ==========================================
 // 4. CRON & SERVER INIT
