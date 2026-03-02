@@ -153,6 +153,77 @@ router.post('/', (req, res) => {
                 }
                 return;
             }
+			
+			// 🎓 LMS Phase A: The Trigger
+                const lmsTriggers = ['mentorship', 'grow', 'learn', 'courses'];
+                if (lmsTriggers.includes(incomingMsg)) {
+                    // Fetch all available courses for this organization
+                    const courses = await prisma.course.findMany({
+                        where: { churchId: session.churchId },
+                        orderBy: { price: 'asc' }
+                    });
+
+                    if (courses.length === 0) {
+                        await sendWhatsApp(cleanPhone, "📚 *Learning Centre*\n\nThere are currently no active courses available for enrollment. Please check back later!");
+                        return;
+                    }
+
+                    let msg = `📚 *Learning & Mentorship Centre*\nSelect a course to enroll:\n\n`;
+                    courses.forEach((c, index) => {
+                        msg += `*${index + 1}. ${c.title}*\nCost: ${c.price === 0 ? 'FREE' : 'R' + c.price}\n\n`;
+                    });
+                    
+                    msg += `Reply with the *Number* of the course you wish to join.`;
+
+                    session.step = 'AWAITING_COURSE_SELECTION';
+                    session.availableCourses = courses; // Store in session memory
+                    
+                    await sendWhatsApp(cleanPhone, msg);
+                    return;
+                }
+
+                // 🎓 LMS Phase A: Course Selection & Payment Link
+                if (session.step === 'AWAITING_COURSE_SELECTION') {
+                    const selectedIndex = parseInt(incomingMsg) - 1;
+                    const courses = session.availableCourses;
+
+                    if (selectedIndex >= 0 && selectedIndex < courses.length) {
+                        const selectedCourse = courses[selectedIndex];
+                        const member = await prisma.member.findUnique({ where: { phone: cleanPhone } });
+
+                        if (!member) {
+                            await sendWhatsApp(cleanPhone, "⚠️ You must be a registered member to enroll in courses. Please reply *Join* to register first.");
+                            return;
+                        }
+
+                        // Create the Pending Enrollment
+                        const enrollment = await prisma.enrollment.create({
+                            data: {
+                                memberId: member.id,
+                                courseId: selectedCourse.id,
+                                status: selectedCourse.price === 0 ? 'ACTIVE' : 'PENDING_PAYMENT'
+                            }
+                        });
+
+                        if (selectedCourse.price === 0) {
+                            // Instant Unlock for Free Courses
+                            session.step = 'LMS_ACTIVE';
+                            await sendWhatsApp(cleanPhone, `🎉 You are now enrolled in *${selectedCourse.title}*!\n\nReply *Start* to receive your first module.`);
+                        } else {
+                            // The Payment Trigger (Generate Ozow/Capitec Link)
+                            const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+                            const paymentLink = `${host}/pay?enrollmentId=${enrollment.id}&amount=${selectedCourse.price}`;
+                            
+                            await sendWhatsApp(cleanPhone, `🎓 *${selectedCourse.title}*\n\nTo unlock your modules, please complete your subscription payment of *R${selectedCourse.price}*.\n\n💳 *Pay via Capitec/Ozow securely here:*\n👉 ${paymentLink}\n\nOnce paid, your Foundation Module will unlock automatically!`);
+                        }
+                        delete userSession[cleanPhone]; // Clear state while waiting for payment
+                    } else {
+                        await sendWhatsApp(cleanPhone, "Invalid selection. Please reply with a valid course number.");
+                    }
+                    return;
+                }
+			
+			
 
             // ================================================
             // 🚦 USER ROUTING LOGIC & ONBOARDING
@@ -283,7 +354,6 @@ router.post('/', (req, res) => {
                 }
 
                 // 🚀 NEW: The "New Member" Dynamic Quoter
-                // 🚀 NEW: The "New Member" Dynamic Quoter
                 if (session.step === 'SELECT_QUOTE_PLAN') {
                     const plans = await prisma.policyPlan.findMany({ 
                         where: { churchId: session.churchId } 
@@ -310,14 +380,7 @@ router.post('/', (req, res) => {
                 }
             }
 			
-			// 🚀 NEW: Catch Quote Acceptance
-                if (incomingMsg.includes('accept the quote')) {
-                    session.step = 'AWAITING_MEMBER_ID';
-                    await sendWhatsApp(cleanPhone, "🎉 Fantastic! Your quote has been accepted.\n\nTo finalize your policy registration, we must complete a quick KYC compliance check.\n\nPlease reply directly to this message with a clear photo of your *ID Document* (Green Book or Smart ID).");
-                    return;
-                }
-
-                // 🚀 Catch Quote Acceptance
+			    // 🚀 Catch Quote Acceptance
                 if (incomingMsg.includes('accept the quote')) {
                     // Ensure the session is active (in case they clicked the link hours later)
                     userSession[cleanPhone] = userSession[cleanPhone] || {};
