@@ -315,7 +315,7 @@ router.post('/', (req, res) => {
                     const base64Image = Buffer.from(arrayBuffer).toString('base64');
 
                     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-                    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); 
+                    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
                     
                     const prompt = `You are a strict KYC compliance bot for an insurance company. Read this South African ID (Green book or Smart Card). Extract the person's first name(s), last name (surname), and 13-digit ID number. Return ONLY a raw JSON object with no markdown formatting. Format: {"firstName": "John", "lastName": "Doe", "idNumber": "1234567890123", "confidenceScore": 95}`;
                     

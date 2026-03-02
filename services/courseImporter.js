@@ -7,7 +7,7 @@ async function processAndImportCoursePDF(pdfBuffer, mimeType, churchId, price = 
     try {
         console.log("⏳ Sending PDF to Gemini for LMS Extraction...");
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
         const prompt = `You are an expert Learning Management System (LMS) architect. Read the attached course PDF document. 
         Extract the curriculum and format it for a WhatsApp-based drip-feed learning platform.
