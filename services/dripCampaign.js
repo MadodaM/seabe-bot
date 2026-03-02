@@ -7,18 +7,27 @@ const prisma = new PrismaClient();
 const { sendWhatsApp } = require('./twilioClient');
 
 const startDripCampaign = () => {
-    console.log("⏰ LMS Drip Engine Started: Checking for due modules every minute...");
+    console.log("⏰ LMS Drip Engine Started: Enforcing 1-Lesson-Per-Day rule...");
 
     cron.schedule('* * * * *', async () => {
         try {
-            // For testing: Set this to 1 minute ago. For production, change the '1' back to '30'
-            const timeLimit = new Date(Date.now() - 1 * 60 * 1000); 
+            // ⏱️ TIMERS:
+            // First Lesson Timer: 30 minutes
+            const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000); 
+            // Subsequent Lessons Timer: 24 Hours
+            const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
             const pendingDeliveries = await prisma.enrollment.findMany({
                 where: {
                     status: 'ACTIVE',
                     quizState: 'IDLE',
-                    updatedAt: { lte: timeLimit } 
+                    OR: [
+                        // Rule 1: If it's their FIRST lesson (progress = 1), send 30 mins after enrollment
+                        { progress: 1, updatedAt: { lte: thirtyMinutesAgo } },
+                        
+                        // Rule 2: If it's lesson 2+, wait 24 FULL HOURS since they passed the last quiz
+                        { progress: { gt: 1 }, updatedAt: { lte: twentyFourHoursAgo } }
+                    ]
                 },
                 include: { 
                     course: { include: { modules: true } }, 
@@ -49,7 +58,7 @@ const startDripCampaign = () => {
                     if (enrollment.member) {
                         await sendWhatsApp(enrollment.member.phone, `🎓 *COURSE COMPLETED!*\n\nYou have successfully reached the end of *${enrollment.course.title}*! Keep an eye out for your digital certificate.`);
                     }
-                    continue; // Skip to the next student in the loop
+                    continue; 
                 }
 
                 // 🟢 SEND THE LESSON
