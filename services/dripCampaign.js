@@ -58,11 +58,11 @@ const startDripCampaign = () => {
     }, { timezone: "Africa/Johannesburg" }); // Set to local SAST time
 
     // ========================================================
-    // ☀️ 12:00 PM - THE CHECK-ON-LEARNING QUIZ
+    // ☀️ 12:30 PM - THE CHECK-ON-LEARNING QUIZ
     // ========================================================
-    // Cron syntax: '0 12 * * *' means exactly 12:00 PM every day
-    cron.schedule('0 12 * * *', async () => {
-        console.log("☀️ Running 12:00 PM LMS Quiz Blast...");
+    // Cron syntax: '30 12 * * *' means exactly 12:30 PM every day
+    cron.schedule('30 12 * * *', async () => {
+        console.log("☀️ Running 12:30 PM LMS Quiz Blast...");
         
         try {
             const activeEnrollments = await prisma.enrollment.findMany({
@@ -73,12 +73,13 @@ const startDripCampaign = () => {
             for (const enrollment of activeEnrollments) {
                 const currentModule = enrollment.course.modules.find(m => m.order === enrollment.progress);
                 
+                // We check if the module has a quiz question
                 if (currentModule && currentModule.quizQuestion) {
                     const msg = `🧠 *Check on Learning*\n\nBased on this morning's lesson:\n*${currentModule.quizQuestion}*\n\nPlease reply directly to this message with your answer.`;
                     
                     await sendWhatsApp(enrollment.member.phone, msg);
                     
-                    // 🚨 IMPORTANT: Lock the user into "Quiz Mode" so the WhatsApp Router catches their next reply
+                    // Lock the user into "Quiz Mode"
                     await prisma.enrollment.update({
                         where: { id: enrollment.id },
                         data: { quizState: 'AWAITING_QUIZ' }
