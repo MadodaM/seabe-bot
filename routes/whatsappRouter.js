@@ -30,6 +30,7 @@ router.post('/', (req, res) => {
             const session = userSession[cleanPhone];
             const numMedia = parseInt(req.body.NumMedia || '0'); 
 
+            // Include relationships to access member.church.code safely
             const member = await prisma.member.findUnique({
                 where: { phone: cleanPhone },
                 include: { church: true, society: true }
@@ -215,7 +216,8 @@ router.post('/', (req, res) => {
                             await sendWhatsApp(cleanPhone, `Welcome to *${org.name}*!\n\nHow can we help you today?\n\n1️⃣ I am an Existing Member\n2️⃣ I am a New Member (Get a Quote)`);
                             return;
                         } else {
-                            const updateData = { churchCode: org.code, churchId: org.id };
+                            // ✅ FIX: Removed churchCode, exclusively using churchId for the relational link
+                            const updateData = { churchId: org.id };
                             await prisma.member.upsert({
                                 where: { phone: cleanPhone },
                                 update: updateData,
@@ -256,8 +258,9 @@ router.post('/', (req, res) => {
                 }
 
                 if (session.step === 'ENTER_POLICY_NUMBER') {
+                    // ✅ FIX: Using churchId instead of societyCode for the database lookup
                     const memberMatch = await prisma.member.findFirst({
-                        where: { societyCode: session.churchCode, idNumber: incomingMsg }
+                        where: { churchId: session.churchId, idNumber: incomingMsg }
                     });
                     if (memberMatch) {
                         await prisma.member.update({ where: { id: memberMatch.id }, data: { phone: cleanPhone } });
@@ -296,7 +299,6 @@ router.post('/', (req, res) => {
             if (incomingMsg.includes('accept the quote')) {
                 userSession[cleanPhone] = userSession[cleanPhone] || {};
                 userSession[cleanPhone].step = 'AWAITING_MEMBER_ID';
-                userSession[cleanPhone].churchCode = userSession[cleanPhone].churchCode || 'TFBS'; // Fallback
                 
                 await sendWhatsApp(cleanPhone, "🎉 Fantastic! Your quote has been accepted.\n\nTo finalize your policy registration, we must complete a quick KYC compliance check.\n\nPlease reply directly to this message with a clear photo of your *ID Document* (Green Book or Smart ID).");
                 return;
@@ -315,7 +317,7 @@ router.post('/', (req, res) => {
                     const base64Image = Buffer.from(arrayBuffer).toString('base64');
 
                     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-                    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+                    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" }); 
                     
                     const prompt = `You are a strict KYC compliance bot for an insurance company. Read this South African ID (Green book or Smart Card). Extract the person's first name(s), last name (surname), and 13-digit ID number. Return ONLY a raw JSON object with no markdown formatting. Format: {"firstName": "John", "lastName": "Doe", "idNumber": "1234567890123", "confidenceScore": 95}`;
                     
@@ -323,6 +325,7 @@ router.post('/', (req, res) => {
                     const extractedData = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
 
                     if (extractedData.confidenceScore > 75) {
+                        // ✅ FIX: Removed churchCode, only passing churchId
                         await prisma.member.upsert({
                             where: { phone: cleanPhone },
                             update: { 
@@ -334,7 +337,7 @@ router.post('/', (req, res) => {
                             },
                             create: {
                                 phone: cleanPhone,
-                                churchCode: session.churchCode || 'TFBS',
+                                churchId: session.churchId,
                                 firstName: extractedData.firstName,
                                 lastName: extractedData.lastName,
                                 idNumber: extractedData.idNumber,
@@ -351,10 +354,11 @@ router.post('/', (req, res) => {
                     }
                 } catch (error) {
                     console.error("KYC AI Extraction Error:", error);
+                    // ✅ FIX: Removed churchCode
                     await prisma.member.upsert({
                         where: { phone: cleanPhone },
                         update: { idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC' },
-                        create: { phone: cleanPhone, churchCode: session.churchCode || 'TFBS', firstName: 'Pending', lastName: 'Admin Review', idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC' }
+                        create: { phone: cleanPhone, churchId: session.churchId, firstName: 'Pending', lastName: 'Admin Review', idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC' }
                     });
                     session.step = 'AWAITING_MEMBER_ADDRESS';
                     await sendWhatsApp(cleanPhone, "⚠️ *Automatic Verification Failed*\n\nWe couldn't clearly read the ID automatically. It has been securely forwarded for manual review.\n\nTo continue, please reply with a photo of your *Proof of Address*.");
@@ -388,7 +392,9 @@ router.post('/', (req, res) => {
             // 🖼️ MULTIMEDIA (CLAIMS)
             // ================================================
             if (numMedia > 0 && session.step === 'AWAITING_CLAIM_DOCUMENT') {
-                processTwilioClaim(cleanPhone, req.body.MediaUrl0, member?.societyCode || member?.churchCode);
+                // ✅ FIX: Using the relationship to fetch the code safely
+                const code = member?.church?.code || member?.society?.code || session.churchCode;
+                processTwilioClaim(cleanPhone, req.body.MediaUrl0, code);
                 await sendWhatsApp(cleanPhone, "⏳ *Document Received!*\n\nOur Gemini AI is now processing the claim. I will message you once the scan is complete.");
                 return;
             }
@@ -401,7 +407,8 @@ router.post('/', (req, res) => {
                 return;
             }
 
-            if (!member.churchCode && !member.societyCode) {
+            // ✅ FIX: Swapped churchCode for churchId
+            if (!member.churchId && !member.societyId) {
                 await sendWhatsApp(cleanPhone, "⚠️ You are not currently linked to any organization. Please reply *Join* to search for yours.");
                 return;
             }
@@ -410,7 +417,7 @@ router.post('/', (req, res) => {
             // 🏛️ BRANCH ROUTING (CHURCH vs SOCIETY)
             // ================================================
             if (incomingMsg === 'society' || session.mode === 'SOCIETY') {
-                if (member.societyCode) {
+                if (member.churchId) { // Burial Societies are also saved with churchId
                     session.mode = 'SOCIETY';
                     await handleSocietyMessage(cleanPhone, incomingMsg, session, member);
                     return;
@@ -422,7 +429,7 @@ router.post('/', (req, res) => {
 
             const churchTriggers = ['hi', 'menu', 'hello', 'pay', 'amen'];
             if (churchTriggers.includes(incomingMsg) || session.mode === 'CHURCH') {
-                if (member.churchCode) {
+                if (member.churchId) {
                     session.mode = 'CHURCH';
                     await handleChurchMessage(cleanPhone, incomingMsg, session, member);
                     return;
