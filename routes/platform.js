@@ -2,6 +2,10 @@
 // VERSION: 8.0 (Added SuperAdmin FICA & KYB Dashboard)
 require('dotenv').config();
 
+const multer = require('multer');
+const upload = multer({ dest: 'uploads/' });
+const fs = require('fs');
+const { processAndImportCoursePDF } = require('../services/courseImporter');
 const express = require('express');
 const { provisionNetCashAccount } = require('../services/netcashProvisioner');
 const sgMail = require('@sendgrid/mail');
@@ -86,6 +90,7 @@ function renderAdminPage(title, content, error = null) {
                 <a href="/admin">📊 Dashboard</a>
                 <a href="/admin/global-radar">🌍 Global Radar</a>
                 <a href="/admin/churches">🏢 Organizations</a>
+				<a href="/admin/course-builder">🤖 AI Course Builder</a>
                 <a href="/admin/fica">🛡️ FICA & KYB</a> 
                 <a href="/admin/global-collections">💰 Global Collections</a>
                 <a href="/admin/events">🎟️ Events & Projects</a>
@@ -185,6 +190,120 @@ module.exports = function(app, { prisma }) {
             </iframe>
         `;
         res.send(renderAdminPage('Global Radar', content));
+    });
+	
+	// ============================================================
+    // 🎓 NEW: AI COURSE BUILDER (LMS)
+    // ============================================================
+    app.get('/admin/course-builder', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+
+        try {
+            const churches = await prisma.church.findMany({ select: { id: true, name: true } });
+            let options = churches.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+
+            const content = `
+                <div class="card-form" style="max-width: 600px;">
+                    <p style="color:#7f8c8d; margin-top:-20px; margin-bottom:20px;">Upload a PDF curriculum. Gemini AI will automatically convert it into a drip-feed WhatsApp course.</p>
+                    
+                    <form id="courseUploadForm">
+                        <div class="form-group">
+                            <label>Organization</label>
+                            <select id="orgId" required>${options}</select>
+                        </div>
+                        <div class="form-group">
+                            <label>Course Price (R)</label>
+                            <input type="number" id="price" value="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Curriculum PDF</label>
+                            <input type="file" id="pdfFile" accept=".pdf" required style="padding: 10px; border: 2px dashed #00d2d3; background: #fdfdfd; cursor: pointer;">
+                        </div>
+                        
+                        <div id="statusBox" style="display:none; padding: 15px; border-radius: 5px; margin-top: 15px; font-weight: bold; text-align: center;"></div>
+
+                        <button type="submit" id="submitBtn" class="btn btn-primary" style="width:100%; margin-top: 10px; padding: 15px; font-size: 14px;">
+                            Parse & Generate Course
+                        </button>
+                    </form>
+                </div>
+
+                <script>
+                    document.getElementById('courseUploadForm').addEventListener('submit', async (e) => {
+                        e.preventDefault();
+                        const btn = document.getElementById('submitBtn');
+                        const status = document.getElementById('statusBox');
+                        
+                        btn.innerText = "⏳ AI is reading the PDF (This takes 10-20 seconds)...";
+                        btn.disabled = true;
+                        btn.style.opacity = "0.7";
+                        status.style.display = 'none';
+
+                        const formData = new FormData();
+                        formData.append('orgId', document.getElementById('orgId').value);
+                        formData.append('price', document.getElementById('price').value);
+                        formData.append('coursePdf', document.getElementById('pdfFile').files[0]);
+
+                        try {
+                            const res = await fetch('/api/admin/parse-course', { method: 'POST', body: formData });
+                            const data = await res.json();
+                            
+                            if (data.success) {
+                                status.style.background = "#e8f5e9";
+                                status.style.color = "#27ae60";
+                                status.style.border = "1px solid #27ae60";
+                                status.innerHTML = "✅ <strong>Success!</strong><br>'" + data.course.title + "' has been generated with " + data.course.modules.length + " daily modules.";
+                                document.getElementById('courseUploadForm').reset();
+                            } else {
+                                throw new Error(data.error);
+                            }
+                        } catch (err) {
+                            status.style.background = "#ffebee";
+                            status.style.color = "#c0392b";
+                            status.style.border = "1px solid #c0392b";
+                            status.innerText = "❌ Error: " + err.message;
+                        } finally {
+                            btn.innerText = "Parse & Generate Course";
+                            btn.disabled = false;
+                            btn.style.opacity = "1";
+                            status.style.display = 'block';
+                        }
+                    });
+                </script>
+            `;
+
+            res.send(renderAdminPage('AI Course Builder', content));
+        } catch (e) {
+            res.send(renderAdminPage('AI Course Builder', '', e.message));
+        }
+    });
+
+    app.post('/api/admin/parse-course', upload.single('coursePdf'), async (req, res) => {
+        // Quick manual auth check since this is an API route
+        const cookies = parseCookies(req);
+        if (cookies[COOKIE_NAME] !== ADMIN_SECRET) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+        if (!req.file) return res.status(400).json({ success: false, error: "No PDF uploaded." });
+        
+        const { orgId, price } = req.body;
+        
+        try {
+            const pdfBuffer = fs.readFileSync(req.file.path);
+            
+            // Send to AI Service
+            const result = await processAndImportCoursePDF(pdfBuffer, req.file.mimetype, orgId, price);
+            
+            // Clean up the temp file
+            try { fs.unlinkSync(req.file.path); } catch (e) {}
+
+            if (result.success) {
+                res.json(result);
+            } else {
+                res.status(500).json(result);
+            }
+        } catch (err) {
+            res.status(500).json({ success: false, error: "Failed to read file on server." });
+        }
     });
 
     // ============================================================
