@@ -5,8 +5,7 @@
 
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient(); // ✅ Independent DB connection so it never drops
-const ozow = require('../services/ozow'); 
-const netcash = require('../services/netcash');
+const netcash = require('../services/netcash'); // 🚀 FIX: Removed Ozow, standardizing on Netcash
 
 // Safely initialize Twilio for direct background messaging
 let twilioClient;
@@ -23,7 +22,7 @@ const sendWhatsApp = async (to, body) => {
 
     try {
         await twilioClient.messages.create({
-            from: `whatsapp:${cleanTwilioNumber}`, // Always perfectly formatted!
+            from: `whatsapp:${cleanTwilioNumber}`, 
             to: `whatsapp:${to}`,
             body: body
         });
@@ -33,9 +32,8 @@ const sendWhatsApp = async (to, body) => {
     }
 };
 
-// 🎛️ THE MASTER TOGGLE
-const ACTIVE_GATEWAY_NAME = process.env.ACTIVE_GATEWAY || 'OZOW'; 
-const gateway = ACTIVE_GATEWAY_NAME === 'NETCASH' ? netcash : ozow;
+// 🚀 FIX: Forced Netcash exclusively.
+const gateway = netcash;
 
 // --- HELPER: DYNAMIC ADS ---
 async function getAdSuffix(churchCode) {
@@ -68,7 +66,7 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
         // ====================================================
         const triggers = ['amen', 'hi', 'menu', 'hello', 'npo', 'donate', 'help', 'pay'];
         
-        if (triggers.includes(incomingMsg)) {
+        if (triggers.includes(incomingMsg.toLowerCase())) { // Added toLowerCase for safety
             
             // 🅰️ SCENARIO: NON-PROFIT ORGANIZATION (NPO)
             if (session.orgType === 'NON_PROFIT') {
@@ -87,7 +85,7 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
                         `Reply with a number:`;
             
             // 🅱️ TRAP: User typed "NPO" but is inside a CHURCH
-            } else if (['npo', 'donate'].includes(incomingMsg) && session.orgType === 'CHURCH') {
+            } else if (['npo', 'donate'].includes(incomingMsg.toLowerCase()) && session.orgType === 'CHURCH') {
                 reply = `🚫 You are currently connected to *${session.orgName}*, which is a Church.\n\n` +
                         `Reply *'Menu'* to see church options.`;
 
@@ -165,7 +163,7 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
                 } else {
                     let list = "🎟️ *Select an Event:*\n\n"; 
                     events.forEach((e, index) => { 
-                        list += `*${index + 1}.* ${e.name}\n🗓 ${e.date}\n💰 R${e.price}\n\n`; 
+                        list += `*${index + 1}.* ${e.name}\n🗓 ${new Date(e.date).toLocaleDateString()}\n💰 R${e.price}\n\n`; 
                     });
                     reply = list + "Reply with the number."; 
                     session.step = 'EVENT_SELECT'; 
@@ -205,7 +203,8 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
 
             // --- OPTION 7: HISTORY ---
             else if (incomingMsg === '7') {
-                 reply = await gateway.getTransactionHistory(cleanPhone);
+                 // 🚀 FIX: Passed member.id instead of phone number for multi-tenant isolation
+                 reply = await gateway.getTransactionHistory(member.id);
                  session.step = 'CHURCH_MENU';
             }
             
@@ -242,10 +241,20 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
             
             if (link) {
                 delete session.selectedEvent;
-                reply = `Tap to securely pay R${amount} via ${ACTIVE_GATEWAY_NAME}:\n👉 ${link}`;
+                reply = `Tap to securely pay R${amount} via Netcash:\n👉 ${link}`;
                 
+                // 🚀 FIX: Embedded memberId to ensure payment registers on this specific profile
                 await prisma.transaction.create({ 
-                    data: { churchCode: session.orgCode, phone: cleanPhone, type, amount: parseFloat(amount), reference: ref, status: 'PENDING', date: new Date() } 
+                    data: { 
+                        churchCode: session.orgCode, 
+                        memberId: member.id, // <--- Crucial!
+                        phone: cleanPhone, 
+                        type: type, 
+                        amount: parseFloat(amount), 
+                        reference: ref, 
+                        status: 'PENDING', 
+                        date: new Date() 
+                    } 
                 });
             } else {
                 reply = "⚠️ Payment link error. Please try again later.";
@@ -274,7 +283,22 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
                     const ref = `${session.orgCode}-EVENT-${selected.id}-${Date.now().toString().slice(-5)}`;
                     
                     const link = await gateway.createPaymentLink(selected.price, ref, cleanPhone, session.orgName);
-                    reply = `Tap to buy a ticket for ${selected.name} (R${selected.price}) via ${ACTIVE_GATEWAY_NAME}:\n👉 ${link}`;
+                    
+                    // 🚀 FIX: Attached memberId
+                    await prisma.transaction.create({ 
+                        data: { 
+                            churchCode: session.orgCode, 
+                            memberId: member.id, 
+                            phone: cleanPhone, 
+                            type: `TICKET-${selected.id}`, 
+                            amount: parseFloat(selected.price), 
+                            reference: ref, 
+                            status: 'PENDING', 
+                            date: new Date() 
+                        } 
+                    });
+
+                    reply = `Tap to buy a ticket for ${selected.name} (R${selected.price}) via Netcash:\n👉 ${link}`;
                     session.step = 'CHURCH_MENU';
                 }
             } else {
@@ -295,7 +319,8 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
                  session.step = 'CANCEL_SUB_SELECT';
             } 
             else if (incomingMsg === '3') {
-                await prisma.member.update({ where: { phone: cleanPhone }, data: { churchCode: null } });
+                // 🚀 FIX: Used member.id for safe Multi-Tenant update
+                await prisma.member.update({ where: { id: member.id }, data: { churchCode: null, status: 'INACTIVE' } });
                 delete session.mode; 
                 delete session.orgCode;
                 reply = "🔄 You have unlinked from this organization.\n\nReply *Join* to search for a new one.";
@@ -307,7 +332,8 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
             if (!newEmail.includes('@')) {
                 reply = "⚠️ Invalid email.";
             } else {
-                await prisma.member.update({ where: { phone: cleanPhone }, data: { email: newEmail } });
+                // 🚀 FIX: Used member.id
+                await prisma.member.update({ where: { id: member.id }, data: { email: newEmail } });
                 reply = `✅ Email updated to: *${newEmail}*`;
                 session.step = 'CHURCH_MENU'; 
             }
