@@ -7,7 +7,7 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const axios = require('axios');
-const { sendWhatsApp } = require('../services/twilioClient'); // Ensure correct path to your Twilio sender
+const { sendWhatsApp } = require('../services/twilioClient'); 
 
 // Netcash Validation Endpoint
 const NETCASH_VALIDATE_URL = "https://paynow.netcash.co.za/site/validate.aspx";
@@ -20,10 +20,12 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
 
     try {
         const payload = req.body;
-        console.log(`🔒 [WEBHOOK] Incoming payload for Ref: ${payload.p2}`);
+        
+        // DebiCheck and PayNow sometimes use different reference keys in their payloads
+        const reference = payload.p2 || payload.AccountReference || payload.MandateReference || 'UNKNOWN';
+        console.log(`🔒 [WEBHOOK] Incoming payload for Ref: ${reference}`);
 
         // 2. THE COMPLIANCE PING (ITN Validation)
-        // We bounce the exact payload back to Netcash to ensure it wasn't spoofed by a hacker
         const validationParams = new URLSearchParams(payload).toString();
         const validationResponse = await axios.post(NETCASH_VALIDATE_URL, validationParams, {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
@@ -31,19 +33,56 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
 
         // 3. CHECK THE VALIDATION RESULT
         if (validationResponse.data.trim() !== 'VALID') {
-            console.error(`🚨 [SECURITY ALERT] Spoofed webhook detected for Ref: ${payload.p2}`);
+            console.error(`🚨 [SECURITY ALERT] Spoofed webhook detected for Ref: ${reference}`);
             return; // Silently drop the fake request
         }
 
-        console.log(`✅ [WEBHOOK] Netcash confirmed VALID for Ref: ${payload.p2}`);
+        console.log(`✅ [WEBHOOK] Netcash confirmed VALID for Ref: ${reference}`);
 
         // 4. EXTRACT TRUSTED DATA
-        const reference = payload.p2; // e.g., WEB-AFM-TITHE-1234
-        const amountPaid = parseFloat(payload.p4);
-        const isSuccessful = payload.TransactionAccepted === 'true';
+        const amountPaid = parseFloat(payload.p4 || 0);
+        // Map success flags for both Pay Now (TransactionAccepted) and DebiCheck (Status/Reason)
+        const isSuccessful = payload.TransactionAccepted === 'true' || payload.Status === 'Accepted' || payload.Reason === '000';
         const failureReason = payload.Reason || 'Unknown';
 
-        // 5. UPDATE TRANSACTION RECORD
+        // =========================================================
+        // 🚀 SCENARIO A: DEBICHECK MANDATE APPROVAL
+        // =========================================================
+        if (reference.includes('-MANDATE-')) {
+            const orgCode = reference.split('-')[0];
+            
+            // Find the member who is waiting for mandate approval
+            const member = await prisma.member.findFirst({
+                where: { churchCode: orgCode, status: 'PENDING_MANDATE' },
+                orderBy: { id: 'desc' }
+            });
+
+            if (!member) {
+                console.warn(`⚠️ [WEBHOOK] Mandate member not found for ref ${reference}`);
+                return;
+            }
+
+            let cleanPhone = member.phone;
+
+            if (isSuccessful) {
+                await prisma.member.update({
+                    where: { id: member.id },
+                    data: { status: 'ACTIVE_DEBIT_ORDER' }
+                });
+                await sendWhatsApp(cleanPhone, `🎉 *Mandate Authorized!*\n\nYour DebiCheck debit order has been successfully activated by your bank. Your membership is now fully secured on autopilot!`);
+            } else {
+                await prisma.member.update({
+                    where: { id: member.id },
+                    data: { status: 'ACTIVE' } // Revert to standard active so they can try again
+                });
+                await sendWhatsApp(cleanPhone, `⚠️ *Mandate Declined*\n\nYour bank declined or timed out the DebiCheck request. Please reply *Menu* to try setting it up again, or choose a once-off payment.`);
+            }
+            return; // Exit here so it doesn't try to look for a Transaction record!
+        }
+
+        // =========================================================
+        // 💰 SCENARIO B: STANDARD TRANSACTION PROCESSING
+        // =========================================================
         const transaction = await prisma.transaction.findFirst({
             where: { reference: reference },
             include: { member: { include: { church: true, society: true } } }
@@ -64,29 +103,24 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
                 data: { status: 'SUCCESS' }
             });
 
-            // 6. BUSINESS LOGIC ROUTING (Based on Reference Prefix)
-            
-            // Scenario A: Automated Debt Collection (from blastEngine / billingCron)
+            // BUSINESS LOGIC ROUTING 
             if (reference.startsWith('AUTO-') || reference.startsWith('BLAST-')) {
-                // Find the original collection debt using the middle part of the reference
                 const debtRefPart = reference.split('-')[1]; 
                 await prisma.collection.updateMany({
                     where: { reference: debtRefPart },
                     data: { status: 'PAID', paidAt: new Date() }
                 });
             }
-
-            // Scenario B: Burial Society Premium Paid
             else if (reference.includes('-PREM-')) {
                 if (transaction.memberId) {
                     await prisma.member.update({
                         where: { id: transaction.memberId },
-                        data: { status: 'ACTIVE' } // Reactivate policy if they were lapsed!
+                        data: { status: 'ACTIVE' }
                     });
                 }
             }
 
-            // 7. SEND AUTOMATED WHATSAPP RECEIPT
+            // SEND AUTOMATED WHATSAPP RECEIPT
             if (transaction.phone) {
                 let cleanPhone = transaction.phone.replace(/\D/g, '');
                 if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
@@ -98,7 +132,7 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
             }
 
         } else {
-            // Transaction Failed (Insufficient funds, card declined, etc.)
+            // Transaction Failed
             await prisma.transaction.update({
                 where: { id: transaction.id },
                 data: { status: 'FAILED' }
