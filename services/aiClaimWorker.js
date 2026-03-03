@@ -115,9 +115,10 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
             adminNotes = `🚨 AI TAMPER WARNING: High fraud probability (${parsedFraudScore}/100). Indicators: ${aiData.fraudIndicators.join(', ')}`;
         }
 
-        // 6️⃣ POLICY WAITING PERIOD VALIDATION
+       // 6️⃣ POLICY WAITING PERIOD VALIDATION
+        // 🚀 FIX: Changed societyCode to churchCode to match your schema
         const member = await prisma.member.findFirst({
-            where: { idNumber: aiData.deceasedIdNumber, societyCode: orgCode }
+            where: { idNumber: aiData.deceasedIdNumber, churchCode: orgCode }
         });
 
         if (!member) {
@@ -135,15 +136,21 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
         }
 
         // 7️⃣ PERSIST CLAIM TO DATABASE
-        const claimant = await prisma.member.findUnique({ where: { phone: userPhone } });
+        // 🚀 FIX: Changed findUnique to findFirst because phone is no longer unique
+        const claimant = await prisma.member.findFirst({ 
+            where: { phone: userPhone, churchCode: orgCode },
+            orderBy: { id: 'desc' }
+        });
+        
         if (!claimant) throw new Error("Claimant not found in database.");
 
         const benName = `${claimant.firstName} ${claimant.lastName}`;
 
+        // 🚀 FIX: Swapped memberPhone out for memberId
         await prisma.claim.create({
             data: {
                 churchCode: orgCode, 
-                memberPhone: userPhone, 
+                memberId: claimant.id, // <-- The new Multi-Tenant relational link!
                 deceasedIdNumber: aiData.deceasedIdNumber, 
                 dateOfDeath: new Date(aiData.dateOfDeath),
                 causeOfDeath: aiData.causeOfDeath,
