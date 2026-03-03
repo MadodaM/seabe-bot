@@ -38,7 +38,9 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
 
     try {
         // 1. MENU TRIGGER
-        const societyTriggers = ['society', 'Policy', 'funeral', 'palour'];
+        // 🚀 FIX: Added 'menu', 'hi', and 'hello' so the router handoff works!
+        const societyTriggers = ['society', 'policy', 'funeral', 'palour', 'menu', 'hi', 'hello'];
+        
         if (societyTriggers.includes(incomingMsg.toLowerCase()) && session.step !== 'ADD_DEP_NAME' && session.step !== 'ADD_DEP_RELATION' && session.step !== 'PROFILE_MENU' && session.step !== 'UPDATE_NAME' && session.step !== 'UPDATE_EMAIL' && session.step !== 'CONFIRM_UNLINK') {
             session.step = 'SOCIETY_MENU';
             reply = `🛡️ *${orgName}*\n_Burial Society Portal_\n\n` +
