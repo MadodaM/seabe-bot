@@ -3,7 +3,6 @@ const express = require('express');
 const router = express.Router();
 
 // 📦 IMPORT NEW SERVICES
-const ozow = require('../services/ozow');
 const netcash = require('../services/netcash');
 
 module.exports = (app, { prisma }) => {
@@ -44,7 +43,7 @@ module.exports = (app, { prisma }) => {
                     <option value="TITHE" data-type="VARIABLE">Tithe (10%) 🏛️</option>`;
             }
 
-            // --- 🎨 FULL UI RESTORATION (The missing 100 lines) ---
+            // --- 🎨 FULL UI RESTORATION ---
             res.send(`
             <!DOCTYPE html>
             <html lang="en">
@@ -118,7 +117,7 @@ module.exports = (app, { prisma }) => {
     });
 
     // ==========================================
-    // 2. PROCESS ROUTE
+    // 2. PROCESS ROUTE (Netcash & Multi-Tenant Upgraded)
     // ==========================================
     router.post('/link/:code/process', async (req, res) => {
         try {
@@ -126,23 +125,43 @@ module.exports = (app, { prisma }) => {
             const { amount, type, phone } = req.body;
             const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
             
-            const cleanPhone = phone.replace(/\D/g, ''); 
+            if (!org) return res.status(404).send("Organization not found.");
+
+            // 1. Standardize Phone Number
+            let cleanPhone = phone.replace(/\D/g, ''); 
+            if (cleanPhone.length === 10 && cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+
+            // 🚀 2. Look up the Member ID so their payment history syncs perfectly
+            const member = await prisma.member.findFirst({
+                where: { phone: cleanPhone, churchCode: org.code }
+            });
+
             const ref = `WEB-${code}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
 
-            const ACTIVE_GATEWAY_NAME = process.env.ACTIVE_GATEWAY || 'OZOW'; 
-            const gateway = ACTIVE_GATEWAY_NAME === 'NETCASH' ? netcash : ozow;
-
-            const link = await gateway.createPaymentLink(amount, ref, cleanPhone, org.name);
+            // 3. Exclusively use Netcash
+            const link = await netcash.createPaymentLink(amount, ref, cleanPhone, org.name);
 
             if (link) {
+                // 4. Save to Database with Multi-Tenant Link
                 await prisma.transaction.create({
-                    data: { churchCode: org.code, phone: cleanPhone, type, amount: parseFloat(amount), reference: ref, status: 'PENDING' }
+                    data: { 
+                        churchCode: org.code, 
+                        phone: cleanPhone, 
+                        memberId: member ? member.id : null, // Links to their profile if they have one!
+                        type: type, 
+                        amount: parseFloat(amount), 
+                        reference: ref, 
+                        status: 'PENDING' 
+                    }
                 });
                 res.redirect(link);
             } else {
                 res.status(500).send("Gateway Error.");
             }
-        } catch (e) { res.status(500).send("Processing Error."); }
+        } catch (e) { 
+            console.error("Link Process Error:", e);
+            res.status(500).send("Processing Error."); 
+        }
     });
 
     app.use('/', router); 
