@@ -46,7 +46,8 @@ async function generatePolicyCard(member, org) {
         ctx.font = 'bold 24px sans-serif';
         ctx.fillText(`${member.firstName} ${member.lastName}`, 250, startY);
         ctx.fillText(member.policyNumber || `SB-${member.phone.slice(-4)}`, 250, startY + lineSpacing);
-        ctx.fillText(`+${member.phone}`, 250, startY + (lineSpacing * 2));
+        const displayPhone = member.phone.startsWith('+') ? member.phone : `+${member.phone}`;
+		ctx.fillText(displayPhone, 250, startY + (lineSpacing * 2));
         ctx.fillText(member.joinedAt ? new Date(member.joinedAt).getFullYear().toString() : '2024', 250, startY + (lineSpacing * 3));
 
         // Status Badge (Green for Active, Red/Orange for Pending)
