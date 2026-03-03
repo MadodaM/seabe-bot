@@ -11,6 +11,7 @@ const PRICING_TIERS = {
         INSTANT_EFT: { percent: 0.025, flat: 1.50 }, // 2.5% + R1.50
         CARD:        { percent: 0.035, flat: 2.50 }, // 3.5% + R2.50
         CASH_RETAIL: { percent: 0.050, flat: 3.00 }, // 5.0% + R3.00
+        DEBIT_ORDER: { percent: 0.000, flat: 5.00 }, // 🚀 NEW: Flat R5.00 for Mandates
         DEFAULT:     { percent: 0.025, flat: 1.50 }  // Fallback
     },
     // Module-Specific Platform Surcharges

@@ -98,7 +98,7 @@ async function setupDebitOrderMandate(baseAmount, userPhone, orgName, ref) {
     try {
         // 🚀 PRICING ENGINE INTERCEPTION
         // Calculate the exact recurring monthly deduction including our margin
-        const pricing = calculateTransaction(baseAmount, 'STANDARD', 'DEFAULT', true);
+        const pricing = calculateTransaction(baseAmount, 'STANDARD', 'DEBIT_ORDER', true);
 
         console.log(`💳 Generating Netcash Mandate for ${userPhone}. Base: R${baseAmount} -> Monthly Total: R${pricing.totalChargedToUser}`);
 
