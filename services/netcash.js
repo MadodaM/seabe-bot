@@ -4,6 +4,9 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 require('dotenv').config();
 
+// 🚀 NEW: Import the Pricing Engine
+const { calculateTransaction } = require('./pricingEngine');
+
 // NetCash uses specific Service Keys for different features
 const PAYNOW_SERVICE_KEY = process.env.NETCASH_PAYNOW_KEY || 'TEST_PAYNOW_KEY';
 const DEBIT_ORDER_KEY = process.env.NETCASH_DEBIT_ORDER_KEY || 'TEST_DEBIT_ORDER_KEY';
@@ -20,10 +23,11 @@ function sanitizeMoney(amount) {
 
 // ==========================================
 // 1. STANDARD PAYMENT LINK (Pay Now)
+// NOTE: This expects the FINAL amount (After Pricing Engine has run in the router)
 // ==========================================
-async function createPaymentLink(amount, ref, userPhone, orgName) {
+async function createPaymentLink(finalAmount, ref, userPhone, orgName) {
     try {
-        const cleanAmount = sanitizeMoney(amount);
+        const cleanAmount = sanitizeMoney(finalAmount);
         if (cleanAmount == 0) return null;
 
         // 🛑 We are currently returning the Sandbox Preview page.
@@ -65,7 +69,6 @@ async function verifyPayment(reference) {
 // ==========================================
 // 3. TRANSACTION HISTORY (Multi-Tenant Safe)
 // ==========================================
-// 🚀 FIX: We now pass the exact memberId so histories don't mix across organizations!
 async function getTransactionHistory(memberId) {
     try {
         const transactions = await prisma.transaction.findMany({
@@ -91,6 +94,29 @@ async function getTransactionHistory(memberId) {
 // ==========================================
 // 4. DEBIT ORDERS (Mandates)
 // ==========================================
+async function setupDebitOrderMandate(baseAmount, userPhone, orgName, ref) {
+    try {
+        // 🚀 PRICING ENGINE INTERCEPTION
+        // Calculate the exact recurring monthly deduction including our margin
+        const pricing = calculateTransaction(baseAmount, 'STANDARD', 'DEFAULT', true);
+
+        console.log(`💳 Generating Netcash Mandate for ${userPhone}. Base: R${baseAmount} -> Monthly Total: R${pricing.totalChargedToUser}`);
+
+        // Netcash Debit Order API integration goes here.
+        // We generate a secure link where the user types in their bank account details and accepts the mandate.
+        const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+        const mandateUrl = `${host}/mandate/sign?ref=${ref}&amount=${pricing.totalChargedToUser}&phone=${userPhone}&org=${encodeURIComponent(orgName)}`;
+        
+        return {
+            mandateUrl: mandateUrl,
+            pricing: pricing
+        };
+    } catch (error) {
+        console.error("❌ Mandate Setup Error:", error.message);
+        return null;
+    }
+}
+
 async function listActiveSubscriptions(phone) {
     // NetCash dominates the Debit Order space. 
     // This function will eventually pull active NetCash mandates.
@@ -101,5 +127,6 @@ module.exports = {
     createPaymentLink, 
     verifyPayment, 
     getTransactionHistory,
+    setupDebitOrderMandate, // 🚀 Exported new engine
     listActiveSubscriptions
 };
