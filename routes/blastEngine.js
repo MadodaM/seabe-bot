@@ -7,6 +7,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { sendWhatsApp } = require('../services/whatsapp'); 
 const netcash = require('../services/netcash'); // 🚀 ADDED NETCASH ENGINE
+const { calculateTransaction } = require('../services/pricingEngine'); // 🚀 ADDED PRICING ENGINE
 
 // Helper function to prevent Twilio Rate-Limiting (10 msgs / sec limit)
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -42,9 +43,13 @@ router.post('/api/crm/collections/blast/:churchCode', async (req, res) => {
         // 3. Fire the Blast
         for (const account of overdueAccounts) {
             try {
-                // 🚀 FIX: Generate a unique Netcash link for 1-click payments!
+                // 🚀 PRICING ENGINE INTERCEPTION
+                // Assuming STANDARD tier, DEFAULT gateway, and passing fees to the user (true)
+                const pricing = calculateTransaction(account.amount, 'STANDARD', 'DEFAULT', true);
+
+                // Generate a unique Netcash link using the NEW total charged to the user
                 const ref = `BLAST-${account.reference}-${Date.now().toString().slice(-4)}`;
-                let paymentLink = await netcash.createPaymentLink(account.amount, ref, account.phone, org.name);
+                let paymentLink = await netcash.createPaymentLink(pricing.totalChargedToUser, ref, account.phone, org.name);
 
                 // Fallback to the secure portal if the Netcash API happens to be down
                 if (!paymentLink) {
@@ -52,7 +57,8 @@ router.post('/api/crm/collections/blast/:churchCode', async (req, res) => {
                     paymentLink = `${host}/link/${churchCode}`; 
                 }
                 
-                const message = `🔔 *Premium Reminder*\n\nHi ${account.firstName},\nYour ${org.name} premium of *R${account.amount.toFixed(2)}* is currently due.\n\nTap the secure link below to settle your account via Netcash:\n👉 ${paymentLink}\n\nReply *1* if you need assistance.`;
+                // 🚀 TRANSPARENT FEE BREAKDOWN IN THE MESSAGE
+                const message = `🔔 *Premium Reminder*\n\nHi ${account.firstName},\nYour ${org.name} premium is currently due.\n\nPremium: *R${pricing.baseAmount.toFixed(2)}*\nService Fee: *R${pricing.totalFees.toFixed(2)}*\n*Total Due: R${pricing.totalChargedToUser.toFixed(2)}*\n\nTap the secure link below to settle your account via Netcash:\n👉 ${paymentLink}\n\nReply *1* if you need assistance.`;
 
                 // 🛡️ Ensure phone is clean for Twilio
                 let cleanPhone = account.phone.replace(/\D/g, '');
