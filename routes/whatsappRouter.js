@@ -242,20 +242,21 @@ router.post('/', (req, res) => {
                             return;
                         } else {
                             let existingMember = await prisma.member.findFirst({
-								where: { phone: cleanPhone, churchCode: org.code }
-							});
-
-							if (!existingMember) {
-								await prisma.member.create({
-									data: { 
-										phone: cleanPhone, 
-										firstName: 'Member', 
-										lastName: 'New', 
-										church: { connect: { id: org.id } }, 
-										status: 'ACTIVE' 
-									}
-								});
-							}}
+                                where: { phone: cleanPhone, churchCode: org.code }
+                            });
+                            
+                            if (!existingMember) {
+                                // 🚀 FIXED: No redundant churchCode here
+                                await prisma.member.create({
+                                    data: { 
+                                        phone: cleanPhone, 
+                                        firstName: 'Member', 
+                                        lastName: 'New', 
+                                        church: { connect: { id: org.id } }, 
+                                        status: 'ACTIVE' 
+                                    }
+                                });
+                            }
                             
                             clearSessionFlag = true; 
                             const welcomeType = org.type === 'NON_PROFIT' ? "📚 Reply *Courses* to view our digital learning programs" : "Reply *Amen* to access your church menu";
@@ -293,7 +294,6 @@ router.post('/', (req, res) => {
                 }
 
                 if (session.step === 'ENTER_POLICY_NUMBER') {
-                    // 🚀 FIX: Switched to churchCode
                     const memberMatch = await prisma.member.findFirst({
                         where: { churchCode: session.churchCode, idNumber: incomingMsg }
                     });
@@ -340,29 +340,29 @@ router.post('/', (req, res) => {
                     session.monthlyPremium = parseFloat(premiumMatch[1]);
                 }
 
-                // 🚀 FIX: Safely find and create using churchCode
                 if (session.churchCode) {
                     let draftMember = await prisma.member.findFirst({
                         where: { phone: cleanPhone, churchCode: session.churchCode }
                     });
                     
                     if (draftMember) {
-						await prisma.member.update({
-							where: { id: draftMember.id },
-							data: { monthlyPremium: session.monthlyPremium }
-						});
-					} else {
-						await prisma.member.create({
-							data: {
-								phone: cleanPhone,
-								firstName: 'Pending',
-								lastName: 'Member',
-								church: { connect: { id: session.churchId } }, 
-								status: 'PENDING_KYC',
-								monthlyPremium: session.monthlyPremium
-							}
-						});
-					}
+                        await prisma.member.update({
+                            where: { id: draftMember.id },
+                            data: { monthlyPremium: session.monthlyPremium }
+                        });
+                    } else {
+                        // 🚀 FIXED: No redundant churchCode here
+                        await prisma.member.create({
+                            data: {
+                                phone: cleanPhone,
+                                firstName: 'Pending',
+                                lastName: 'Member',
+                                church: { connect: { id: session.churchId } }, 
+                                status: 'PENDING_KYC',
+                                monthlyPremium: session.monthlyPremium
+                            }
+                        });
+                    }
                 }
 
                 await sendWhatsApp(cleanPhone, "🎉 Fantastic! Your quote has been accepted.\n\nTo finalize your policy registration, we must complete a quick KYC compliance check.\n\nPlease reply directly to this message with a clear photo of your *ID Document* (Green Book or Smart ID).");
@@ -393,7 +393,6 @@ router.post('/', (req, res) => {
                     const extractedData = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
 
                     if (extractedData.confidenceScore > 75) {
-                        // 🚀 FIX: Search by churchCode
                         let draftMember = await prisma.member.findFirst({
                             where: { phone: cleanPhone, churchCode: session.churchCode }
                         });
@@ -419,7 +418,6 @@ router.post('/', (req, res) => {
                         throw new Error("AI Confidence too low.");
                     }
                 } catch (error) {
-                    // 🚀 FIX: Fallback update uses churchCode
                     let draftMember = await prisma.member.findFirst({
                         where: { phone: cleanPhone, churchCode: session.churchCode }
                     });
@@ -438,7 +436,6 @@ router.post('/', (req, res) => {
             if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ADDRESS') {
                 const addressUrl = req.body.MediaUrl0;
                 try {
-                    // 🚀 FIX: Uses churchCode
                     const memberRecord = await prisma.member.findFirst({ 
                         where: { phone: cleanPhone, churchCode: session.churchCode },
                         orderBy: { id: 'desc' }
@@ -497,20 +494,16 @@ router.post('/', (req, res) => {
             // 🏛️ BRANCH ROUTING (CHURCH, NPO, PROVIDERS)
             // ================================================
             
-            // Map common entry words to 'menu' so sub-bots understand what to show
             const menuKeywords = ['society', 'amen', 'hi', 'hello', 'menu', 'dashboard'];
             const mappedMsg = menuKeywords.includes(incomingMsg) ? 'menu' : incomingMsg;
 
-            // Set explicit mode if they use a strict keyword
             if (incomingMsg === 'society') session.mode = 'SOCIETY';
             if (incomingMsg === 'amen') session.mode = 'CHURCH';
 
-            // Auto-detect mode if they just type "hi" or "menu" and don't have a mode set
             if (menuKeywords.includes(incomingMsg) && !session.mode && member.church) {
                 session.mode = member.church.type === 'BURIAL_SOCIETY' ? 'SOCIETY' : 'CHURCH';
             }
 
-            // Route to Society Bot
             if (session.mode === 'SOCIETY') {
                 if (member.church && member.church.type === 'BURIAL_SOCIETY') {
                     await handleSocietyMessage(cleanPhone, mappedMsg, session, member);
@@ -521,7 +514,6 @@ router.post('/', (req, res) => {
                 }
             }
 
-            // Route to Church / NPO Bot
             if (session.mode === 'CHURCH') {
                 if (member.church && member.church.type !== 'BURIAL_SOCIETY') {
                     await handleChurchMessage(cleanPhone, mappedMsg, session, member);
