@@ -3,7 +3,6 @@
 // ==========================================
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient(); 
-const ozow = require('../services/ozow'); 
 const netcash = require('../services/netcash');
 const { generateKYCLink } = require('../routes/kyc');
 
@@ -28,20 +27,21 @@ const sendWhatsApp = async (to, body) => {
     }
 };
 
-const ACTIVE_GATEWAY_NAME = process.env.ACTIVE_GATEWAY || 'OZOW'; 
-const gateway = ACTIVE_GATEWAY_NAME === 'NETCASH' ? netcash : ozow;
+// 🚀 FIX: Forced Netcash exclusively. Removed the undefined 'ozow' variable.
+const gateway = netcash;
 
 async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
     let reply = "";
-    session.orgName = session.orgName || member?.society?.name || "Burial Society";
-    session.orgCode = session.orgCode || member?.societyCode;
+    // Check both relation types depending on how they joined
+    const orgName = session.orgName || (member?.church ? member.church.name : (member?.society ? member.society.name : "Burial Society"));
+    const orgCode = session.orgCode || member?.churchCode || member?.societyCode;
 
     try {
         // 1. MENU TRIGGER
         const societyTriggers = ['society', 'Policy', 'funeral', 'palour'];
         if (societyTriggers.includes(incomingMsg.toLowerCase()) && session.step !== 'ADD_DEP_NAME' && session.step !== 'ADD_DEP_RELATION' && session.step !== 'PROFILE_MENU' && session.step !== 'UPDATE_NAME' && session.step !== 'UPDATE_EMAIL' && session.step !== 'CONFIRM_UNLINK') {
             session.step = 'SOCIETY_MENU';
-            reply = `🛡️ *${session.orgName}*\n_Burial Society Portal_\n\n` +
+            reply = `🛡️ *${orgName}*\n_Burial Society Portal_\n\n` +
                     `1. My Policy 📜\n` +
                     `2. My Dependents 👨‍👩‍👧‍👦\n` +
                     `3. KYC Compliance 🏦\n` +
@@ -64,7 +64,8 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
 
             // OPTION 2: VIEW DEPENDENTS
             else if (incomingMsg === '2') {
-                const dependents = await prisma.dependent.findMany({ where: { member: { phone: cleanPhone } } });
+                // 🚀 FIX: Find dependents specifically for this member ID, not just the phone number!
+                const dependents = await prisma.dependent.findMany({ where: { memberId: member.id } });
                 if (dependents.length === 0) {
                     reply = `👨‍👩‍👧‍👦 *My Dependents*\n\nNo dependents linked.\nReply *Add* to add one.`;
                 } else {
@@ -87,7 +88,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                 
                 reply = `🪪 *DIGITAL MEMBERSHIP CARD*\n` +
                         `━━━━━━━━━━━━━━━━━━━━\n` +
-                        `🏛️ *${session.orgName}*\n` +
+                        `🏛️ *${orgName}*\n` +
                         `👤 *Name:* ${member?.firstName || 'Member'} ${member?.lastName || ''}\n` +
                         `🆔 *Policy:* ${member?.policyNumber || 'SB-' + cleanPhone.slice(-4)}\n` +
                         `📅 *Member Since:* ${memberSince}\n` +
@@ -100,14 +101,24 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             // OPTION 5: PREMIUM PAYMENT
             else if (incomingMsg === '5') {
                 const amount = member?.monthlyPremium || 150.00;
-                const ref = `${session.orgCode}-PREM-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
-                const link = await gateway.createPaymentLink(amount, ref, cleanPhone, session.orgName);
+                const ref = `${orgCode}-PREM-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
+                const link = await gateway.createPaymentLink(amount, ref, cleanPhone, orgName);
                 
                 if (link) {
+                    // 🚀 FIX: Attached memberId so Netcash webhook can update the correct profile!
                     await prisma.transaction.create({
-                        data: { churchCode: session.orgCode, phone: cleanPhone, amount: parseFloat(amount), reference: ref, status: 'PENDING', type: 'SOCIETY_PREMIUM', date: new Date() }
+                        data: { 
+                            churchCode: orgCode, 
+                            memberId: member.id, // <--- CRITICAL FIX
+                            phone: cleanPhone, 
+                            amount: parseFloat(amount), 
+                            reference: ref, 
+                            status: 'PENDING', 
+                            type: 'SOCIETY_PREMIUM', 
+                            date: new Date() 
+                        }
                     });
-                    reply = `💳 *Pay Premium via ${ACTIVE_GATEWAY_NAME}*\nDue: R${amount}.00\n\n👉 ${link}`;
+                    reply = `💳 *Pay Premium via Netcash*\nDue: R${amount}.00\n\n👉 ${link}`;
                 } else {
                     reply = "⚠️ Payment link error.";
                 }
@@ -119,7 +130,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                 reply = `📑 *Log a Death Claim*\n\nPlease upload a clear photo of the *Death Certificate*.\n\nOur AI will process the details instantly.`;
             }
 
-            // ✨ OPTION 7: MY PROFILE (NEW)
+            // ✨ OPTION 7: MY PROFILE
             else if (incomingMsg === '7') {
                 session.step = 'PROFILE_MENU';
                 reply = `👤 *My Profile*\n\n` +
@@ -131,7 +142,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                         `0️⃣ Back to Main Menu`;
             }
 
-            // OPTION 8: EXIT (MOVED)
+            // OPTION 8: EXIT
             else if (incomingMsg === '8') {
                 session.mode = 'CHURCH';
                 session.step = 'CHURCH_MENU';
@@ -145,7 +156,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
         }
 
         // ==========================================
-        // 👤 PROFILE MANAGEMENT STATES (NEW)
+        // 👤 PROFILE MANAGEMENT STATES
         // ==========================================
         else if (session.step === 'PROFILE_MENU') {
             if (incomingMsg === '1') {
@@ -168,18 +179,21 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             const parts = incomingMsg.split(' ');
             const fName = parts[0] || 'Member';
             const lName = parts.slice(1).join(' ') || '.'; 
-            await prisma.member.update({ where: { phone: cleanPhone }, data: { firstName: fName, lastName: lName } });
+            // 🚀 FIX: Use member.id so Prisma doesn't crash on non-unique phone
+            await prisma.member.update({ where: { id: member.id }, data: { firstName: fName, lastName: lName } });
             session.step = 'SOCIETY_MENU';
-            reply = `✅ Profile updated to *${fName} ${lName}*!\n\nReply *Menu* to go back.`;
+            reply = `✅ Profile updated to *${fName} ${lName}*!\n\nReply *0* to go back.`;
         }
         else if (session.step === 'UPDATE_EMAIL') {
-            await prisma.member.update({ where: { phone: cleanPhone }, data: { email: incomingMsg.toLowerCase() } });
+            // 🚀 FIX: Use member.id
+            await prisma.member.update({ where: { id: member.id }, data: { email: incomingMsg.toLowerCase() } });
             session.step = 'SOCIETY_MENU';
-            reply = `✅ Email successfully updated!\n\nReply *Menu* to go back.`;
+            reply = `✅ Email successfully updated!\n\nReply *0* to go back.`;
         }
         else if (session.step === 'CONFIRM_UNLINK') {
-            if (incomingMsg === 'yes') {
-                await prisma.member.update({ where: { phone: cleanPhone }, data: { societyCode: null } });
+            if (incomingMsg.toLowerCase() === 'yes') {
+                // 🚀 FIX: Use member.id and clear both code fields to ensure a clean break
+                await prisma.member.update({ where: { id: member.id }, data: { churchCode: null, societyCode: null, status: 'INACTIVE' } });
                 session.mode = null;
                 session.step = null;
                 reply = "🚪 You have successfully unlinked from the society.\n\nReply *Join* anytime to link to a new organization.";
