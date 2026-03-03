@@ -6,7 +6,11 @@ const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const cloudinary = require('cloudinary').v2;
 const { sendWhatsApp } = require('../services/whatsapp'); 
-const { createPaymentLink } = require('../services/paystack'); // 🔗 IMPORT EXISTING PAYSTACK LOGIC
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient(); // ✅ Centralized DB connection
+
+// 🚀 FIX: Removed Paystack, replaced with Netcash
+const { createPaymentLink } = require('../services/netcash'); 
 
 // 1. Configure Uploads
 const upload = multer({ dest: 'uploads/' });
@@ -68,7 +72,6 @@ module.exports = (app) => {
     // 🛡️ SECURITY MIDDLEWARE
     const checkAccess = async (req, res, next) => {
         const { code } = req.params;
-        const prisma = require('../services/prisma');
         
         // Parse cookies
         const list = {};
@@ -84,19 +87,18 @@ module.exports = (app) => {
             return next(); 
         }
 
-        // 2. Allow logged-in Client Dashboard users (The Fix!)
+        // 2. Allow logged-in Client Dashboard users
         if (list[`session_${code}`] === 'active') {
             req.org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
             if (req.org) return next();
         }
 
         // 3. Kick out anyone else
-        return res.status(403).send("<h1>🚫 Access Denied</h1><p>Your session has expired or you do not have permission. <a href='/admin/${code}'>Click here to log in.</a></p>");
+        return res.status(403).send(`<h1>🚫 Access Denied</h1><p>Your session has expired or you do not have permission. <a href='/admin/${code}'>Click here to log in.</a></p>`);
     };
 
     // --- UPLOAD CSV ---
     router.post('/admin/:code/collections/upload', checkAccess, upload.single('file'), (req, res) => {
-        const prisma = require('../services/prisma');
         const results = [];
         fs.createReadStream(req.file.path).pipe(csv()).on('data', (data) => results.push(data)).on('end', async () => {
             for (const r of results) {
@@ -125,9 +127,8 @@ module.exports = (app) => {
     });
 
 
-// --- BLAST CAMPAIGN ---
+    // --- BLAST CAMPAIGN ---
     router.post('/admin/:code/collections/blast', checkAccess, async (req, res) => {
-        const prisma = require('../services/prisma');
         
         // Find the top 10 pending debts for this organization
         const pendingDebts = await prisma.collection.findMany({
@@ -137,21 +138,20 @@ module.exports = (app) => {
 
         for (const debt of pendingDebts) {
             try {
-                // 💳 1. Call your existing Paystack Service
-                const email = debt.email || `${debt.phone}@seabe.co.za`; 
-                const uniqueRef = `COL_${debt.reference}_${Date.now()}`; 
+                // 💳 1. Call your new Netcash Service
+                const uniqueRef = `COL-${debt.reference}-${Date.now().toString().slice(-4)}`; 
                 
+                // 🚀 FIX: createPaymentLink for Netcash only needs: amount, ref, phone, orgName
                 let payLink = await createPaymentLink(
                     debt.amount, 
                     uniqueRef, 
-                    email, 
-                    req.org.subaccountCode, 
                     debt.phone, 
                     req.org.name
                 );
                 
-                // Fallback just in case Paystack API fails
-                if (!payLink) payLink = `https://pay.seabe.co.za/pay?ref=${uniqueRef}&amt=${debt.amount}`;
+                // Fallback just in case Netcash API fails
+                const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+                if (!payLink) payLink = `${host}/link/${req.params.code}`;
 
                 // 📄 2. Generate and Upload PDF to Cloudinary
                 const pdfUrl = await createAndUploadStatement({ ...debt, idNumber: null }, req.org.name);
@@ -159,27 +159,16 @@ module.exports = (app) => {
                 // ⏳ 3. Brief Delay for Cloudinary Propagation
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 
-                // 💬 4. The PERFECTLY formatted Meta Template 3
-                // ⚠️ DO NOT indent these lines to keep Meta happy!
-                const messageBody = `Dear ${debt.firstName},
-
-Please find attached your outstanding statement for ${req.org.name} (Ref: ${debt.reference}).
-
-💰 Amount Due: R${debt.amount}
-
-🔒 Statement Password: Your Phone Number (last 6 digits)
-
-👉 Click here to pay securely via Paystack: > ${payLink}
-
-Reply with "What is this bill?" to trigger a menu.`;
+                // 💬 4. The PERFECTLY formatted Meta Template
+                const messageBody = `Dear ${debt.firstName},\n\nPlease find attached your outstanding statement for ${req.org.name} (Ref: ${debt.reference}).\n\n💰 Amount Due: R${debt.amount}\n\n🔒 Statement Password: Your Phone Number (last 6 digits)\n\n👉 Click here to pay securely via Netcash: ${payLink}\n\nReply "1" if you need assistance.`;
                 
                 // 5. Send it via WhatsApp with the PDF attached!
                 await sendWhatsApp(debt.phone, messageBody, pdfUrl);
 
-                // 6. Update the database status
+                // 6. Update the database status to match UI standards!
                 await prisma.collection.update({
                     where: { id: debt.id },
-                    data: { status: 'SENT' }
+                    data: { status: 'REMINDER_1' } // 🚀 FIX: Changed from 'SENT' so UI turns Yellow
                 });
             } catch (error) {
                 console.error(`Error processing debt for ${debt.phone}:`, error);
