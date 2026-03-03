@@ -37,16 +37,59 @@ router.post('/', (req, res) => {
 
             const numMedia = parseInt(req.body.NumMedia || '0'); 
             
-            const member = await prisma.member.findFirst({
-                where: { phone: cleanPhone },
-                orderBy: { id: 'desc' },
-                include: { church: true, society: true }
-            });
+            // ================================================
+            // 🔄 MULTI-TENANT CONTEXT SWITCHER
+            // ================================================
+            const switchKeywords = { 'society': 'BURIAL_SOCIETY', 'amen': 'CHURCH', 'npo': 'NON_PROFIT' };
+            let explicitType = switchKeywords[incomingMsg];
+            let member;
+
+            if (explicitType) {
+                // User explicitly typed a keyword to switch to a different org type.
+                // Fetch the specific profile that matches the requested type!
+                member = await prisma.member.findFirst({
+                    where: { phone: cleanPhone, church: { type: explicitType } },
+                    orderBy: { id: 'desc' },
+                    include: { church: true, society: true }
+                });
+
+                if (member) {
+                    // Lock the session into this new organization!
+                    session.churchCode = member.churchCode;
+                    session.mode = explicitType === 'BURIAL_SOCIETY' ? 'SOCIETY' : 'CHURCH';
+                    session.step = null; // Clear their previous step so they land in the main menu
+                } else {
+                    const labels = { 'BURIAL_SOCIETY': 'Burial Society', 'CHURCH': 'Church', 'NON_PROFIT': 'Non-Profit' };
+                    await sendWhatsApp(cleanPhone, `⚠️ You are not currently linked to a ${labels[explicitType]}.\n\nReply *Join* to search for one.`);
+                    return;
+                }
+            } else {
+                // Normal Flow: Stick to their currently active session organization
+                const activeOrgCode = session.churchCode || session.orgCode;
+                
+                if (activeOrgCode) {
+                    member = await prisma.member.findFirst({
+                        where: { phone: cleanPhone, churchCode: activeOrgCode },
+                        include: { church: true, society: true }
+                    });
+                }
+                
+                // Fallback: If they have no active session org, just grab their most recent profile
+                if (!member) {
+                    member = await prisma.member.findFirst({
+                        where: { phone: cleanPhone },
+                        orderBy: { id: 'desc' },
+                        include: { church: true, society: true }
+                    });
+                    if (member) session.churchCode = member.churchCode;
+                }
+            }
 
             // ================================================
             // 🚦 GLOBAL RESET & COURSE SNOOZE
             // ================================================
-            const exitKeywords = ['exit', 'cancel', 'menu', 'home'];
+            // 🚀 FIX: Removed 'menu' from exitKeywords so it stops wiping the session!
+            const exitKeywords = ['exit', 'cancel', 'home', 'lobby'];
             if (exitKeywords.includes(incomingMsg)) {
                 clearSessionFlag = true; 
                 
@@ -61,9 +104,9 @@ router.post('/', (req, res) => {
                 if (member && member.church) {
                     if (member.church.type === 'BURIAL_SOCIETY') resetMsg += "\nReply *Society* for your main menu.";
                     else if (member.church.type === 'CHURCH') resetMsg += "\nReply *Amen* for your church menu, or *Courses* to learn.";
-                    else resetMsg += "\nReply *Menu* for your dashboard, or *Courses* for our learning center.";
+                    else resetMsg += "\nReply *NPO* for your dashboard, or *Courses* for our learning center.";
                 } else {
-                    resetMsg += "\nReply *Amen* for Church, *Society* for Burial, or *Menu* for NGOs/Providers.";
+                    resetMsg += "\nReply *Amen* for Church, *Society* for Burial, or *NPO* for NGOs.";
                 }
                 
                 await sendWhatsApp(cleanPhone, resetMsg);
@@ -246,7 +289,6 @@ router.post('/', (req, res) => {
                             });
                             
                             if (!existingMember) {
-                                // 🚀 FIXED: No redundant churchCode here
                                 await prisma.member.create({
                                     data: { 
                                         phone: cleanPhone, 
@@ -351,7 +393,6 @@ router.post('/', (req, res) => {
                             data: { monthlyPremium: session.monthlyPremium }
                         });
                     } else {
-                        // 🚀 FIXED: No redundant churchCode here
                         await prisma.member.create({
                             data: {
                                 phone: cleanPhone,
@@ -494,34 +535,23 @@ router.post('/', (req, res) => {
             // 🏛️ BRANCH ROUTING (CHURCH, NPO, PROVIDERS)
             // ================================================
             
-            const menuKeywords = ['society', 'amen', 'hi', 'hello', 'menu', 'dashboard'];
+            // Map common entry words to 'menu'
+            const menuKeywords = ['society', 'amen', 'hi', 'hello', 'menu', 'dashboard', 'npo'];
             const mappedMsg = menuKeywords.includes(incomingMsg) ? 'menu' : incomingMsg;
 
-            if (incomingMsg === 'society') session.mode = 'SOCIETY';
-            if (incomingMsg === 'amen') session.mode = 'CHURCH';
-
-            if (menuKeywords.includes(incomingMsg) && !session.mode && member.church) {
+            // Auto-detect mode if they just type "hi" or "menu" and don't have a mode set
+            if (!session.mode && member.church) {
                 session.mode = member.church.type === 'BURIAL_SOCIETY' ? 'SOCIETY' : 'CHURCH';
             }
 
             if (session.mode === 'SOCIETY') {
-                if (member.church && member.church.type === 'BURIAL_SOCIETY') {
-                    await handleSocietyMessage(cleanPhone, mappedMsg, session, member);
-                    return;
-                } else {
-                    await sendWhatsApp(cleanPhone, "⚠️ You are not linked to a Burial Society. Reply *Join* to find one.");
-                    return;
-                }
+                await handleSocietyMessage(cleanPhone, mappedMsg, session, member);
+                return;
             }
 
             if (session.mode === 'CHURCH') {
-                if (member.church && member.church.type !== 'BURIAL_SOCIETY') {
-                    await handleChurchMessage(cleanPhone, mappedMsg, session, member);
-                    return;
-                } else {
-                    await sendWhatsApp(cleanPhone, "⚠️ You are not linked to an organization. Reply *Join* to search for yours.");
-                    return;
-                }
+                await handleChurchMessage(cleanPhone, mappedMsg, session, member);
+                return;
             }
 
             // ================================================
