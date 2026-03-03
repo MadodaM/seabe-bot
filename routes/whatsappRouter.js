@@ -36,8 +36,12 @@ router.post('/', (req, res) => {
             }
 
             const numMedia = parseInt(req.body.NumMedia || '0'); 
-            const member = await prisma.member.findUnique({
+            
+            // 🚀 FIX 1: Swapped findUnique for findFirst and added orderBy
+            // This safely grabs the member's most recently active profile in a Multi-Tenant architecture
+            const member = await prisma.member.findFirst({
                 where: { phone: cleanPhone },
+                orderBy: { id: 'desc' },
                 include: { church: true, society: true }
             });
 
@@ -238,23 +242,21 @@ router.post('/', (req, res) => {
                             session.step = 'CHOOSE_MEMBER_TYPE';
                             await sendWhatsApp(cleanPhone, `Welcome to *${org.name}*!\n\nHow can we help you today?\n\n1️⃣ I am an Existing Member\n2️⃣ I am a New Member (Get a Quote)`);
                             return;
-                        } else if (org.type === 'NON_PROFIT' || org.type === 'SERVICE_PROVIDER') {
-                            await prisma.member.upsert({
-                                where: { phone: cleanPhone },
-                                update: { church: { connect: { id: org.id } } },
-                                create: { phone: cleanPhone, firstName: 'Member', lastName: 'New', church: { connect: { id: org.id } } }
-                            });
-                            clearSessionFlag = true; 
-                            await sendWhatsApp(cleanPhone, `✅ Successfully linked to *${org.name}*!\n\n📚 Reply *Courses* to view our digital learning programs, or *Menu* to access your dashboard.`);
-                            return;
                         } else {
-                            await prisma.member.upsert({
-                                where: { phone: cleanPhone },
-                                update: { church: { connect: { id: org.id } } },
-                                create: { phone: cleanPhone, firstName: 'Member', lastName: 'New', church: { connect: { id: org.id } } }
+                            // 🚀 FIX 2: Replaced upsert with findFirst/create to avoid Multi-Tenant crash
+                            let existingMember = await prisma.member.findFirst({
+                                where: { phone: cleanPhone, churchId: org.id }
                             });
+                            
+                            if (!existingMember) {
+                                await prisma.member.create({
+                                    data: { phone: cleanPhone, firstName: 'Member', lastName: 'New', churchId: org.id, status: 'ACTIVE' }
+                                });
+                            }
+                            
                             clearSessionFlag = true; 
-                            await sendWhatsApp(cleanPhone, `✅ Successfully linked to *${org.name}*!\n\nReply *Amen* to access your church menu, or *Courses* to enter the Mentorship Centre.`);
+                            const welcomeType = org.type === 'NON_PROFIT' ? "📚 Reply *Courses* to view our digital learning programs" : "Reply *Amen* to access your church menu";
+                            await sendWhatsApp(cleanPhone, `✅ Successfully linked to *${org.name}*!\n\n${welcomeType}, or *Menu* to access your dashboard.`);
                             return;
                         }
                     } else {
@@ -329,27 +331,34 @@ router.post('/', (req, res) => {
             if (incomingMsg.includes('accept the quote') || session.step === 'AWAITING_QUOTE_ACCEPTANCE') {
                 session.step = 'AWAITING_MEMBER_ID';
                 
-                // 🚀 1. Extract the final calculated premium (including dependents) from the WhatsApp message!
-                // This looks for the pattern "r250.00/month" in the auto-generated text
                 const premiumMatch = incomingMsg.match(/r(\d+(\.\d+)?)\/month/);
                 if (premiumMatch) {
                     session.monthlyPremium = parseFloat(premiumMatch[1]);
                 }
 
-                // 🚀 2. Create the Member row IMMEDIATELY so the policy exists in the database before KYC
+                // 🚀 FIX 3: Replaced upsert with findFirst/create
                 if (session.churchId) {
-                    await prisma.member.upsert({
-                        where: { phone: cleanPhone },
-                        update: { monthlyPremium: session.monthlyPremium },
-                        create: {
-                            phone: cleanPhone,
-                            firstName: 'Pending',
-                            lastName: 'Member',
-                            church: { connect: { id: session.churchId } },
-                            status: 'PENDING_KYC',
-                            monthlyPremium: session.monthlyPremium
-                        }
+                    let draftMember = await prisma.member.findFirst({
+                        where: { phone: cleanPhone, churchId: session.churchId }
                     });
+                    
+                    if (draftMember) {
+                        await prisma.member.update({
+                            where: { id: draftMember.id },
+                            data: { monthlyPremium: session.monthlyPremium }
+                        });
+                    } else {
+                        await prisma.member.create({
+                            data: {
+                                phone: cleanPhone,
+                                firstName: 'Pending',
+                                lastName: 'Member',
+                                churchId: session.churchId,
+                                status: 'PENDING_KYC',
+                                monthlyPremium: session.monthlyPremium
+                            }
+                        });
+                    }
                 }
 
                 await sendWhatsApp(cleanPhone, "🎉 Fantastic! Your quote has been accepted.\n\nTo finalize your policy registration, we must complete a quick KYC compliance check.\n\nPlease reply directly to this message with a clear photo of your *ID Document* (Green Book or Smart ID).");
@@ -380,42 +389,42 @@ router.post('/', (req, res) => {
                     const extractedData = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
 
                     if (extractedData.confidenceScore > 75) {
-                        // 🚀 3. STAMP THE PREMIUM AND POLICY NUMBER INTO THE DATABASE
-                        await prisma.member.upsert({
-                            where: { phone: cleanPhone },
-                            update: { 
-                                idPhotoUrl: idUrl, 
-                                firstName: extractedData.firstName, 
-                                lastName: extractedData.lastName, 
-                                idNumber: extractedData.idNumber, 
-                                isIdVerified: true, 
-                                monthlyPremium: session.monthlyPremium,
-                                policyNumber: session.policyNumber
-                            },
-                            create: { 
-                                phone: cleanPhone, 
-                                church: { connect: { id: session.churchId } }, 
-                                firstName: extractedData.firstName, 
-                                lastName: extractedData.lastName, 
-                                idNumber: extractedData.idNumber, 
-                                idPhotoUrl: idUrl, 
-                                isIdVerified: true, 
-                                status: 'PENDING_KYC', 
-                                monthlyPremium: session.monthlyPremium,
-                                policyNumber: session.policyNumber
-                            }
+                        // 🚀 FIX 4: Safe update finding by ID instead of Upsert by phone
+                        let draftMember = await prisma.member.findFirst({
+                            where: { phone: cleanPhone, churchId: session.churchId }
                         });
+                        
+                        if (draftMember) {
+                            await prisma.member.update({
+                                where: { id: draftMember.id },
+                                data: { 
+                                    idPhotoUrl: idUrl, 
+                                    firstName: extractedData.firstName, 
+                                    lastName: extractedData.lastName, 
+                                    idNumber: extractedData.idNumber, 
+                                    isIdVerified: true, 
+                                    monthlyPremium: session.monthlyPremium,
+                                    policyNumber: session.policyNumber
+                                }
+                            });
+                        }
+                        
                         session.step = 'AWAITING_MEMBER_ADDRESS';
                         await sendWhatsApp(cleanPhone, `✅ *ID Verified Successfully!*\n\nWelcome, *${extractedData.firstName} ${extractedData.lastName}*\n(ID: ${extractedData.idNumber})\n\nAlmost done! Finally, please reply with a photo of your *Proof of Address* (e.g., a utility bill or bank statement).`);
                     } else {
                         throw new Error("AI Confidence too low.");
                     }
                 } catch (error) {
-                    await prisma.member.upsert({
-                        where: { phone: cleanPhone },
-                        update: { idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC', monthlyPremium: session.monthlyPremium, policyNumber: session.policyNumber },
-                        create: { phone: cleanPhone, church: { connect: { id: session.churchId } }, firstName: 'Pending', lastName: 'Admin Review', idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC', monthlyPremium: session.monthlyPremium, policyNumber: session.policyNumber }
+                    // 🚀 FIX 5: Safe fallback update
+                    let draftMember = await prisma.member.findFirst({
+                        where: { phone: cleanPhone, churchId: session.churchId }
                     });
+                    if (draftMember) {
+                        await prisma.member.update({
+                            where: { id: draftMember.id },
+                            data: { idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC', monthlyPremium: session.monthlyPremium, policyNumber: session.policyNumber }
+                        });
+                    }
                     session.step = 'AWAITING_MEMBER_ADDRESS';
                     await sendWhatsApp(cleanPhone, "⚠️ *Automatic Verification Failed*\n\nWe couldn't clearly read the ID automatically. It has been securely forwarded for manual review.\n\nTo continue, please reply with a photo of your *Proof of Address*.");
                 }
@@ -425,46 +434,31 @@ router.post('/', (req, res) => {
             if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ADDRESS') {
                 const addressUrl = req.body.MediaUrl0;
                 try {
-                    const memberRecord = await prisma.member.findUnique({ where: { phone: cleanPhone } });
-                    const newStatus = memberRecord.isIdVerified ? 'ACTIVE' : 'PENDING_KYC';
+                    // 🚀 FIX 6: Find First, not Unique
+                    const memberRecord = await prisma.member.findFirst({ 
+                        where: { phone: cleanPhone, churchId: session.churchId },
+                        orderBy: { id: 'desc' }
+                    });
                     
-                    const welcomeMsg = memberRecord.isIdVerified 
-                        ? `🎉 *REGISTRATION COMPLETE & POLICY ACTIVE!*\n\nPolicy Number: *${memberRecord.policyNumber}*\nMonthly Premium: *R${memberRecord.monthlyPremium.toFixed(2)}*\n\nYour policy is now fully active. You can reply with *Menu* at any time to view your policy details or make a payment.`
-                        : "✅ *Documents Received!*\n\nYour Proof of Address and ID have been vaulted for Admin Review. You will receive a WhatsApp notification as soon as your policy is officially activated!";
+                    if (memberRecord) {
+                        const newStatus = memberRecord.isIdVerified ? 'ACTIVE' : 'PENDING_KYC';
+                        
+                        const welcomeMsg = memberRecord.isIdVerified 
+                            ? `🎉 *REGISTRATION COMPLETE & POLICY ACTIVE!*\n\nPolicy Number: *${memberRecord.policyNumber || 'N/A'}*\nMonthly Premium: *R${(memberRecord.monthlyPremium || 0).toFixed(2)}*\n\nYour policy is now fully active. You can reply with *Menu* at any time to view your policy details or make a payment.`
+                            : "✅ *Documents Received!*\n\nYour Proof of Address and ID have been vaulted for Admin Review. You will receive a WhatsApp notification as soon as your policy is officially activated!";
 
-                    // 🚀 4. Set the Joined Date so reports work properly
-                    await prisma.member.update({
-                        where: { phone: cleanPhone },
-                        data: { 
-                            proofOfAddressUrl: addressUrl, 
-                            status: newStatus, 
-                            joinedAt: new Date(), 
-                            ...(memberRecord.isIdVerified && { verifiedAt: new Date() }) 
-                        }
-                    });
-                    clearSessionFlag = true; 
-                    await sendWhatsApp(cleanPhone, welcomeMsg);
-                } catch (error) {
-                    await sendWhatsApp(cleanPhone, "⚠️ There was an issue saving your document. Please try sending the photo again.");
-                }
-                return;
-            }
-
-            if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ADDRESS') {
-                const addressUrl = req.body.MediaUrl0;
-                try {
-                    const memberRecord = await prisma.member.findUnique({ where: { phone: cleanPhone } });
-                    const newStatus = memberRecord.isIdVerified ? 'ACTIVE' : 'PENDING_KYC';
-                    const welcomeMsg = memberRecord.isIdVerified 
-                        ? "🎉 *REGISTRATION COMPLETE & POLICY ACTIVE!*\n\nYour policy is now fully active. You can reply with *society* at any time to view your policy details or make a payment."
-                        : "✅ *Documents Received!*\n\nYour Proof of Address and ID have been vaulted for Admin Review. You will receive a WhatsApp notification as soon as your policy is officially activated!";
-
-                    await prisma.member.update({
-                        where: { phone: cleanPhone },
-                        data: { proofOfAddressUrl: addressUrl, status: newStatus, ...(memberRecord.isIdVerified && { verifiedAt: new Date() }) }
-                    });
-                    clearSessionFlag = true; 
-                    await sendWhatsApp(cleanPhone, welcomeMsg);
+                        await prisma.member.update({
+                            where: { id: memberRecord.id },
+                            data: { 
+                                proofOfAddressUrl: addressUrl, 
+                                status: newStatus, 
+                                joinedAt: new Date(), 
+                                ...(memberRecord.isIdVerified && { verifiedAt: new Date() }) 
+                            }
+                        });
+                        clearSessionFlag = true; 
+                        await sendWhatsApp(cleanPhone, welcomeMsg);
+                    }
                 } catch (error) {
                     await sendWhatsApp(cleanPhone, "⚠️ There was an issue saving your document. Please try sending the photo again.");
                 }
@@ -486,7 +480,7 @@ router.post('/', (req, res) => {
             // ⛔ UNREGISTERED & ORPHAN CATCHERS
             // ================================================
             if (!member) {
-                await sendWhatsApp(cleanPhone, "👋 Welcome to Seabe Pay! Please reply with *Join* to find your organization.");
+                await sendWhatsApp(cleanPhone, "👋 Welcome to Seabe! Please reply with *Join* to find your organization.");
                 return;
             }
 
