@@ -4,6 +4,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { sendWhatsApp } = require('./whatsapp'); 
 const netcash = require('./netcash');
+const { calculateTransaction } = require('./pricingEngine'); // 🚀 ADDED PRICING ENGINE
 
 // Helper to prevent Twilio rate-limiting
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -35,16 +36,25 @@ const startBillingEngine = () => {
                     const org = await prisma.church.findUnique({ where: { code: debt.churchCode } });
                     const orgName = org ? org.name : "Your Organization";
 
+                    // 🚀 PRICING ENGINE INTERCEPTION
+                    // We assume STANDARD tier, DEFAULT gateway, and pass fees to user
+                    const pricing = calculateTransaction(debt.amount, 'STANDARD', 'DEFAULT', true);
+
                     // Generate a unique Netcash tracking reference
                     const ref = `AUTO-${debt.reference}-${Date.now().toString().slice(-4)}`;
                     
-                    // Create the secure payment link
-                    const link = await netcash.createPaymentLink(debt.amount, ref, debt.phone, orgName);
+                    // 🛡️ Ensure phone is clean for Twilio
+                    let cleanPhone = debt.phone.replace(/\D/g, '');
+                    if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+
+                    // Create the secure payment link using the NEW total charged to user
+                    const link = await netcash.createPaymentLink(pricing.totalChargedToUser, ref, cleanPhone, orgName);
 
                     if (link) {
-                        const message = `🔔 *Premium Reminder*\n\nGood morning ${debt.firstName},\n\nThis is a polite automated reminder that your premium of *R${debt.amount.toFixed(2)}* for *${orgName}* is currently due.\n\nYou can easily settle your account using our secure payment portal here:\n👉 ${link}\n\nReply *1* to speak to an administrator if you need assistance.`;
+                        // 🚀 TRANSPARENT FEE BREAKDOWN IN THE MESSAGE
+                        const message = `🔔 *Premium Reminder*\n\nGood morning ${debt.firstName},\n\nThis is a polite automated reminder that your premium for *${orgName}* is currently due.\n\nPremium: *R${pricing.baseAmount.toFixed(2)}*\nService Fee: *R${pricing.totalFees.toFixed(2)}*\n*Total Due: R${pricing.totalChargedToUser.toFixed(2)}*\n\nYou can easily settle your account using our secure payment portal here:\n👉 ${link}\n\nReply *1* to speak to an administrator if you need assistance.`;
 
-                        await sendWhatsApp(debt.phone, message);
+                        await sendWhatsApp(cleanPhone, message);
 
                         // Update status to REMINDER_1 so we don't spam them again tomorrow!
                         await prisma.collection.update({
