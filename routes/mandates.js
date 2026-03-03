@@ -4,6 +4,7 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { sendWhatsApp } = require('../services/whatsapp'); 
+const axios = require('axios'); // 🚀 NEW: Required for Netcash API calls
 
 // ==========================================
 // 1. SERVE THE SECURE MANDATE FORM (UI)
@@ -51,6 +52,9 @@ router.get('/sign', (req, res) => {
                     <label>Account Holder Name</label>
                     <input type="text" name="accountName" placeholder="e.g. J. Doe" required>
 
+                    <label>ID Number</label>
+                    <input type="number" name="idNumber" placeholder="13-Digit SA ID" required>
+
                     <label>Bank Name</label>
                     <select name="bankName" required>
                         <option value="Capitec">Capitec</option>
@@ -76,7 +80,7 @@ router.get('/sign', (req, res) => {
                         <label for="agree" style="display:inline; text-transform:none; color:#1e293b;">I authorize Netcash and the above organization to deduct the specified amount from my account on the 1st of every month.</label>
                     </div>
 
-                    <button type="submit">🔒 Digitally Sign & Activate</button>
+                    <button type="submit">🔒 Authenticate Mandate</button>
                 </form>
             </div>
         </body>
@@ -85,57 +89,95 @@ router.get('/sign', (req, res) => {
 });
 
 // ==========================================
-// 2. PROCESS THE MANDATE SUBMISSION
+// 2. PROCESS THE MANDATE SUBMISSION (DEBICHECK TT1)
 // ==========================================
 router.post('/submit', express.urlencoded({ extended: true }), async (req, res) => {
-    const { phone, amount, org, accountName, bankName, accountNumber, accountType } = req.body;
+    const { phone, amount, org, accountName, idNumber, bankName, accountNumber, accountType } = req.body;
 
     try {
-        console.log(`💳 Processing Debit Order Mandate for ${phone}...`);
-
-        // In a full production environment, this is where you would make an API call 
-        // to the Netcash Debit Order Batch API to register the banking details.
-        // For now, we update the user's profile to indicate they are active on a debit order.
-
-        // Standardize phone for DB lookup
+        console.log(`💳 Initiating DebiCheck TT1 Push for ${phone}...`);
+        
+        // 1. Clean data for Netcash
         let cleanPhone = phone.replace(/\D/g, '');
-        if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+        let cleanPhoneForDB = cleanPhone;
+        if (cleanPhone.length === 10 && cleanPhone.startsWith('0')) {
+            cleanPhoneForDB = '27' + cleanPhone.substring(1);
+        } else if (cleanPhone.startsWith('27')) {
+            cleanPhone = '0' + cleanPhone.substring(2); // Netcash XML prefers local 082... format for mobile
+        }
+        
+        const cleanAmount = parseFloat(amount).toFixed(2);
+        
+        // Map Banks to Universal Branch Codes (South African Standard)
+        const branchCodes = {
+            'Capitec': '470010', 'FNB': '250655', 'Standard Bank': '051001', 
+            'Absa': '632005', 'Nedbank': '198765', 'TymeBank': '678910', 'African Bank': '430000'
+        };
+        const branchCode = branchCodes[bankName] || '000000';
+        
+        // Map Account Type (1 = Current/Cheque, 2 = Savings)
+        const accTypeCode = accountType === 'Cheque' ? '1' : '2';
 
-        // Update the most recent member profile matching this phone
-        const member = await prisma.member.findFirst({
-            where: { phone: cleanPhone },
-            orderBy: { id: 'desc' }
+        // 2. Build the Netcash TT1 XML Payload
+        const xmlPayload = `
+            <DebiCheckAuthenticate>
+                <MethodParameters>
+                    <ServiceKey>${process.env.NETCASH_DEBIT_ORDER_KEY || 'TEST_KEY'}</ServiceKey>
+                    <AccountReference>${cleanPhone}</AccountReference>
+                    <DebiCheckMandateTemplateId>${process.env.NETCASH_DEBICHECK_TEMPLATE_ID || 'TEST_TEMPLATE'}</DebiCheckMandateTemplateId>
+                    <IsIdNumber>1</IsIdNumber>
+                    <DebtorIdentification>${idNumber || '0000000000000'}</DebtorIdentification>
+                    <AccountName>${accountName}</AccountName>
+                    <BankAccountName>${accountName}</BankAccountName>
+                    <BranchCode>${branchCode}</BranchCode>
+                    <BankAccountNumber>${accountNumber}</BankAccountNumber>
+                    <BankAccountType>${accTypeCode}</BankAccountType>
+                    <MobileNumber>${cleanPhone}</MobileNumber>
+                    <CollectionAmount>${cleanAmount}</CollectionAmount>
+                    <FirstCollectionDiffers>0</FirstCollectionDiffers>
+                    <FirstCollectionAmount>${cleanAmount}</FirstCollectionAmount>
+                    <FirstCollectionDate>20260401</FirstCollectionDate>
+                    <collectionDayCode>01</collectionDayCode>
+                </MethodParameters>
+            </DebiCheckAuthenticate>
+        `;
+
+        // 3. Fire to Netcash API (NIWS_NIF endpoint)
+        const netcashResponse = await axios.post('https://ws.netcash.co.za/NIWS/NIWS_NIF.svc', xmlPayload, {
+            headers: { 'Content-Type': 'text/xml' }
         });
 
-        if (member) {
-            await prisma.member.update({
-                where: { id: member.id },
-                data: {
-                    status: 'ACTIVE_DEBIT_ORDER', // Custom status to show they don't need manual links
-                    // If you added a 'bankDetails' field to your schema, you would save it here. 
-                    // Otherwise, the status change is enough to tell the system not to blast them.
-                }
+        // 4. Handle Response
+        if (netcashResponse.data.includes('<ErrorCode>000</ErrorCode>')) {
+            
+            // Mark user as PENDING_MANDATE while they approve the USSD
+            await prisma.member.updateMany({
+                where: { phone: cleanPhoneForDB }, 
+                data: { status: 'PENDING_MANDATE' }
             });
+
+            // Send a WhatsApp prompt so they know what to look for
+            const promptMsg = `📱 *DebiCheck Request Sent*\n\nWe have requested authorization for your R${cleanAmount} monthly mandate.\n\n*Action Required:*\nPlease open your ${bankName} app now or check for a pop-up on your phone to approve the mandate!`;
+            await sendWhatsApp(cleanPhoneForDB, promptMsg);
+
+            // Render UI Success
+            res.send(`
+                <div style="font-family: sans-serif; text-align: center; padding: 50px; background: #f8fafc; height: 100vh;">
+                    <div style="font-size: 60px; margin-bottom: 10px;">📱</div>
+                    <h1 style="color: #3b82f6; margin-top: 0;">Check your Banking App!</h1>
+                    <p style="color: #64748b; font-size: 18px;">We have sent a secure DebiCheck request to your phone.</p>
+                    <p><strong>Please open your ${bankName} app or check your USSD pop-up to authorize the mandate.</strong></p>
+                    <p style="font-size: 12px; margin-top: 40px; color: #94a3b8;">You may close this window.</p>
+                </div>
+            `);
+        } else {
+            // Netcash returned a failure code (e.g., invalid account length)
+            throw new Error(`Netcash rejected the payload: ${netcashResponse.data}`);
         }
 
-        // Send a confirmation receipt via WhatsApp
-        const successMsg = `✅ *Debit Order Activated*\n\nHi ${accountName},\nYour mandate with *${org}* has been securely registered.\n\nA monthly premium of *R${parseFloat(amount).toFixed(2)}* will be automatically deducted via ${bankName} ensuring your policy/membership remains active without interruptions.\n\nThank you!`;
-        
-        await sendWhatsApp(cleanPhone, successMsg);
-
-        // Render success page
-        res.send(`
-            <div style="font-family: sans-serif; text-align: center; padding: 50px; background: #f8fafc; height: 100vh;">
-                <div style="font-size: 60px; margin-bottom: 10px;">✅</div>
-                <h1 style="color: #10b981; margin-top: 0;">Mandate Active!</h1>
-                <p style="color: #64748b;">Your bank details have been securely processed.</p>
-                <p>You will receive a confirmation message on WhatsApp shortly. You may close this window.</p>
-            </div>
-        `);
-
     } catch (error) {
-        console.error("❌ Mandate Processing Error:", error);
-        res.send("<h3>❌ System Error</h3><p>We could not process your mandate at this time. Please try again later.</p>");
+        console.error("❌ DebiCheck Processing Error:", error.message);
+        res.send("<h3>❌ Verification Failed</h3><p>We could not verify these details with your bank. Please check your account number and try again.</p>");
     }
 });
 
