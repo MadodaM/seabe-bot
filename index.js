@@ -18,6 +18,8 @@ const webhooksRoute = require('./routes/webhooks');
 const crmClaimsRoute = require('./routes/crmClaims');
 const ficaPortalRoutes = require('./routes/ficaPortal');
 const mandatesRouter = require('./routes/mandates');
+const webhookRouter = require('./routes/webhooks');
+
 
 const app = express();
 const prisma = new PrismaClient();
@@ -35,6 +37,7 @@ app.use(bodyParser.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use('/public', express.static(path.join(__dirname, 'public')));
 app.use('/api/fica', ficaPortalRoutes);
 app.use('/mandate', mandatesRouter);
+app.use(webhookRouter); // Must be mounted so Netcash can reach /api/core/webhooks/payment
 
 // Dedicated ping route to keep Render awake
 app.get('/ping', (req, res) => res.status(200).send("Heartbeat received. Seabe Engine is awake."));

@@ -1,109 +1,120 @@
 // ==========================================
-// routes/webhooks.js - Seabe Omni-Payment Listener
+// routes/webhooks.js - Netcash ITN Webhook
+// BANK-GRADE SECURITY COMPLIANT (2026)
 // ==========================================
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const { sendWhatsApp } = require('../services/whatsapp');
+const axios = require('axios');
+const { sendWhatsApp } = require('../services/twilioClient'); // Ensure correct path to your Twilio sender
 
-// 💰 CORE WEBHOOK: Listens for NetCash / Ozow payment updates
-router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true }), express.json(), async (req, res) => {
+// Netcash Validation Endpoint
+const NETCASH_VALIDATE_URL = "https://paynow.netcash.co.za/site/validate.aspx";
+
+// Webhooks often come in as URL Encoded form data, so we parse it appropriately
+router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true }), async (req, res) => {
     
-    // 1️⃣ Extract Payload (Handles both standard JSON and NetCash ITN formats)
-    const reference = req.body.reference || req.body.Reference || req.body.p2;
-    const status = req.body.status || req.body.TransactionStatusCode || req.body.TransactionStatus;
-    const amount = req.body.amount || req.body.Amount || 0;
+    // 1. Immediately acknowledge receipt to Netcash so they don't timeout and retry
+    res.status(200).send(); 
 
     try {
-        console.log(`💰 WEBHOOK RECEIVED: Payment [${status}] for Ref: [${reference}]`);
+        const payload = req.body;
+        console.log(`🔒 [WEBHOOK] Incoming payload for Ref: ${payload.p2}`);
 
-        if (!reference) return res.status(200).send('No reference provided');
+        // 2. THE COMPLIANCE PING (ITN Validation)
+        // We bounce the exact payload back to Netcash to ensure it wasn't spoofed by a hacker
+        const validationParams = new URLSearchParams(payload).toString();
+        const validationResponse = await axios.post(NETCASH_VALIDATE_URL, validationParams, {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        });
 
-        // 2️⃣ The Omni-Search: Check Collections first, then Transactions
-        let record = await prisma.collection.findFirst({ where: { reference: reference } });
-        let recordType = 'COLLECTION';
-
-        if (!record) {
-            record = await prisma.transaction.findFirst({ where: { reference: reference } });
-            recordType = 'TRANSACTION';
+        // 3. CHECK THE VALIDATION RESULT
+        if (validationResponse.data.trim() !== 'VALID') {
+            console.error(`🚨 [SECURITY ALERT] Spoofed webhook detected for Ref: ${payload.p2}`);
+            return; // Silently drop the fake request
         }
 
-        if (!record) {
-            console.error(`❌ Webhook Error: Reference ${reference} not found in Collections or Transactions.`);
-            return res.status(200).send('Reference Not Found'); // Return 200 so gateway stops retrying
+        console.log(`✅ [WEBHOOK] Netcash confirmed VALID for Ref: ${payload.p2}`);
+
+        // 4. EXTRACT TRUSTED DATA
+        const reference = payload.p2; // e.g., WEB-AFM-TITHE-1234
+        const amountPaid = parseFloat(payload.p4);
+        const isSuccessful = payload.TransactionAccepted === 'true';
+        const failureReason = payload.Reason || 'Unknown';
+
+        // 5. UPDATE TRANSACTION RECORD
+        const transaction = await prisma.transaction.findFirst({
+            where: { reference: reference },
+            include: { member: { include: { church: true, society: true } } }
+        });
+
+        if (!transaction) {
+            console.warn(`⚠️ [WEBHOOK] Transaction ${reference} not found in database.`);
+            return;
         }
 
-        // 3️⃣ Determine if Successful (NetCash uses '1' or '002', others use 'SUCCESS')
-        const isSuccess = status === 'SUCCESS' || status === '1' || status === '002' || status === 'Completed';
+        // Avoid double-processing
+        if (transaction.status === 'SUCCESS') return;
 
-        if (isSuccess && record.status !== 'PAID') {
+        if (isSuccessful) {
+            // Update Transaction to SUCCESS
+            await prisma.transaction.update({
+                where: { id: transaction.id },
+                data: { status: 'SUCCESS' }
+            });
+
+            // 6. BUSINESS LOGIC ROUTING (Based on Reference Prefix)
             
-            // A. Update the correct financial table
-            if (recordType === 'COLLECTION') {
-                await prisma.collection.update({ where: { id: record.id }, data: { status: 'PAID', updatedAt: new Date() } });
-            } else {
-                await prisma.transaction.update({ where: { id: record.id }, data: { status: 'SUCCESS', updatedAt: new Date() } });
-            }
-
-            // B. Find the Phone Number to update Member and Send Receipt
-            const targetPhone = record.phone; 
-
-            if (targetPhone) {
-                // 🚀 FIX: Multi-Tenant Safe Member Lookup
-                // We use the churchCode or memberId attached to the transaction to find the EXACT profile
-                const memberToUpdate = await prisma.member.findFirst({
-                    where: { 
-                        phone: targetPhone,
-                        ...(record.churchCode && { churchCode: record.churchCode }),
-                        ...(record.memberId && { id: record.memberId })
-                    },
-                    orderBy: { id: 'desc' },
-                    include: { church: true }
+            // Scenario A: Automated Debt Collection (from blastEngine / billingCron)
+            if (reference.startsWith('AUTO-') || reference.startsWith('BLAST-')) {
+                // Find the original collection debt using the middle part of the reference
+                const debtRefPart = reference.split('-')[1]; 
+                await prisma.collection.updateMany({
+                    where: { reference: debtRefPart },
+                    data: { status: 'PAID', paidAt: new Date() }
                 });
+            }
 
-                let orgName = "your organization";
-
-                if (memberToUpdate) {
-                    orgName = memberToUpdate.church?.name || orgName;
-                    
-                    // Safely update by ID, not phone!
+            // Scenario B: Burial Society Premium Paid
+            else if (reference.includes('-PREM-')) {
+                if (transaction.memberId) {
                     await prisma.member.update({
-                        where: { id: memberToUpdate.id },
-                        data: { status: 'ACTIVE' }
+                        where: { id: transaction.memberId },
+                        data: { status: 'ACTIVE' } // Reactivate policy if they were lapsed!
                     });
-                } else if (record.churchCode) {
-                    // Fallback to fetch org name if member wasn't found but we have the code
-                    const org = await prisma.church.findUnique({ where: { code: record.churchCode } });
-                    if (org) orgName = org.name;
                 }
+            }
 
-                // 🚀 FIX: Dynamic Receipt Message
-                const receiptMsg = `✅ *Payment Successful*\n\nWe have received your payment of *R${parseFloat(amount || record.amount).toFixed(2)}* (Ref: ${reference}).\n\nYour profile with *${orgName}* is now *ACTIVE*. Thank you!`;
+            // 7. SEND AUTOMATED WHATSAPP RECEIPT
+            if (transaction.phone) {
+                let cleanPhone = transaction.phone.replace(/\D/g, '');
+                if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
                 
-                await sendWhatsApp(targetPhone, receiptMsg);
-                console.log(`✅ Payment Loop Closed for ${targetPhone}`);
-            }
-        } 
-        else if (status === 'FAILED' || status === 'CANCELLED' || status === 'ERROR' || status === '003') {
-            // Handle Failure
-            if (recordType === 'COLLECTION') {
-                await prisma.collection.update({ where: { id: record.id }, data: { status: 'OVERDUE', updatedAt: new Date() } });
-            } else {
-                await prisma.transaction.update({ where: { id: record.id }, data: { status: 'FAILED', updatedAt: new Date() } });
+                const orgName = transaction.member?.church?.name || transaction.member?.society?.name || "Our Organization";
+                const receiptMsg = `✅ *Payment Successful*\n\nThank you! We have securely received your payment of *R${amountPaid.toFixed(2)}* to ${orgName}.\n\nReference: ${reference}\n\nReply *Menu* to return to your dashboard.`;
+                
+                await sendWhatsApp(cleanPhone, receiptMsg);
             }
 
-            if (record.phone) {
-                const failMsg = `⚠️ *Payment Failed*\n\nYour recent payment attempt for Ref: ${reference} was unsuccessful.\n\nPlease try again using your link or reply *Menu* to generate a new one.`;
-                await sendWhatsApp(record.phone, failMsg);
+        } else {
+            // Transaction Failed (Insufficient funds, card declined, etc.)
+            await prisma.transaction.update({
+                where: { id: transaction.id },
+                data: { status: 'FAILED' }
+            });
+
+            if (transaction.phone) {
+                let cleanPhone = transaction.phone.replace(/\D/g, '');
+                if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+                
+                const failMsg = `⚠️ *Payment Failed*\n\nYour attempted payment of R${amountPaid.toFixed(2)} could not be processed.\nReason: ${failureReason}\n\nReply *Menu* to try again.`;
+                await sendWhatsApp(cleanPhone, failMsg);
             }
         }
-
-        return res.status(200).send('Webhook Processed Successfully');
 
     } catch (error) {
-        console.error("❌ Webhook Processing Error:", error);
-        return res.status(500).send('Internal Server Error');
+        console.error("❌ [WEBHOOK] Critical Processing Error:", error.message);
     }
 });
 
