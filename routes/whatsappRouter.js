@@ -14,6 +14,7 @@ const { getAISupportReply } = require('../services/aiSupport');
 const { handleSocietyMessage } = require('../bots/societyBot');
 const { handleChurchMessage } = require('../bots/churchBot');
 const { processTwilioClaim } = require('../services/aiClaimWorker');
+const { calculateTransaction } = require('../services/pricingEngine'); // 🚀 NEW: Pricing Engine
 
 router.post('/', (req, res) => {
     const incomingMsg = (req.body.Body || '').trim().toLowerCase();
@@ -45,8 +46,6 @@ router.post('/', (req, res) => {
             let member;
 
             if (explicitType) {
-                // User explicitly typed a keyword to switch to a different org type.
-                // Fetch the specific profile that matches the requested type!
                 member = await prisma.member.findFirst({
                     where: { phone: cleanPhone, church: { type: explicitType } },
                     orderBy: { id: 'desc' },
@@ -54,17 +53,15 @@ router.post('/', (req, res) => {
                 });
 
                 if (member) {
-                    // Lock the session into this new organization!
                     session.churchCode = member.churchCode;
                     session.mode = explicitType === 'BURIAL_SOCIETY' ? 'SOCIETY' : 'CHURCH';
-                    session.step = null; // Clear their previous step so they land in the main menu
+                    session.step = null; 
                 } else {
                     const labels = { 'BURIAL_SOCIETY': 'Burial Society', 'CHURCH': 'Church', 'NON_PROFIT': 'Non-Profit' };
                     await sendWhatsApp(cleanPhone, `⚠️ You are not currently linked to a ${labels[explicitType]}.\n\nReply *Join* to search for one.`);
                     return;
                 }
             } else {
-                // Normal Flow: Stick to their currently active session organization
                 const activeOrgCode = session.churchCode || session.orgCode;
                 
                 if (activeOrgCode) {
@@ -74,7 +71,6 @@ router.post('/', (req, res) => {
                     });
                 }
                 
-                // Fallback: If they have no active session org, just grab their most recent profile
                 if (!member) {
                     member = await prisma.member.findFirst({
                         where: { phone: cleanPhone },
@@ -88,7 +84,6 @@ router.post('/', (req, res) => {
             // ================================================
             // 🚦 GLOBAL RESET & COURSE SNOOZE
             // ================================================
-            // 🚀 FIX: Removed 'menu' from exitKeywords so it stops wiping the session!
             const exitKeywords = ['exit', 'cancel', 'home', 'lobby'];
             if (exitKeywords.includes(incomingMsg)) {
                 clearSessionFlag = true; 
@@ -230,9 +225,12 @@ router.post('/', (req, res) => {
                         session.step = 'LMS_ACTIVE';
                         await sendWhatsApp(cleanPhone, `🎉 You are now enrolled in *${selectedCourse.title}*!\n\nLook out for your first module tomorrow morning at 07:00 AM.`);
                     } else {
+                        // 🚀 PRICING ENGINE INTERCEPTION
+                        const pricing = calculateTransaction(selectedCourse.price, 'LMS_COURSE', 'DEFAULT', true);
                         const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
-                        const paymentLink = `${host}/pay?enrollmentId=${enrollment.id}&amount=${selectedCourse.price}`;
-                        await sendWhatsApp(cleanPhone, `🎓 *${selectedCourse.title}*\n\nTo unlock your modules, please complete your subscription payment of *R${selectedCourse.price}*.\n\n💳 *Pay securely here:*\n👉 ${paymentLink}\n\nOnce paid, your modules will unlock automatically!`);
+                        const paymentLink = `${host}/pay?enrollmentId=${enrollment.id}&amount=${pricing.totalChargedToUser}`;
+                        
+                        await sendWhatsApp(cleanPhone, `🎓 *${selectedCourse.title}*\n\nCourse Fee: *R${pricing.baseAmount.toFixed(2)}*\nService Fee: *R${pricing.totalFees.toFixed(2)}*\n*Total Due: R${pricing.totalChargedToUser.toFixed(2)}*\n\nTo unlock your modules, please complete your payment.\n\n💳 *Pay securely here:*\n👉 ${paymentLink}\n\nOnce paid, your modules will unlock automatically!`);
                     }
                     clearSessionFlag = true; 
                 } else {
@@ -535,11 +533,9 @@ router.post('/', (req, res) => {
             // 🏛️ BRANCH ROUTING (CHURCH, NPO, PROVIDERS)
             // ================================================
             
-            // Map common entry words to 'menu'
             const menuKeywords = ['society', 'amen', 'hi', 'hello', 'menu', 'dashboard', 'npo'];
             const mappedMsg = menuKeywords.includes(incomingMsg) ? 'menu' : incomingMsg;
 
-            // Auto-detect mode if they just type "hi" or "menu" and don't have a mode set
             if (!session.mode && member.church) {
                 session.mode = member.church.type === 'BURIAL_SOCIETY' ? 'SOCIETY' : 'CHURCH';
             }
