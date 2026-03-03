@@ -8,7 +8,6 @@ const prisma = new PrismaClient();
 const { sendWhatsApp } = require('../services/whatsapp');
 
 // 💰 CORE WEBHOOK: Listens for NetCash / Ozow payment updates
-// URL: https://your-render-url.com/api/webhooks/payment (depending on how it's mounted in index.js)
 router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true }), express.json(), async (req, res) => {
     
     // 1️⃣ Extract Payload (Handles both standard JSON and NetCash ITN formats)
@@ -40,26 +39,48 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
 
         if (isSuccess && record.status !== 'PAID') {
             
-            // A. Update the correct table
+            // A. Update the correct financial table
             if (recordType === 'COLLECTION') {
                 await prisma.collection.update({ where: { id: record.id }, data: { status: 'PAID', updatedAt: new Date() } });
             } else {
-                await prisma.transaction.update({ where: { id: record.id }, data: { status: 'PAID', updatedAt: new Date() } });
+                await prisma.transaction.update({ where: { id: record.id }, data: { status: 'SUCCESS', updatedAt: new Date() } });
             }
 
             // B. Find the Phone Number to update Member and Send Receipt
-            // (Collections have phone natively. Transactions might just have phone, but let's be safe)
             const targetPhone = record.phone; 
 
             if (targetPhone) {
-                // Mark Member as ACTIVE
-                await prisma.member.update({
-                    where: { phone: targetPhone },
-                    data: { status: 'ACTIVE' }
-                }).catch(e => console.log("Note: Member update skipped or member not found."));
+                // 🚀 FIX: Multi-Tenant Safe Member Lookup
+                // We use the churchCode or memberId attached to the transaction to find the EXACT profile
+                const memberToUpdate = await prisma.member.findFirst({
+                    where: { 
+                        phone: targetPhone,
+                        ...(record.churchCode && { churchCode: record.churchCode }),
+                        ...(record.memberId && { id: record.memberId })
+                    },
+                    orderBy: { id: 'desc' },
+                    include: { church: true }
+                });
 
-                // Send Receipt
-                const receiptMsg = `✅ *Payment Successful*\n\nWe have received your payment of *R${parseFloat(amount || record.amount).toFixed(2)}* (Ref: ${reference}).\n\nYour Seabe Burial Society policy is now *ACTIVE*. Thank you!`;
+                let orgName = "your organization";
+
+                if (memberToUpdate) {
+                    orgName = memberToUpdate.church?.name || orgName;
+                    
+                    // Safely update by ID, not phone!
+                    await prisma.member.update({
+                        where: { id: memberToUpdate.id },
+                        data: { status: 'ACTIVE' }
+                    });
+                } else if (record.churchCode) {
+                    // Fallback to fetch org name if member wasn't found but we have the code
+                    const org = await prisma.church.findUnique({ where: { code: record.churchCode } });
+                    if (org) orgName = org.name;
+                }
+
+                // 🚀 FIX: Dynamic Receipt Message
+                const receiptMsg = `✅ *Payment Successful*\n\nWe have received your payment of *R${parseFloat(amount || record.amount).toFixed(2)}* (Ref: ${reference}).\n\nYour profile with *${orgName}* is now *ACTIVE*. Thank you!`;
+                
                 await sendWhatsApp(targetPhone, receiptMsg);
                 console.log(`✅ Payment Loop Closed for ${targetPhone}`);
             }
