@@ -50,9 +50,6 @@
     "supertest": "^7.2.2"
   },
   "prisma": {
-    "seed": "node prisma/seed.js"
-  },
-  "prisma": {
     "seed": "node prisma/seedquote.js"
   },
   "directories": {
