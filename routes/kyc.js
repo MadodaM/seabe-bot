@@ -10,13 +10,10 @@ const cloudinary = require('cloudinary').v2;
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-
-// 1️⃣ Configure Cloud Storage (Bulletproof Version)
+// 1️⃣ Configure Cloud Storage
 if (process.env.CLOUDINARY_URL) {
-    // If you used the single URL string, Cloudinary auto-configures!
     console.log("☁️ Cloudinary: Connecting via CLOUDINARY_URL...");
 } else {
-    // If you used separate keys, we catch both naming conventions
     cloudinary.config({
         cloud_name: process.env.CLOUDINARY_NAME,
         api_key: process.env.CLOUDINARY_KEY || process.env.CLOUDINARY_API_KEY,
@@ -24,21 +21,12 @@ if (process.env.CLOUDINARY_URL) {
     });
 }
 
-// 🛑 DIAGNOSTIC LOG: Print to Render logs so we can prove they loaded (without exposing secrets)
-console.log("☁️ Cloudinary Keys Loaded:", {
-    cloud_name: process.env.CLOUDINARY_NAME || "MISSING",
-    has_api_key: !!(process.env.CLOUDINARY_KEY || process.env.CLOUDINARY_API_KEY),
-    has_secret: !!(process.env.CLOUDINARY_SECRET || process.env.CLOUDINARY_API_SECRET),
-    has_url: !!process.env.CLOUDINARY_URL
-});
-
 // 2️⃣ Configure Secure Upload Handling (RAM Storage)
 const storage = multer.memoryStorage();
 const upload = multer({ 
     storage: storage,
     limits: { fileSize: 5 * 1024 * 1024 }, // 🔒 Limit: 5MB
     fileFilter: (req, file, cb) => {
-        // 🔒 Filter: Only Images and PDFs
         if (file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf') {
             cb(null, true);
         } else {
@@ -47,14 +35,13 @@ const upload = multer({
     }
 });
 
-// Helper: Stream Buffer to Cloudinary (Bulletproof JIT injection)
+// Helper: Stream Buffer to Cloudinary
 const uploadToCloud = (buffer) => {
     return new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
             { 
                 folder: "kyc_docs", 
                 resource_type: "auto",
-                // 🔥 Force-feed the keys right at the moment of upload
                 cloud_name: process.env.CLOUDINARY_NAME,
                 api_key: process.env.CLOUDINARY_KEY || process.env.CLOUDINARY_API_KEY,
                 api_secret: process.env.CLOUDINARY_SECRET || process.env.CLOUDINARY_API_SECRET
@@ -93,13 +80,27 @@ const sendWhatsApp = async (to, body) => {
     }
 };
 
-// Helper: Generate Link
-async function generateKYCLink(phone, host) {
+// Helper: Generate Link (🚀 FIX: Multi-Tenant Safe Lookup)
+async function generateKYCLink(phone, host, memberId = null) {
     const token = crypto.randomBytes(16).toString('hex');
-    await prisma.member.update({
-        where: { phone: phone },
-        data: { kycToken: token, kycTokenExpires: new Date(Date.now() + 86400000) } // 24 hours
-    });
+    
+    // Find the specific member to attach the token to
+    let targetId = memberId;
+    if (!targetId) {
+        const member = await prisma.member.findFirst({
+            where: { phone: phone },
+            orderBy: { id: 'desc' }
+        });
+        if (member) targetId = member.id;
+    }
+
+    if (targetId) {
+        await prisma.member.update({
+            where: { id: targetId }, // Safely update by specific ID
+            data: { kycToken: token, kycTokenExpires: new Date(Date.now() + 86400000) } // 24 hours
+        });
+    }
+    
     return `https://${host}/kyc/${token}`;
 }
 
@@ -161,6 +162,15 @@ router.post('/:token', (req, res) => {
         try {
             console.log("Processing KYC Upload...");
             
+            // 🚀 FIX: Safely retrieve the member before updating
+            const targetMember = await prisma.member.findFirst({
+                where: { kycToken: req.params.token, kycTokenExpires: { gte: new Date() } }
+            });
+
+            if (!targetMember) {
+                return res.send("<h3>❌ Link Expired</h3><p>Please request a new KYC link from the WhatsApp menu.</p>");
+            }
+
             // 1. Upload files to Cloudinary
             let idPhotoUrl = null;
             let addressProofUrl = null;
@@ -178,9 +188,9 @@ router.post('/:token', (req, res) => {
             const encryptedIdUrl = encrypt(idPhotoUrl);
             const encryptedProofUrl = encrypt(addressProofUrl);
 
-            // 3. Save to DB
+            // 3. Save to DB (🚀 FIX: Update strictly by ID)
             const updatedMember = await prisma.member.update({
-                where: { kycToken: req.params.token },
+                where: { id: targetMember.id },
                 data: { 
                     idType: req.body.idType,
                     idNumber: encryptedID,
@@ -260,43 +270,9 @@ router.post('/:token', (req, res) => {
     });
 });
 
-// routes/kyc.js
-
 // Add this so /kyc (no token) doesn't show a blank page
 router.get('/', (req, res) => {
     res.send("<h3>👋 KYC Portal</h3><p>Please use the unique link sent to your WhatsApp to upload documents.</p>");
 });
 
 module.exports = { router, generateKYCLink };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
