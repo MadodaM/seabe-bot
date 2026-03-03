@@ -4,6 +4,7 @@ const router = express.Router();
 
 // 📦 IMPORT NEW SERVICES
 const netcash = require('../services/netcash');
+const { calculateTransaction } = require('../services/pricingEngine'); // 🚀 ADDED PRICING ENGINE
 
 module.exports = (app, { prisma }) => {
 
@@ -117,7 +118,7 @@ module.exports = (app, { prisma }) => {
     });
 
     // ==========================================
-    // 2. PROCESS ROUTE (Netcash & Multi-Tenant Upgraded)
+    // 2. PROCESS ROUTE (Netcash & Pricing Upgraded)
     // ==========================================
     router.post('/link/:code/process', async (req, res) => {
         try {
@@ -131,25 +132,29 @@ module.exports = (app, { prisma }) => {
             let cleanPhone = phone.replace(/\D/g, ''); 
             if (cleanPhone.length === 10 && cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
 
-            // 🚀 2. Look up the Member ID so their payment history syncs perfectly
+            // 🚀 2. PRICING ENGINE CALCULATION
+            // passFeesToUser = false (Merchant absorbs the gateway fee out of their settlement)
+            const pricing = calculateTransaction(amount, 'STANDARD', 'DEFAULT', false);
+
+            // 3. Look up the Member ID so their payment history syncs perfectly
             const member = await prisma.member.findFirst({
                 where: { phone: cleanPhone, churchCode: org.code }
             });
 
             const ref = `WEB-${code}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
 
-            // 3. Exclusively use Netcash
-            const link = await netcash.createPaymentLink(amount, ref, cleanPhone, org.name);
+            // 4. Create Netcash Link using the total amount (which equals the base amount here)
+            const link = await netcash.createPaymentLink(pricing.totalChargedToUser, ref, cleanPhone, org.name);
 
             if (link) {
-                // 4. Save to Database with Multi-Tenant Link
+                // 5. Save to Database with the original amount so the receipt looks correct to the user
                 await prisma.transaction.create({
                     data: { 
                         churchCode: org.code, 
                         phone: cleanPhone, 
-                        memberId: member ? member.id : null, // Links to their profile if they have one!
+                        memberId: member ? member.id : null, 
                         type: type, 
-                        amount: parseFloat(amount), 
+                        amount: pricing.baseAmount, // Record exactly what they donated
                         reference: ref, 
                         status: 'PENDING' 
                     }
