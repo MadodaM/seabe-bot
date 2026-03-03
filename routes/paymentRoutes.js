@@ -1,22 +1,16 @@
 // routes/paymentRoutes.js
 const express = require('express');
 const router = express.Router();
-const crypto = require('crypto');
-const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
-const PDFDocument = require('pdfkit');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
+// Twilio Setup
 let client;
 if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
     client = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 }
 
-// Gateway modules
-const ozow = require('../services/ozow');
+// 🚀 GATEWAY: Exclusively Netcash
 const netcash = require('../services/netcash');
 
 // Utility: Phone Formatter
@@ -28,154 +22,141 @@ const formatPhone = (phone) => {
 };
 
 // ==========================================
-// 🛡️ WEBHOOK: PAYSTACK (Standard & Recurring)
+// 🛡️ WEBHOOK: NETCASH SERVER-TO-SERVER
 // ==========================================
-router.post('/paystack/webhook', async (req, res) => {
+router.post('/netcash/webhook', async (req, res) => {
     try {
-        const hash = crypto.createHmac('sha512', PAYSTACK_SECRET).update(JSON.stringify(req.body)).digest('hex');
-        if (hash !== req.headers['x-paystack-signature']) return res.sendStatus(400);
+        // Netcash typically sends data via POST body.
+        const reference = req.body.Reference || req.body.p2; 
+        const isSuccess = req.body.TransactionAccepted === 'true' || req.body.Reason === '00'; 
 
-        const event = req.body;
-        if (event.event === 'charge.success') {
-            const data = event.data;
-            const ref = data.reference;
+        if (!reference) return res.status(400).send("Missing reference");
 
-            const existingTx = await prisma.transaction.findUnique({ where: { reference: ref } });
-            if (existingTx && existingTx.status === 'SUCCESS') return res.sendStatus(200);
-
-            const transaction = await prisma.transaction.update({
-                where: { reference: ref },
-                data: { status: 'SUCCESS' }
+        if (isSuccess) {
+            // 🚀 THE MULTI-TENANT FIX: We find the transaction EXACTLY by its unique reference!
+            const transaction = await prisma.transaction.findUnique({ 
+                where: { reference: reference },
+                include: { member: true, church: true }
             });
 
-            if (transaction && client) {
-                const userPhone = transaction.phone;
-                const date = new Date().toISOString().split('T')[0];
-                const pdfUrl = `https://invoice-generator.com?currency=ZAR&from=Seabe&to=${userPhone}&date=${date}&items[0][name]=Contribution&items[0][unit_cost]=${transaction.amount}`;
-
-                await client.messages.create({
-                    from: process.env.TWILIO_PHONE_NUMBER,
-                    to: `whatsapp:${formatPhone(userPhone)}`,
-                    body: `✅ *Receipt: Payment Received*\n\nRef: ${ref}\nAmount: R${transaction.amount}\n\nThank you! 🙏`,
-                    mediaUrl: [ pdfUrl ]
+            if (transaction && transaction.status === 'PENDING') {
+                // 1. Update Transaction to Success
+                await prisma.transaction.update({
+                    where: { id: transaction.id },
+                    data: { status: 'SUCCESS' }
                 });
+
+                // 2. Send the Official Receipt via WhatsApp
+                if (client) {
+                    const targetPhone = transaction.member ? transaction.member.phone : transaction.phone;
+                    const orgName = transaction.church ? transaction.church.name : "Seabe Platform";
+                    
+                    await client.messages.create({
+                        from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '')}`,
+                        to: `whatsapp:${formatPhone(targetPhone)}`,
+                        body: `✅ *Receipt: Payment Received*\n\n🏛️ *Org:* ${orgName}\nRef: ${reference}\nAmount: R${transaction.amount}\n\nThank you for your contribution! 🙏`
+                    });
+                }
             }
         }
         res.sendStatus(200);
     } catch (e) {
-        console.error("Webhook Error:", e);
+        console.error("Netcash Webhook Error:", e);
         res.sendStatus(500);
     }
 });
 
-router.post('/payment-success', async (req, res) => {
-    const event = req.body;
-    if (event.event === 'charge.success') {
-        const paystackData = event.data;
-        const verifiedAmount = paystackData.amount / 100;
-        const phone = paystackData.customer.email.split('@')[0];
-
-        try {
-            let transaction = await prisma.transaction.findFirst({
-                where: { phone: phone, amount: verifiedAmount, status: 'PENDING' },
-                orderBy: { createdAt: 'desc' },
-                include: { church: true }
-            });
-
-            if (transaction) {
-                await prisma.transaction.update({
-                    where: { id: transaction.id },
-                    data: { status: 'SUCCESS', reference: paystackData.reference }
-                });
-                console.log(`✅ Recurring Payment Success for ${phone}`);
-            }
-        } catch (error) { console.error("❌ Webhook Error:", error.message); }
-    }
-    res.sendStatus(200);
-});
-
 // ==========================================
-// 💳 BROWSER SUCCESS PAGE
+// 💳 BROWSER SUCCESS REDIRECT (Netcash Return URL)
 // ==========================================
 router.get('/payment-success', async (req, res) => {
-    const { reference } = req.query;
-    if (!reference) return res.status(400).send("Missing reference.");
+    // Netcash usually appends the reference parameter to the return URL
+    const reference = req.query.Reference || req.query.ref || req.query.p2;
+    
+    if (!reference) {
+        return res.send("<div style='text-align:center;font-family:sans-serif;margin-top:50px;'><h1>Processing...</h1><p>Payment received but waiting on bank confirmation. You will receive a WhatsApp receipt shortly.</p></div>");
+    }
 
     try {
-        const resp = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
-            headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
-        });
+        // Double check the status directly with Netcash (Anti-Fraud)
+        const verifyData = await netcash.verifyPayment(reference);
 
-        if (resp.data.data.status === 'success') {
-            const paystackData = resp.data.data;
-            const verifiedAmount = paystackData.amount / 100; 
-            const phone = (paystackData.metadata?.whatsapp_number || paystackData.metadata?.phone || "").replace('whatsapp:', '').replace('+', '');
-
-            let transaction = await prisma.transaction.findUnique({
+        if (verifyData && (verifyData.status === 'Complete' || verifyData.status === 'success' || verifyData.TransactionAccepted)) {
+            
+            // 🚀 MULTI-TENANT FIX: Lookup strictly by reference, NOT phone!
+            const transaction = await prisma.transaction.findUnique({
                 where: { reference: reference },
-                include: { church: true } 
+                include: { member: true, church: true } 
             });
 
-            if (!transaction && phone) {
-                transaction = await prisma.transaction.findFirst({
-                    where: { OR: [{ phone: phone }, { phone: `+${phone}` }], amount: verifiedAmount, status: 'PENDING' },
-                    include: { church: true }
-                });
-            }
-
             if (transaction) {
-                await prisma.transaction.update({
-                    where: { id: transaction.id },
-                    data: { status: 'SUCCESS', reference: reference }
-                });
+                if (transaction.status === 'PENDING') {
+                    await prisma.transaction.update({
+                        where: { id: transaction.id },
+                        data: { status: 'SUCCESS' }
+                    });
+                    
+                    const targetPhone = transaction.member ? transaction.member.phone : transaction.phone;
+                    const displayName = transaction.church ? transaction.church.name : "Seabe Platform";
+                    const invoiceDate = new Date().toISOString().split('T')[0];
 
-                const displayName = transaction.church?.name || transaction.churchCode || "Seabe Platform";
-                const invoiceDate = new Date().toISOString().split('T')[0];
+                    const receiptBody = 
+                        `📜 *OFFICIAL DIGITAL RECEIPT*\n--------------------------------\n` +
+                        `🏛️ *Organization:* ${displayName}\n` +
+                        `💰 *Amount:* R${transaction.amount.toFixed(2)}\n📅 *Date:* ${invoiceDate}\n` +
+                        `🔢 *Reference:* ${reference}\n--------------------------------\n` +
+                        `✅ *Status:* Confirmed & Recorded\n\n_Thank you for your faithful contribution._`;
 
-                const receiptBody = 
-                    `📜 *OFFICIAL DIGITAL RECEIPT*\n--------------------------------\n` +
-                    `🏛️ *Organization:* ${displayName}\n👤 *Member:* ${transaction.phone}\n` +
-                    `💰 *Amount:* R${transaction.amount}.00\n📅 *Date:* ${invoiceDate}\n` +
-                    `🔢 *Reference:* ${reference}\n--------------------------------\n` +
-                    `✅ *Status:* Confirmed & Recorded\n\n_Thank you for your faithful contribution._`;
-
-                if (client) {
-                    await client.messages.create({
-                        from: process.env.TWILIO_PHONE_NUMBER,
-                        to: `whatsapp:${formatPhone(transaction.phone)}`,
-                        body: receiptBody
-                    }).catch(err => console.error("❌ Receipt Delivery Error:", err.message));
+                    if (client && targetPhone) {
+                        await client.messages.create({
+                            from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '')}`,
+                            to: `whatsapp:${formatPhone(targetPhone)}`,
+                            body: receiptBody
+                        }).catch(err => console.error("❌ Receipt Delivery Error:", err.message));
+                    }
                 }
-                return res.send(`<h1>✅ Payment Received</h1><p>Check WhatsApp for your receipt from ${displayName}.</p>`);
+
+                const orgName = transaction.church ? transaction.church.name : "Seabe Platform";
+                return res.send(`
+                    <div style="text-align:center; font-family:sans-serif; margin-top:50px;">
+                        <h1 style="color:#2ecc71;">✅ Payment Successful!</h1>
+                        <p>Your payment of <b>R${transaction.amount.toFixed(2)}</b> to <b>${orgName}</b> has been securely received.</p>
+                        <p>You may now close this window and return to WhatsApp.</p>
+                    </div>
+                `);
             }
         }
-        res.send("<h1>Processing...</h1><p>We are still verifying your payment. Check WhatsApp shortly.</p>");
+        res.send(`
+            <div style="text-align:center; font-family:sans-serif; margin-top:50px;">
+                <h1 style="color:#f39c12;">⏳ Processing...</h1>
+                <p>We are waiting for final confirmation from Netcash. Your receipt will be sent to WhatsApp shortly.</p>
+            </div>
+        `);
     } catch (error) {
-        res.status(500).send("An error occurred during verification.");
+        console.error("Browser Redirect Verification Error:", error.message);
+        res.status(500).send("<div style='text-align:center;font-family:sans-serif;margin-top:50px;'><h1>Bank Sync Delay</h1><p>An error occurred verifying with the bank, but your transaction is safe. Please check your WhatsApp for the receipt.</p></div>");
     }
 });
 
 // ==========================================
-// 🔄 PAYMENT SYNC ENGINES
+// 🔄 PAYMENT SYNC ENGINES (Cron & Manual)
 // ==========================================
 router.get('/admin/sync-payments', async (req, res) => {
-    const ACTIVE_GATEWAY_NAME = process.env.ACTIVE_GATEWAY || 'OZOW'; 
-    const gateway = ACTIVE_GATEWAY_NAME === 'NETCASH' ? netcash : ozow;
-
     try {
         const pendingTransactions = await prisma.transaction.findMany({ where: { status: 'PENDING' } });
         let updatedCount = 0;
 
         for (const tx of pendingTransactions) {
             try {
-                const verifyData = await gateway.verifyPayment(tx.reference);
-                if (verifyData && (verifyData.status === 'Complete' || verifyData.status === 'success')) {
+                // Check Netcash for status updates on pending transactions
+                const verifyData = await netcash.verifyPayment(tx.reference);
+                if (verifyData && (verifyData.status === 'Complete' || verifyData.status === 'success' || verifyData.TransactionAccepted)) {
                     await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'SUCCESS' } });
                     updatedCount++;
                 }
-            } catch (err) {}
+            } catch (err) {} 
         }
-        res.send({ message: `Sync Complete via ${ACTIVE_GATEWAY_NAME}`, checked: pendingTransactions.length, updated: updatedCount });
+        res.send({ message: `Sync Complete via Netcash`, checked: pendingTransactions.length, updated: updatedCount });
     } catch (error) { res.status(500).send({ error: error.message }); }
 });
 
@@ -190,13 +171,13 @@ router.get('/cron/sync-payments', async (req, res) => {
 
         let fixes = 0;
         for (const tx of pendingTxs) {
-            const resp = await axios.get(`https://api.paystack.co/transaction/verify/${tx.reference}`, {
-                headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
-            });
-            if (resp.data.data.status === 'success') {
-                await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'SUCCESS' } });
-                fixes++;
-            }
+            try {
+                const verifyData = await netcash.verifyPayment(tx.reference);
+                if (verifyData && (verifyData.status === 'Complete' || verifyData.status === 'success' || verifyData.TransactionAccepted)) {
+                    await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'SUCCESS' } });
+                    fixes++;
+                }
+            } catch (err) {}
         }
         res.status(200).send({ status: "success", updated: fixes });
     } catch (e) { res.status(500).send("Internal Error"); }
