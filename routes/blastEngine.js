@@ -6,6 +6,7 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { sendWhatsApp } = require('../services/whatsapp'); 
+const netcash = require('../services/netcash'); // 🚀 ADDED NETCASH ENGINE
 
 // Helper function to prevent Twilio Rate-Limiting (10 msgs / sec limit)
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -41,13 +42,23 @@ router.post('/api/crm/collections/blast/:churchCode', async (req, res) => {
         // 3. Fire the Blast
         for (const account of overdueAccounts) {
             try {
-                // Point them to the secure portal we built in link.js
-                const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
-                const paymentLink = `${host}/link/${churchCode}`; 
+                // 🚀 FIX: Generate a unique Netcash link for 1-click payments!
+                const ref = `BLAST-${account.reference}-${Date.now().toString().slice(-4)}`;
+                let paymentLink = await netcash.createPaymentLink(account.amount, ref, account.phone, org.name);
+
+                // Fallback to the secure portal if the Netcash API happens to be down
+                if (!paymentLink) {
+                    const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+                    paymentLink = `${host}/link/${churchCode}`; 
+                }
                 
                 const message = `🔔 *Premium Reminder*\n\nHi ${account.firstName},\nYour ${org.name} premium of *R${account.amount.toFixed(2)}* is currently due.\n\nTap the secure link below to settle your account via Netcash:\n👉 ${paymentLink}\n\nReply *1* if you need assistance.`;
 
-                await sendWhatsApp(account.phone, message);
+                // 🛡️ Ensure phone is clean for Twilio
+                let cleanPhone = account.phone.replace(/\D/g, '');
+                if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+
+                await sendWhatsApp(cleanPhone, message);
 
                 // Update status so the CRM Dashboard updates the badge color!
                 await prisma.collection.update({
