@@ -119,10 +119,10 @@ module.exports = (app, { prisma }) => {
         res.setHeader('Set-Cookie', `session_${org.code}=active; HttpOnly; Path=/; Max-Age=3600`);
         res.redirect(`/admin/${org.code}/dashboard`);
     });
-	
-	// --- Vendors ---
     
-// 1. Explicitly serve the HTML directly from memory
+    // --- Vendors ---
+    
+    // 1. Explicitly serve the HTML directly from memory
     router.get('/crm/vendors.html', (req, res) => {
         res.send(`
 <!DOCTYPE html>
@@ -134,7 +134,6 @@ module.exports = (app, { prisma }) => {
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-50 font-sans p-6">
-
     <div class="max-w-6xl mx-auto">
         <div class="flex justify-between items-center mb-6">
             <div>
@@ -338,8 +337,8 @@ module.exports = (app, { prisma }) => {
         `;
         res.send(renderPage(req.org, 'vendors', content));
     });
-	
-	// 3. Send RFQ Blast via WhatsApp
+    
+    // 3. Send RFQ Blast via WhatsApp
     router.post('/api/crm/vendors/:code/rfq', express.json(), async (req, res) => {
         try {
             const { category, details } = req.body;
@@ -464,7 +463,7 @@ module.exports = (app, { prisma }) => {
 // --- ⚰️ SUREPOL (BURIAL ADMIN UI) ---
     router.get('/admin/:code/surepol', checkSession, async (req, res) => {
         
-        // 1. Fetch all pending claims for this specific church/society
+        // 🚀 FIX: We added "include: { member: true }" to stop the crash!
         const pendingClaims = await prisma.claim.findMany({
             where: {
                 churchCode: req.org.code,
@@ -472,6 +471,7 @@ module.exports = (app, { prisma }) => {
                     in: ['MANUAL_REVIEW_NEEDED', 'FLAGGED_WAITING_PERIOD', 'PENDING_REVIEW', 'PENDING_DOCUMENTATION']
                 }
             },
+            include: { member: true }, 
             orderBy: { id: 'desc' }
         });
 
@@ -491,9 +491,12 @@ module.exports = (app, { prisma }) => {
                     ? `<a href="${c.documentUrl}" target="_blank" style="background:#ecf0f1; padding:5px 10px; border-radius:4px; font-size:12px; font-weight:bold;">🖼️ View Doc</a>` 
                     : '<span style="color:#999; font-size:12px;">No Doc</span>';
                 
+                // 🚀 FIX: Safely grab phone numbers from relation
+                const displayPhone = c.claimantPhone || (c.member ? c.member.phone : 'Unknown');
+
                 return `
                 <tr style="background: ${c.status === 'MANUAL_REVIEW_NEEDED' ? '#fffbeb' : 'transparent'};">
-                    <td><b>${c.deceasedIdNumber === 'UNREADABLE' ? '⚠️ UNREADABLE' : c.deceasedIdNumber}</b><br><span style="font-size:11px; color:#888;">Claimant: ${c.claimantPhone}</span></td>
+                    <td><b>${c.deceasedIdNumber === 'UNREADABLE' ? '⚠️ UNREADABLE' : c.deceasedIdNumber}</b><br><span style="font-size:11px; color:#888;">Claimant: ${displayPhone}</span></td>
                     <td>${new Date(c.dateOfDeath).toLocaleDateString()}</td>
                     <td>
                         <span class="badge" style="background:${badgeColor}; padding:5px 8px;">${c.status.replace(/_/g, ' ')}</span>
@@ -657,8 +660,7 @@ module.exports = (app, { prisma }) => {
             </div>
 
             <script>
-                // (Leave all your existing scripts inside here untouched!)
-				// The Override Logic
+                // The Override Logic
                 async function manualOverride(claimId) {
                     const manualId = prompt("Enter the exact ID Number from the Death Certificate:");
                     
@@ -809,11 +811,10 @@ module.exports = (app, { prisma }) => {
                 document.getElementById('addDependentBtn').addEventListener('click', () => {
                     const div = document.createElement('div');
                     div.style.cssText = "display:flex; gap:5px; margin-bottom:10px; background:#f8f9fa; padding:10px; border-radius:5px;";
-                    // Inside the 'addDependentBtn' click listener in admin.js
                     div.innerHTML = 
                         '<input type="text" class="dep-fname" placeholder="First Name" required style="margin:0; flex:1; padding:8px;">' +
                         '<input type="text" class="dep-lname" placeholder="Surname" required style="margin:0; flex:1; padding:8px;">' +
-                        '<input type="date" class="dep-dob" required style="margin:0; flex:1; padding:8px;">' + // 👈 Changed to type="date"
+                        '<input type="date" class="dep-dob" required style="margin:0; flex:1; padding:8px;">' +
                         '<select class="dep-rel" style="margin:0; flex:1; padding:8px;">' +
                             '<option value="SPOUSE">Spouse</option>' +
                             '<option value="CHILD">Child</option>' +
@@ -833,12 +834,11 @@ module.exports = (app, { prisma }) => {
 
                     const dependents = [];
                     const depRows = depsContainer.children;
-                    // Inside the 'newPolicyForm' submit listener
                     for (let i = 0; i < depRows.length; i++) {
                         dependents.push({
                             firstName: depRows[i].querySelector('.dep-fname').value.trim(),
                             lastName: depRows[i].querySelector('.dep-lname').value.trim(),
-                            dateOfBirth: depRows[i].querySelector('.dep-dob').value, // 👈 Updated
+                            dateOfBirth: depRows[i].querySelector('.dep-dob').value,
                             relation: depRows[i].querySelector('.dep-rel').value
                         });
                     }
@@ -1031,17 +1031,15 @@ module.exports = (app, { prisma }) => {
                         let cleanPhone = phone.replace(/\D/g, '');
                         if (cleanPhone.length === 10 && cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
                         
-                        await prisma.member.upsert({ 
-                            where: { phone: cleanPhone }, 
-                            update: { firstName: firstName, lastName: lastName }, 
-                            create: { 
-                                firstName: firstName, 
-                                lastName: lastName, 
-                                phone: cleanPhone, 
-                                churchCode: req.org.code,
-                                status: 'ACTIVE'
-                            } 
-                        }); 
+                        // 🚀 FIX: Upsert removed! Safely handles multi-tenant insertion
+                        let existing = await prisma.member.findFirst({ where: { phone: cleanPhone, churchCode: req.org.code } });
+                        if (existing) {
+                            await prisma.member.update({ where: { id: existing.id }, data: { firstName: firstName, lastName: lastName } });
+                        } else {
+                            await prisma.member.create({
+                                data: { firstName: firstName, lastName: lastName, phone: cleanPhone, churchCode: req.org.code, status: 'ACTIVE' }
+                            });
+                        }
                         added++;
                     } catch (e) { 
                         console.error("Import Error:", e.message); 
@@ -1238,7 +1236,7 @@ module.exports = (app, { prisma }) => {
                         <div style="display:flex; gap:10px; margin-top:10px;">
                             <button name="action" value="approve" class="btn" style="flex:1; background:#27ae60; padding:15px; font-size:16px;">✅ Approve KYC</button> 
                             <button name="action" value="reject" class="btn" style="flex:1; background:#e74c3c; padding:15px; font-size:16px;">❌ Reject Documents</button>
-																	
+                                                                    
                         </div>
                     </form>
                 </div>
@@ -1249,7 +1247,10 @@ module.exports = (app, { prisma }) => {
 
     // --- 📄 PDF & SETTINGS ---
     router.get('/admin/:code/members/:phone/pdf', checkSession, async (req, res) => {
-        const m = await prisma.member.findUnique({ where: { phone: req.params.phone } }); 
+        // 🚀 FIX: findUnique crashes if phone is not unique. Using findFirst.
+        const m = await prisma.member.findFirst({ where: { phone: req.params.phone, churchCode: req.org.code } }); 
+        if (!m) return res.status(404).send("Member profile not found");
+
         const doc = new PDFDocument({ margin: 50 });
         
         res.setHeader('Content-Type', 'application/pdf');
@@ -1322,7 +1323,7 @@ module.exports = (app, { prisma }) => {
             ></iframe>
         `;
         res.send(renderPage(req.org, 'broadcast', content));
-    });;
+    });
 
     // ==========================================
     // 📢 2. API: Send WhatsApp Broadcast
@@ -1418,7 +1419,7 @@ module.exports = (app, { prisma }) => {
     });
 
 
-	// ==========================================
+    // ==========================================
     // 🛡️ API: MANUAL CLAIM OVERRIDE
     // ==========================================
     router.post('/api/crm/claims/:code/override', express.json(), async (req, res) => {
@@ -1479,8 +1480,8 @@ module.exports = (app, { prisma }) => {
     // 🔌 2. MOUNT THE NEW API ROUTES HERE (Right before app.use)
     app.use('/api/crm/claims', claimsEngine);
     app.use('/api/crm/collections', blastEngine);
-	
-	// ==========================================
+    
+    // ==========================================
     // ⚙️ API: SETTINGS MODULE
     // ==========================================
     
@@ -1514,8 +1515,8 @@ module.exports = (app, { prisma }) => {
             res.status(500).json({ success: false, error: error.message });
         }
     });
-	
-	// ==========================================
+    
+    // ==========================================
     // 🛒 API: VENDOR MANAGEMENT
     // ==========================================
     
@@ -1562,7 +1563,7 @@ module.exports = (app, { prisma }) => {
         }
     });
 
-	// ============================================================
+    // ============================================================
     // 🧮 API: FETCH DYNAMIC QUOTE DATA
     // ============================================================
     app.get('/api/public/quote-data/:code', async (req, res) => {
