@@ -37,8 +37,6 @@ router.post('/', (req, res) => {
 
             const numMedia = parseInt(req.body.NumMedia || '0'); 
             
-            // 🚀 FIX 1: Swapped findUnique for findFirst and added orderBy
-            // This safely grabs the member's most recently active profile in a Multi-Tenant architecture
             const member = await prisma.member.findFirst({
                 where: { phone: cleanPhone },
                 orderBy: { id: 'desc' },
@@ -243,14 +241,21 @@ router.post('/', (req, res) => {
                             await sendWhatsApp(cleanPhone, `Welcome to *${org.name}*!\n\nHow can we help you today?\n\n1️⃣ I am an Existing Member\n2️⃣ I am a New Member (Get a Quote)`);
                             return;
                         } else {
-                            // 🚀 FIX 2: Replaced upsert with findFirst/create to avoid Multi-Tenant crash
+                            // 🚀 FIX: Using churchCode since churchId is not an exposed scalar!
                             let existingMember = await prisma.member.findFirst({
-                                where: { phone: cleanPhone, churchId: org.id }
+                                where: { phone: cleanPhone, churchCode: org.code }
                             });
                             
                             if (!existingMember) {
                                 await prisma.member.create({
-                                    data: { phone: cleanPhone, firstName: 'Member', lastName: 'New', churchId: org.id, status: 'ACTIVE' }
+                                    data: { 
+                                        phone: cleanPhone, 
+                                        firstName: 'Member', 
+                                        lastName: 'New', 
+                                        church: { connect: { id: org.id } }, // Valid Relation connect
+                                        churchCode: org.code, // Explicit scalar mapping
+                                        status: 'ACTIVE' 
+                                    }
                                 });
                             }
                             
@@ -290,8 +295,9 @@ router.post('/', (req, res) => {
                 }
 
                 if (session.step === 'ENTER_POLICY_NUMBER') {
+                    // 🚀 FIX: Switched to churchCode
                     const memberMatch = await prisma.member.findFirst({
-                        where: { churchId: session.churchId, idNumber: incomingMsg }
+                        where: { churchCode: session.churchCode, idNumber: incomingMsg }
                     });
                     if (memberMatch) {
                         await prisma.member.update({ where: { id: memberMatch.id }, data: { phone: cleanPhone } });
@@ -336,10 +342,10 @@ router.post('/', (req, res) => {
                     session.monthlyPremium = parseFloat(premiumMatch[1]);
                 }
 
-                // 🚀 FIX 3: Replaced upsert with findFirst/create
-                if (session.churchId) {
+                // 🚀 FIX: Safely find and create using churchCode
+                if (session.churchCode) {
                     let draftMember = await prisma.member.findFirst({
-                        where: { phone: cleanPhone, churchId: session.churchId }
+                        where: { phone: cleanPhone, churchCode: session.churchCode }
                     });
                     
                     if (draftMember) {
@@ -353,7 +359,8 @@ router.post('/', (req, res) => {
                                 phone: cleanPhone,
                                 firstName: 'Pending',
                                 lastName: 'Member',
-                                churchId: session.churchId,
+                                church: { connect: { id: session.churchId } }, 
+                                churchCode: session.churchCode,
                                 status: 'PENDING_KYC',
                                 monthlyPremium: session.monthlyPremium
                             }
@@ -366,7 +373,7 @@ router.post('/', (req, res) => {
             }
 
             if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ID') {
-                if (!session.churchId) {
+                if (!session.churchCode) {
                     await sendWhatsApp(cleanPhone, "⚠️ Your session has expired. Please reply with *Join* to restart your registration.");
                     return;
                 }
@@ -389,9 +396,9 @@ router.post('/', (req, res) => {
                     const extractedData = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
 
                     if (extractedData.confidenceScore > 75) {
-                        // 🚀 FIX 4: Safe update finding by ID instead of Upsert by phone
+                        // 🚀 FIX: Search by churchCode
                         let draftMember = await prisma.member.findFirst({
-                            where: { phone: cleanPhone, churchId: session.churchId }
+                            where: { phone: cleanPhone, churchCode: session.churchCode }
                         });
                         
                         if (draftMember) {
@@ -415,9 +422,9 @@ router.post('/', (req, res) => {
                         throw new Error("AI Confidence too low.");
                     }
                 } catch (error) {
-                    // 🚀 FIX 5: Safe fallback update
+                    // 🚀 FIX: Fallback update uses churchCode
                     let draftMember = await prisma.member.findFirst({
-                        where: { phone: cleanPhone, churchId: session.churchId }
+                        where: { phone: cleanPhone, churchCode: session.churchCode }
                     });
                     if (draftMember) {
                         await prisma.member.update({
@@ -434,9 +441,9 @@ router.post('/', (req, res) => {
             if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ADDRESS') {
                 const addressUrl = req.body.MediaUrl0;
                 try {
-                    // 🚀 FIX 6: Find First, not Unique
+                    // 🚀 FIX: Uses churchCode
                     const memberRecord = await prisma.member.findFirst({ 
-                        where: { phone: cleanPhone, churchId: session.churchId },
+                        where: { phone: cleanPhone, churchCode: session.churchCode },
                         orderBy: { id: 'desc' }
                     });
                     
@@ -558,4 +565,4 @@ router.post('/', (req, res) => {
     })();
 });
 
-module.exports = router;	
+module.exports = router;
