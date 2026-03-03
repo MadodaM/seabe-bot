@@ -1,5 +1,7 @@
 // services/netcash.js
 const axios = require('axios');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 require('dotenv').config();
 
 // NetCash uses specific Service Keys for different features
@@ -25,17 +27,17 @@ async function createPaymentLink(amount, ref, userPhone, orgName) {
         if (cleanAmount == 0) return null;
 
         // 🛑 We are currently returning the Sandbox Preview page.
-        // When NetCash approves your account, you will generate the live link below!
+        // When NetCash approves your account, you will swap to the live link below!
         
         /*
         // NetCash Pay Now requires passing data via query parameters or a form POST
         const baseUrl = "https://paynow.netcash.co.za/site/paynow.aspx";
-        const paymentUrl = \`\${baseUrl}?Method=8&ServiceKey=\${PAYNOW_SERVICE_KEY}&p2=\${ref}&p3=Payment to \${orgName}&p4=\${cleanAmount}&p11=\${userPhone}\`;
+        const paymentUrl = `${baseUrl}?Method=8&ServiceKey=${PAYNOW_SERVICE_KEY}&p2=${ref}&p3=Payment to ${orgName}&p4=${cleanAmount}&p11=${userPhone}`;
         
         return paymentUrl;
         */
 
-        // Returning a mock Sandbox Preview for now (You can duplicate your Ozow web route for this!)
+        // Returning a mock Sandbox Preview for now
         return 'https://seabe.tech/netcash-sandbox-preview';
 
     } catch (error) {
@@ -61,23 +63,23 @@ async function verifyPayment(reference) {
 }
 
 // ==========================================
-// 3. TRANSACTION HISTORY (From Local DB)
+// 3. TRANSACTION HISTORY (Multi-Tenant Safe)
 // ==========================================
-async function getTransactionHistory(phone) {
-    const prisma = require('./prisma');
+// 🚀 FIX: We now pass the exact memberId so histories don't mix across organizations!
+async function getTransactionHistory(memberId) {
     try {
         const transactions = await prisma.transaction.findMany({
-            where: { phone: phone, status: 'SUCCESS' },
+            where: { memberId: parseInt(memberId), status: 'SUCCESS' },
             orderBy: { date: 'desc' },
             take: 5
         });
 
         if (transactions.length === 0) return "You have no recent giving history.";
 
-        let historyMessage = "📜 *Your Last 5 Contributions (NetCash):*\n\n";
+        let historyMessage = "📜 *Your Last 5 Contributions:*\n\n";
         transactions.forEach((tx, index) => {
             const date = new Date(tx.date).toLocaleDateString('en-ZA');
-            historyMessage += `${index + 1}. *R${tx.amount}* - ${tx.type} (${date})\n`;
+            historyMessage += `${index + 1}. *R${tx.amount}* - ${tx.type || 'Payment'} (${date})\n`;
         });
         return historyMessage;
     } catch (error) {
