@@ -241,23 +241,21 @@ router.post('/', (req, res) => {
                             await sendWhatsApp(cleanPhone, `Welcome to *${org.name}*!\n\nHow can we help you today?\n\n1️⃣ I am an Existing Member\n2️⃣ I am a New Member (Get a Quote)`);
                             return;
                         } else {
-                            // 🚀 FIX: Using churchCode since churchId is not an exposed scalar!
                             let existingMember = await prisma.member.findFirst({
-                                where: { phone: cleanPhone, churchCode: org.code }
-                            });
-                            
-                            if (!existingMember) {
-                                await prisma.member.create({
-                                    data: { 
-                                        phone: cleanPhone, 
-                                        firstName: 'Member', 
-                                        lastName: 'New', 
-                                        church: { connect: { id: org.id } }, // Valid Relation connect
-                                        churchCode: org.code, // Explicit scalar mapping
-                                        status: 'ACTIVE' 
-                                    }
-                                });
-                            }
+								where: { phone: cleanPhone, churchCode: org.code }
+							});
+
+							if (!existingMember) {
+								await prisma.member.create({
+									data: { 
+										phone: cleanPhone, 
+										firstName: 'Member', 
+										lastName: 'New', 
+										church: { connect: { id: org.id } }, 
+										status: 'ACTIVE' 
+									}
+								});
+							}}
                             
                             clearSessionFlag = true; 
                             const welcomeType = org.type === 'NON_PROFIT' ? "📚 Reply *Courses* to view our digital learning programs" : "Reply *Amen* to access your church menu";
@@ -349,23 +347,22 @@ router.post('/', (req, res) => {
                     });
                     
                     if (draftMember) {
-                        await prisma.member.update({
-                            where: { id: draftMember.id },
-                            data: { monthlyPremium: session.monthlyPremium }
-                        });
-                    } else {
-                        await prisma.member.create({
-                            data: {
-                                phone: cleanPhone,
-                                firstName: 'Pending',
-                                lastName: 'Member',
-                                church: { connect: { id: session.churchId } }, 
-                                churchCode: session.churchCode,
-                                status: 'PENDING_KYC',
-                                monthlyPremium: session.monthlyPremium
-                            }
-                        });
-                    }
+						await prisma.member.update({
+							where: { id: draftMember.id },
+							data: { monthlyPremium: session.monthlyPremium }
+						});
+					} else {
+						await prisma.member.create({
+							data: {
+								phone: cleanPhone,
+								firstName: 'Pending',
+								lastName: 'Member',
+								church: { connect: { id: session.churchId } }, 
+								status: 'PENDING_KYC',
+								monthlyPremium: session.monthlyPremium
+							}
+						});
+					}
                 }
 
                 await sendWhatsApp(cleanPhone, "🎉 Fantastic! Your quote has been accepted.\n\nTo finalize your policy registration, we must complete a quick KYC compliance check.\n\nPlease reply directly to this message with a clear photo of your *ID Document* (Green Book or Smart ID).");
