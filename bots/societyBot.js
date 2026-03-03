@@ -4,6 +4,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient(); 
 const netcash = require('../services/netcash');
+const { generatePolicyCard } = require('../services/cardGenerator');
 const { generateKYCLink } = require('../routes/kyc');
 
 // Safely initialize Twilio for direct background messaging
@@ -12,15 +13,21 @@ if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
     twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 }
 
-const sendWhatsApp = async (to, body) => {
+// Upgraded to handle Media URLs!
+const sendWhatsApp = async (to, body, mediaUrl = null) => {
     if (!twilioClient) return console.log("⚠️ Twilio Keys Missing!");
     const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
     try {
-        await twilioClient.messages.create({
+        const msgConfig = {
             from: `whatsapp:${cleanTwilioNumber}`,
             to: `whatsapp:${to}`,
             body: body
-        });
+        };
+        
+        // If an image is provided, attach it!
+        if (mediaUrl) msgConfig.mediaUrl = [mediaUrl]; 
+
+        await twilioClient.messages.create(msgConfig);
         console.log(`✅ Society text delivered to ${to}`);
     } catch (err) {
         console.error("❌ Twilio Send Error:", err.message);
@@ -85,19 +92,29 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
 
             // OPTION 4: DIGITAL MEMBER CARD 🪪
             else if (incomingMsg === '4') {
+                // Let them know the AI is drawing the card
+                await sendWhatsApp(cleanPhone, "🎨 Generating your digital policy card. Please wait a moment...");
+
+                // Generate the image
+                const orgData = member.church || member.society || { name: session.orgName };
+                const cardUrl = await generatePolicyCard(member, orgData);
+
                 const statusEmoji = member?.status === 'ACTIVE' ? '✅' : '🔴';
-                const memberSince = member?.joinedAt ? new Date(member.joinedAt).getFullYear() : '2024';
                 
-                reply = `🪪 *DIGITAL MEMBERSHIP CARD*\n` +
-                        `━━━━━━━━━━━━━━━━━━━━\n` +
+                reply = `🪪 *DIGITAL MEMBERSHIP CARD*\n\n` +
                         `🏛️ *${orgName}*\n` +
                         `👤 *Name:* ${member?.firstName || 'Member'} ${member?.lastName || ''}\n` +
-                        `🆔 *Policy:* ${member?.policyNumber || 'SB-' + cleanPhone.slice(-4)}\n` +
-                        `📅 *Member Since:* ${memberSince}\n` +
-                        `💳 *Status:* ${member?.status || 'ACTIVE'} ${statusEmoji}\n` +
-                        `━━━━━━━━━━━━━━━━━━━━\n` +
+                        `💳 *Status:* ${member?.status || 'ACTIVE'} ${statusEmoji}\n\n` +
                         `_Show this card to service providers for verification._\n\n` +
                         `Reply *0* to go back.`;
+
+                // Send the final message WITH the image attached!
+                if (cardUrl) {
+                    await sendWhatsApp(cleanPhone, reply, cardUrl);
+                    reply = ""; // Clear reply so the final block doesn't send it twice
+                } else {
+                    reply = "⚠️ Error generating image. " + reply; // Fallback to text-only
+                }
             }
 
             // OPTION 5: PREMIUM PAYMENT
