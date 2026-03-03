@@ -6,6 +6,7 @@ const prisma = new PrismaClient();
 const netcash = require('../services/netcash');
 const { generatePolicyCard } = require('../services/cardGenerator');
 const { generateKYCLink } = require('../routes/kyc');
+const { calculateTransaction } = require('../services/pricingEngine'); // 🚀 ADDED PRICING ENGINE
 
 // Safely initialize Twilio for direct background messaging
 let twilioClient;
@@ -17,10 +18,15 @@ if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
 const sendWhatsApp = async (to, body, mediaUrl = null) => {
     if (!twilioClient) return console.log("⚠️ Twilio Keys Missing!");
     const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+    
+    // 🛡️ Ensure to is a clean Twilio string
+    let cleanTo = to.replace(/\D/g, '');
+    if (cleanTo.startsWith('0')) cleanTo = '27' + cleanTo.substring(1);
+    
     try {
         const msgConfig = {
             from: `whatsapp:${cleanTwilioNumber}`,
-            to: `whatsapp:${to}`,
+            to: `whatsapp:+${cleanTo}`,
             body: body
         };
         
@@ -28,13 +34,12 @@ const sendWhatsApp = async (to, body, mediaUrl = null) => {
         if (mediaUrl) msgConfig.mediaUrl = [mediaUrl]; 
 
         await twilioClient.messages.create(msgConfig);
-        console.log(`✅ Society text delivered to ${to}`);
+        console.log(`✅ Society text delivered to +${cleanTo}`);
     } catch (err) {
         console.error("❌ Twilio Send Error:", err.message);
     }
 };
 
-// 🚀 FIX: Forced Netcash exclusively. Removed the undefined 'ozow' variable.
 const gateway = netcash;
 
 async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
@@ -45,10 +50,9 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
 
     try {
         // 1. MENU TRIGGER
-        // 🚀 FIX: Added 'menu', 'hi', and 'hello' so the router handoff works!
         const societyTriggers = ['society', 'policy', 'funeral', 'palour', 'menu', 'hi', 'hello'];
         
-        if (societyTriggers.includes(incomingMsg.toLowerCase()) && session.step !== 'ADD_DEP_NAME' && session.step !== 'ADD_DEP_RELATION' && session.step !== 'PROFILE_MENU' && session.step !== 'UPDATE_NAME' && session.step !== 'UPDATE_EMAIL' && session.step !== 'CONFIRM_UNLINK') {
+        if (societyTriggers.includes(incomingMsg.toLowerCase()) && !['ADD_DEP_NAME', 'ADD_DEP_RELATION', 'PROFILE_MENU', 'UPDATE_NAME', 'UPDATE_EMAIL', 'CONFIRM_UNLINK', 'PAYMENT_OPTIONS'].includes(session.step)) {
             session.step = 'SOCIETY_MENU';
             reply = `🛡️ *${orgName}*\n_Burial Society Portal_\n\n` +
                     `1. My Policy 📜\n` +
@@ -73,7 +77,6 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
 
             // OPTION 2: VIEW DEPENDENTS
             else if (incomingMsg === '2') {
-                // 🚀 FIX: Find dependents specifically for this member ID, not just the phone number!
                 const dependents = await prisma.dependent.findMany({ where: { memberId: member.id } });
                 if (dependents.length === 0) {
                     reply = `👨‍👩‍👧‍👦 *My Dependents*\n\nNo dependents linked.\nReply *Add* to add one.`;
@@ -86,16 +89,14 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             // OPTION 3: KYC COMPLIANCE
             else if (incomingMsg === '3') {
                 const host = process.env.HOST_URL || 'seabe-bot-test.onrender.com';
-                const link = await generateKYCLink(cleanPhone, host);
+                const link = await generateKYCLink(cleanPhone, host, member.id);
                 reply = `👤 *KYC Compliance*\n\nPlease verify your identity to ensure your policy remains active (Valid for 24 hours):\n\n👉 ${link}`;
             }
 
             // OPTION 4: DIGITAL MEMBER CARD 🪪
             else if (incomingMsg === '4') {
-                // Let them know the AI is drawing the card
                 await sendWhatsApp(cleanPhone, "🎨 Generating your digital policy card. Please wait a moment...");
 
-                // Generate the image
                 const orgData = member.church || member.society || { name: session.orgName };
                 const cardUrl = await generatePolicyCard(member, orgData);
 
@@ -108,39 +109,26 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                         `_Show this card to service providers for verification._\n\n` +
                         `Reply *0* to go back.`;
 
-                // Send the final message WITH the image attached!
                 if (cardUrl) {
                     await sendWhatsApp(cleanPhone, reply, cardUrl);
-                    reply = ""; // Clear reply so the final block doesn't send it twice
+                    reply = ""; 
                 } else {
-                    reply = "⚠️ Error generating image. " + reply; // Fallback to text-only
+                    reply = "⚠️ Error generating image. " + reply; 
                 }
             }
 
-            // OPTION 5: PREMIUM PAYMENT
+            // 🚀 OPTION 5: PREMIUM PAYMENT (Pricing Engine + Mandate Offer)
             else if (incomingMsg === '5') {
                 const amount = member?.monthlyPremium || 150.00;
-                const ref = `${orgCode}-PREM-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
-                const link = await gateway.createPaymentLink(amount, ref, cleanPhone, orgName);
-                
-                if (link) {
-                    // 🚀 FIX: Attached memberId so Netcash webhook can update the correct profile!
-                    await prisma.transaction.create({
-                        data: { 
-                            churchCode: orgCode, 
-                            memberId: member.id, // <--- CRITICAL FIX
-                            phone: cleanPhone, 
-                            amount: parseFloat(amount), 
-                            reference: ref, 
-                            status: 'PENDING', 
-                            type: 'SOCIETY_PREMIUM', 
-                            date: new Date() 
-                        }
-                    });
-                    reply = `💳 *Pay Premium via Netcash*\nDue: R${amount}.00\n\n👉 ${link}`;
-                } else {
-                    reply = "⚠️ Payment link error.";
-                }
+                session.tempPaymentAmount = amount;
+                session.step = 'PAYMENT_OPTIONS';
+
+                reply = `💳 *Premium Payment*\nYour base premium is R${amount.toFixed(2)}.\n\nHow would you like to pay today?\n\n` +
+                        `*1️⃣ Set up a Monthly Debit Order* (Recommended)\n` +
+                        `_Automatically pay every month. R5.00 processing fee applies._\n\n` +
+                        `*2️⃣ Make a Once-Off Payment*\n` +
+                        `_Pay manually via Capitec Pay or Card today._\n\n` +
+                        `Reply 1 or 2.`;
             }
 
             // OPTION 6: LOG A DEATH CLAIM
@@ -175,6 +163,54 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
         }
 
         // ==========================================
+        // 💳 PAYMENT PROCESSING STATE
+        // ==========================================
+        else if (session.step === 'PAYMENT_OPTIONS') {
+            const amount = session.tempPaymentAmount || 150.00;
+            
+            if (incomingMsg === '1') {
+                // 1. DEBIT ORDER MANDATE
+                const ref = `${orgCode}-MANDATE-${cleanPhone.slice(-4)}`;
+                const mandateData = await gateway.setupDebitOrderMandate(amount, cleanPhone, orgName, ref);
+                
+                if (mandateData) {
+                    reply = `🛡️ *Automated Debit Order*\n\nBase Premium: R${mandateData.pricing.baseAmount.toFixed(2)}\nService Fee: R${mandateData.pricing.totalFees.toFixed(2)}\n*Monthly Deduction: R${mandateData.pricing.totalChargedToUser.toFixed(2)}*\n\n👉 Tap here to digitally sign your mandate via Netcash:\n${mandateData.mandateUrl}\n\nReply *0* to go back.`;
+                } else {
+                    reply = "⚠️ Mandate system is temporarily offline.";
+                }
+                session.step = 'SOCIETY_MENU';
+
+            } else if (incomingMsg === '2') {
+                // 2. ONCE-OFF PAYMENT
+                const pricing = calculateTransaction(amount, 'STANDARD', 'DEFAULT', true);
+                const ref = `${orgCode}-ONCEOFF-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
+                const link = await gateway.createPaymentLink(pricing.totalChargedToUser, ref, cleanPhone, orgName);
+
+                if (link) {
+                    await prisma.transaction.create({
+                        data: { 
+                            churchCode: orgCode, 
+                            memberId: member.id, 
+                            phone: cleanPhone, 
+                            amount: pricing.baseAmount, 
+                            reference: ref, 
+                            status: 'PENDING', 
+                            type: 'SOCIETY_PREMIUM', 
+                            date: new Date() 
+                        }
+                    });
+                    reply = `💳 *Once-Off Payment*\n\nBase Premium: R${pricing.baseAmount.toFixed(2)}\nService Fee: R${pricing.totalFees.toFixed(2)}\n*Total Due: R${pricing.totalChargedToUser.toFixed(2)}*\n\n👉 Pay securely here:\n${link}\n\nReply *0* to go back.`;
+                } else {
+                    reply = "⚠️ Payment link error.";
+                }
+                session.step = 'SOCIETY_MENU';
+
+            } else {
+                reply = "⚠️ Invalid option. Please reply 1 or 2.";
+            }
+        }
+
+        // ==========================================
         // 👤 PROFILE MANAGEMENT STATES
         // ==========================================
         else if (session.step === 'PROFILE_MENU') {
@@ -198,20 +234,17 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             const parts = incomingMsg.split(' ');
             const fName = parts[0] || 'Member';
             const lName = parts.slice(1).join(' ') || '.'; 
-            // 🚀 FIX: Use member.id so Prisma doesn't crash on non-unique phone
             await prisma.member.update({ where: { id: member.id }, data: { firstName: fName, lastName: lName } });
             session.step = 'SOCIETY_MENU';
             reply = `✅ Profile updated to *${fName} ${lName}*!\n\nReply *0* to go back.`;
         }
         else if (session.step === 'UPDATE_EMAIL') {
-            // 🚀 FIX: Use member.id
             await prisma.member.update({ where: { id: member.id }, data: { email: incomingMsg.toLowerCase() } });
             session.step = 'SOCIETY_MENU';
             reply = `✅ Email successfully updated!\n\nReply *0* to go back.`;
         }
         else if (session.step === 'CONFIRM_UNLINK') {
             if (incomingMsg.toLowerCase() === 'yes') {
-                // 🚀 FIX: Use member.id and clear both code fields to ensure a clean break
                 await prisma.member.update({ where: { id: member.id }, data: { churchCode: null, societyCode: null, status: 'INACTIVE' } });
                 session.mode = null;
                 session.step = null;
