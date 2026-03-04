@@ -181,99 +181,61 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-    // ============================================================
-    // 🏷️ NEW: PRICING ENGINE DASHBOARD
+// ============================================================
+    // 🏷️ PRICING ENGINE DASHBOARD (Fixed Scope)
     // ============================================================
     app.get('/admin/pricing', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
 
         try {
-            // Fetch prices from DB (The Self-Healing service ensures they exist)
-            const prices = await prisma.servicePrice.findMany({ orderBy: { code: 'asc' } });
+            // 1. Fetch all prices from DB
+            const allPrices = await prisma.servicePrice.findMany({ orderBy: { code: 'asc' } });
             
-            const rows = prices.map(p => `
+            // 2. Filter into groups
+            const platformFees = allPrices.filter(p => !p.code.startsWith('TX_') && !p.code.startsWith('MOD_'));
+            const txVars = allPrices.filter(p => p.code.startsWith('TX_') || p.code.startsWith('MOD_'));
+
+            // 3. Helper function for rows
+            const makeRows = (data) => data.map(p => `
                 <tr>
+                    <td><span class="tag" style="background:#edf2f7; color:#2d3748; font-family:monospace; border:none;">${p.code}</span></td>
                     <td>
-                        <span style="font-family:monospace; font-weight:bold; background:#edf2f7; padding:4px 8px; border-radius:4px; color:#2d3748;">${p.code}</span>
-                    </td>
-                    <td style="color:#718096; font-size:13px;">${p.description || 'Standard Fee'}</td>
-                    <td>
-                        <form action="/admin/pricing/update" method="POST" style="display:flex; align-items:center; gap:5px; margin:0;">
+                        <form action="/admin/pricing/update" method="POST" style="display:flex; gap:8px; margin:0;">
                             <input type="hidden" name="code" value="${p.code}">
-                            <span style="color:#718096; font-size:14px;">R</span>
-                            <input type="number" step="0.01" name="amount" class="price-input" value="${Number(p.amount).toFixed(2)}">
-                            <button type="submit" class="btn-save">Update</button>
+                            <input type="number" step="0.0001" name="amount" class="price-input" 
+                                   value="${Number(p.amount)}" 
+                                   style="width:90px; text-align:right; border:1px solid #cbd5e0; border-radius:4px; padding:4px;">
+                            <button type="submit" class="btn btn-primary" style="padding:4px 8px; font-size:11px; background:#1e272e;">Save</button>
                         </form>
                     </td>
-                    <td style="font-size:12px; color:#a0aec0;">${new Date(p.updatedAt).toLocaleDateString()}</td>
                 </tr>
             `).join('');
-			
-			// Group the prices for a cleaner UI
-			const serviceFees = prices.filter(p => !p.code.startsWith('TX_'));
-			const txVariables = prices.filter(p => p.code.startsWith('TX_'));
 
-			const renderTable = (data) => data.map(p => `
-				<tr>
-					<td><span class="tag" style="background:#eee; color:#333; border:none; font-family:monospace;">${p.code}</span></td>
-					<td>
-						<form action="/admin/pricing/update" method="POST" style="display:flex; gap:10px; margin:0;">
-							<input type="hidden" name="code" value="${p.code}">
-							<input type="number" step="0.0001" name="amount" class="price-input" 
-								   value="${Number(p.amount)}" 
-								   style="width:100px; text-align:right; font-weight:bold; padding:5px;">
-							<button type="submit" class="btn btn-primary" style="padding:5px 10px; font-size:11px;">Save</button>
-						</form>
-					</td>
-				</tr>
-			`).join('');
-
-			const content = `
-				<div style="display:grid; grid-template-columns: 1fr 1fr; gap:30px;">
-					<div>
-						<h3>🛡️ Fixed Service Fees (ZAR)</h3>
-						<p style="font-size:12px; color:gray;">Platform costs for AI and KYC.</p>
-						<table>${renderTable(serviceFees)}</table>
-					</div>
-					<div>
-						<h3>💳 Transaction Fee Variables</h3>
-						<p style="font-size:12px; color:gray;">PCT values are decimals (0.025 = 2.5%).</p>
-						<table>${renderTable(txVariables)}</table>
-					</div>
-				</div>
-				
-				<div class="card-form" style="max-width:100%; margin-top:30px; border-left: 5px solid #2ecc71;">
-					<h3 style="color:#27ae60;">💡 Pricing Tip</h3>
-					<p style="font-size:13px;">To lock in a <strong>R1.00 platform profit</strong>, ensure the Retail Flat fee is exactly <strong>R1.00 higher</strong> than the Wholesale Flat fee if the percentages are equal.</p>
-				</div>
-			`;
-
-            const content = `
-                <div class="card-form" style="max-width:100%;">
-                    <p style="color:#7f8c8d; margin-top:-10px; margin-bottom:20px;">
-                        Manage the base costs for services across the platform. <br>
-                        <em>Note: Updates take up to 5 minutes to reflect in the WhatsApp bot due to caching.</em>
-                    </p>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Service Code</th>
-                                <th>Description</th>
-                                <th>Price (ZAR)</th>
-                                <th>Last Updated</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${rows || '<tr><td colspan="4" style="text-align:center; padding:20px;">No pricing data found. Run the bot once to seed defaults.</td></tr>'}
-                        </tbody>
-                    </table>
+            // 4. Using a unique name 'pricingHTML' to avoid clashing with other 'content' variables
+            const pricingHTML = `
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:30px;">
+                    <div class="card-form" style="max-width:100%;">
+                        <h3 style="margin-top:0;">🛡️ Fixed Service Fees (ZAR)</h3>
+                        <table>
+                            <thead><tr><th>Code</th><th>Amount</th></tr></thead>
+                            <tbody>${makeRows(platformFees)}</tbody>
+                        </table>
+                    </div>
+                    <div class="card-form" style="max-width:100%;">
+                        <h3>💳 Transaction & Module Variables</h3>
+                        <p style="font-size:11px; color:#718096; margin-top:-10px;">PCT values: 0.025 = 2.5%</p>
+                        <table>
+                            <thead><tr><th>Code</th><th>Variable</th></tr></thead>
+                            <tbody>${makeRows(txVars)}</tbody>
+                        </table>
+                    </div>
                 </div>
             `;
 
-            res.send(renderAdminPage('Pricing Engine', content));
+            res.send(renderAdminPage('Pricing Engine', pricingHTML));
 
         } catch (e) {
-            res.send(renderAdminPage('Pricing Engine', '', `Error loading pricing: ${e.message}`));
+            res.send(renderAdminPage('Pricing Error', '', e.message));
         }
     });
 
