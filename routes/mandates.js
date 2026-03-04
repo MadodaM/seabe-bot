@@ -65,7 +65,7 @@ router.get('/sign', (req, res) => {
                 label { display: block; margin-top: 15px; font-size: 12px; font-weight: bold; color: #64748b; text-transform: uppercase; }
                 input, select { width: 100%; padding: 12px; margin-top: 5px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 15px; box-sizing: border-box; }
                 .terms { font-size: 11px; color: #64748b; margin: 20px 0; line-height: 1.5; }
-                button { width: 100%; padding: 15px; background: #10b981; color: white; border: none; border-radius: 8px; font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; }
+                button { width: 100%; padding: 15px; background: #10b981; color: white; border: none; border-radius: 8px; font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; margin-top: 15px; }
                 button:hover { background: #059669; }
             </style>
         </head>
@@ -86,8 +86,14 @@ router.get('/sign', (req, res) => {
                     <label>Account Holder Name</label>
                     <input type="text" name="accountName" placeholder="e.g. J. Doe" required>
 
-                    <label>ID Number</label>
-                    <input type="number" name="idNumber" placeholder="13-Digit SA ID" required>
+                    <label>Identification Type</label>
+                    <select name="idType" id="idType" onchange="toggleIdInput()" required>
+                        <option value="SA_ID">South African ID</option>
+                        <option value="PASSPORT">Passport / Foreign ID</option>
+                    </select>
+
+                    <label id="idLabel">ID Number</label>
+                    <input type="text" name="idNumber" id="idNumber" placeholder="13-Digit SA ID" required>
 
                     <label>Bank Name</label>
                     <select name="bankName" required>
@@ -117,6 +123,22 @@ router.get('/sign', (req, res) => {
                     <button type="submit">🔒 Authenticate Mandate</button>
                 </form>
             </div>
+
+            <script>
+                function toggleIdInput() {
+                    const idType = document.getElementById('idType').value;
+                    const idInput = document.getElementById('idNumber');
+                    const idLabel = document.getElementById('idLabel');
+                    
+                    if (idType === 'SA_ID') {
+                        idLabel.innerText = 'ID Number';
+                        idInput.placeholder = '13-Digit SA ID';
+                    } else {
+                        idLabel.innerText = 'Passport Number';
+                        idInput.placeholder = 'e.g. A12345678';
+                    }
+                }
+            </script>
         </body>
         </html>
     `);
@@ -126,17 +148,27 @@ router.get('/sign', (req, res) => {
 // 2. PROCESS THE MANDATE SUBMISSION (DEBICHECK TT1)
 // ==========================================
 router.post('/submit', express.urlencoded({ extended: true }), async (req, res) => {
-    const { phone, amount, org, accountName, idNumber, bankName, accountNumber, accountType } = req.body;
+    const { phone, amount, org, accountName, idType, idNumber, bankName, accountNumber, accountType } = req.body;
 
     try {
         console.log(`💳 Initiating DebiCheck TT1 Push for ${phone}...`);
         
-        // 🚀 PRE-FLIGHT CHECK: Validate SA ID Number
-        if (!isValidSAID(idNumber)) {
+        // 🚀 PRE-FLIGHT CHECK: Validate based on selected ID Type
+        const isSAID = idType === 'SA_ID';
+        
+        if (isSAID && !isValidSAID(idNumber)) {
             return res.send(`
                 <div style="font-family: sans-serif; text-align: center; padding: 50px;">
                     <h2 style="color: #ef4444;">❌ Invalid ID Number</h2>
                     <p>The ID number provided is not a valid South African ID. The bank will reject this mandate.</p>
+                    <button onclick="window.history.back()" style="padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 5px; cursor: pointer;">Go Back and Fix</button>
+                </div>
+            `);
+        } else if (!isSAID && (idNumber.length < 5 || idNumber.length > 20)) {
+            return res.send(`
+                <div style="font-family: sans-serif; text-align: center; padding: 50px;">
+                    <h2 style="color: #ef4444;">❌ Invalid Passport</h2>
+                    <p>Please enter a valid passport number.</p>
                     <button onclick="window.history.back()" style="padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 5px; cursor: pointer;">Go Back and Fix</button>
                 </div>
             `);
@@ -153,18 +185,21 @@ router.post('/submit', express.urlencoded({ extended: true }), async (req, res) 
         
         const cleanAmount = parseFloat(amount).toFixed(2);
         
-        // Map Banks to Universal Branch Codes (South African Standard)
+        // Map Banks to Universal Branch Codes
         const branchCodes = {
             'Capitec': '470010', 'FNB': '250655', 'Standard Bank': '051001', 
             'Absa': '632005', 'Nedbank': '198765', 'TymeBank': '678910', 'African Bank': '430000'
         };
         const branchCode = branchCodes[bankName] || '000000';
         
-        // Map Account Type (1 = Current/Cheque, 2 = Savings)
+        // Map Account Type
         const accTypeCode = accountType === 'Cheque' ? '1' : '2';
 
-        // 🚀 DYNAMIC DATE CALCULATION
+        // Dynamic Date
         const collectionDate = getNextCollectionDate();
+        
+        // 🚀 DYNAMIC IS_ID_NUMBER FLAG FOR NETCASH
+        const isIdNumberFlag = isSAID ? '1' : '0';
 
         // 2. Build the Netcash TT1 XML Payload
         const xmlPayload = `
@@ -173,8 +208,8 @@ router.post('/submit', express.urlencoded({ extended: true }), async (req, res) 
                     <ServiceKey>${process.env.NETCASH_DEBIT_ORDER_KEY || 'TEST_KEY'}</ServiceKey>
                     <AccountReference>${cleanPhone}</AccountReference>
                     <DebiCheckMandateTemplateId>${process.env.NETCASH_DEBICHECK_TEMPLATE_ID || 'TEST_TEMPLATE'}</DebiCheckMandateTemplateId>
-                    <IsIdNumber>1</IsIdNumber>
-                    <DebtorIdentification>${idNumber}</DebtorIdentification>
+                    <IsIdNumber>${isIdNumberFlag}</IsIdNumber>
+                    <DebtorIdentification>${idNumber.trim()}</DebtorIdentification>
                     <AccountName>${accountName}</AccountName>
                     <BankAccountName>${accountName}</BankAccountName>
                     <BranchCode>${branchCode}</BranchCode>
@@ -198,17 +233,14 @@ router.post('/submit', express.urlencoded({ extended: true }), async (req, res) 
         // 4. Handle Response
         if (netcashResponse.data.includes('<ErrorCode>000</ErrorCode>')) {
             
-            // Mark user as PENDING_MANDATE while they approve the USSD
             await prisma.member.updateMany({
                 where: { phone: cleanPhoneForDB }, 
                 data: { status: 'PENDING_MANDATE' }
             });
 
-            // Send a WhatsApp prompt so they know what to look for
             const promptMsg = `📱 *DebiCheck Request Sent*\n\nWe have requested authorization for your R${cleanAmount} monthly mandate.\n\n*Action Required:*\nPlease open your ${bankName} app now or check for a pop-up on your phone to approve the mandate!`;
             await sendWhatsApp(cleanPhoneForDB, promptMsg);
 
-            // Render UI Success
             res.send(`
                 <div style="font-family: sans-serif; text-align: center; padding: 50px; background: #f8fafc; height: 100vh;">
                     <div style="font-size: 60px; margin-bottom: 10px;">📱</div>
@@ -219,7 +251,6 @@ router.post('/submit', express.urlencoded({ extended: true }), async (req, res) 
                 </div>
             `);
         } else {
-            // Netcash returned a failure code (e.g., invalid account length)
             throw new Error(`Netcash rejected the payload: ${netcashResponse.data}`);
         }
 
