@@ -45,40 +45,38 @@ const sendWhatsApp = async (to, body, mediaUrl = null) => {
 const gateway = netcash;
 
 // 💰 NEW: Billing Helper (Now requires Phone)
+// bots/societyBot.js
+
 async function chargeSociety(societyId, churchId, phone, amount, type, description) {
     try {
-        // Validation: Ensure we have at least one ID
         if (!societyId && !churchId) return; 
 
-        const validChurchId = churchId || 1; 
+        // Since all entities are identified as a "Church" in the DB, 
+        // we use the available ID (Church ID takes priority, else Society ID)
+        const validOrgId = churchId || societyId || 1; 
 
-        // 🏗️ PREPARE THE DATA OBJECT
-        let transactionData = {
+        const transactionData = {
             amount: -amount, 
             type: type,      
             status: 'SUCCESS',
             reference: `FEE-${Date.now()}`,
-            method: 'INTERNAL',
+            method: 'INTERNAL', 
             description: description,
             phone: phone, 
+            
+            // ✅ FIX: Use 'date' (not createdAt)
             date: new Date(),
             
-            // ✅ THE FIX: Explicitly 'Connect' the Church
+            // ✅ FIX: ONLY connect 'church' (Because all Orgs live in the Church table)
             church: { 
-                connect: { id: Number(validChurchId) } 
+                connect: { id: Number(validOrgId) } 
             }
         };
 
-        // If a Society ID exists, connect it too (Optional)
-        if (societyId) {
-            transactionData.society = { 
-                connect: { id: Number(societyId) } 
-            };
-        }
+        // ❌ REMOVED: The 'society' connection block (since it doesn't exist on Transaction)
 
         await prisma.transaction.create({ data: transactionData });
-
-        console.log(`💰 [BILLING] Charged Church #${validChurchId} (Society #${societyId}) R${amount}`);
+        console.log(`💰 [BILLING] Charged Org #${validOrgId} R${amount}`);
 
     } catch (e) {
         console.error("❌ Billing Error:", e);
