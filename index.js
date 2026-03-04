@@ -27,6 +27,10 @@ const app = express();
 const prisma = new PrismaClient();
 const upload = multer({ dest: 'uploads/' }); 
 
+// 🛡️ TRUST PROXY (Required for Render/Heroku)
+// This tells Express to trust the "X-Forwarded-For" header from Render
+app.set('trust proxy', 1);
+
 if (process.env.SENDGRID_KEY) sgMail.setApiKey(process.env.SENDGRID_KEY);
 
 // ==========================================
