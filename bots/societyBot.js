@@ -61,7 +61,7 @@ async function chargeSociety(societyId, churchId, phone, amount, type, descripti
             method: 'INTERNAL',
             description: description,
             phone: phone, 
-            createdAt: new Date(),
+            date: new Date(),
             
             // ✅ THE FIX: Explicitly 'Connect' the Church
             church: { 
