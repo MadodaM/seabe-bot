@@ -1,6 +1,6 @@
 // routes/platform.js
-// VERSION: 9.0 (Added AI Course Builder & Preserved FICA Dashboard)
-require('dotenv').config();
+// VERSION: 9.1 (Added Regulatory Compliance & LSO Dashboard)
+require('dotenv').config(); 
 
 const fs = require('fs');
 const { processAndImportCoursePDF } = require('../services/courseImporter');
@@ -92,7 +92,7 @@ function renderAdminPage(title, content, error = null) {
                 <a href="/admin/global-radar">🌍 Global Radar</a>
                 <a href="/admin/churches">🏢 Organizations</a>
                 <a href="/admin/fica">🛡️ FICA & KYB</a> 
-                <a href="/admin/global-collections">💰 Global Collections</a>
+                <a href="/admin/compliance">⚖️ Compliance & LSO</a> <a href="/admin/global-collections">💰 Global Collections</a>
                 <a href="/admin/course-builder">🤖 AI Course Builder</a>
                 <a href="/admin/events">🎟️ Events & Projects</a>
                 <a href="/admin/ads">📢 Broadcasts</a>
@@ -194,7 +194,74 @@ module.exports = function(app, { prisma }) {
     });
 
     // ============================================================
-    // 🎓 NEW: AI COURSE BUILDER (LMS)
+    // ⚖️ NEW: REGULATORY COMPLIANCE & LSO DASHBOARD
+    // ============================================================
+    app.get('/admin/compliance', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+
+        try {
+            // Fetch Regulatory Metrics
+            const txStats = await prisma.transaction.aggregate({
+                _sum: { amount: true },
+                _count: { id: true },
+                where: { status: 'SUCCESS' }
+            });
+
+            const totalVolume = txStats._sum.amount || 0;
+            const totalTx = txStats._count.id || 0;
+            const activeMandates = await prisma.member.count({ where: { status: 'ACTIVE_DEBIT_ORDER' } });
+            const kybOrgs = await prisma.church.count({ where: { ficaStatus: 'ACTIVE' } });
+
+            // Example PASA TPSO Threshold (Usually R50M/month or similar to require an independent license)
+            const lsoThreshold = 50000000; 
+            const progress = Math.min((totalVolume / lsoThreshold) * 100, 100).toFixed(2);
+
+            const content = `
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:20px; margin-bottom: 30px;">
+                    <div style="background:white; padding:20px; border-radius:8px; border-top: 4px solid #3498db; box-shadow:0 2px 5px rgba(0,0,0,0.05);">
+                        <h4 style="margin:0; color:#7f8c8d; font-size:12px; text-transform:uppercase;">Total Value Processed</h4>
+                        <h2 style="margin:10px 0 0 0; color:#2c3e50;">R ${totalVolume.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</h2>
+                    </div>
+                    <div style="background:white; padding:20px; border-radius:8px; border-top: 4px solid #2ecc71; box-shadow:0 2px 5px rgba(0,0,0,0.05);">
+                        <h4 style="margin:0; color:#7f8c8d; font-size:12px; text-transform:uppercase;">Successful Transactions</h4>
+                        <h2 style="margin:10px 0 0 0; color:#2c3e50;">${totalTx}</h2>
+                    </div>
+                    <div style="background:white; padding:20px; border-radius:8px; border-top: 4px solid #f39c12; box-shadow:0 2px 5px rgba(0,0,0,0.05);">
+                        <h4 style="margin:0; color:#7f8c8d; font-size:12px; text-transform:uppercase;">Active DebiCheck Mandates</h4>
+                        <h2 style="margin:10px 0 0 0; color:#2c3e50;">${activeMandates}</h2>
+                    </div>
+                    <div style="background:white; padding:20px; border-radius:8px; border-top: 4px solid #9b59b6; box-shadow:0 2px 5px rgba(0,0,0,0.05);">
+                        <h4 style="margin:0; color:#7f8c8d; font-size:12px; text-transform:uppercase;">KYB Verified Partners</h4>
+                        <h2 style="margin:10px 0 0 0; color:#2c3e50;">${kybOrgs}</h2>
+                    </div>
+                </div>
+
+                <div class="card-form" style="max-width:100%; margin-bottom:30px;">
+                    <h3 style="margin-top:0;">Licensed System Operator (LSO) Trajectory</h3>
+                    <p style="color:#7f8c8d; font-size:13px; line-height: 1.5;">
+                        Current regulatory status: <strong>Operating under Third-Party Payment Provider (TPPP) Exemption via Netcash.</strong><br>
+                        Once platform volume reaches PASA thresholds, Seabe Digital will require direct licensing.
+                    </p>
+                    <div style="background:#ecf0f1; border-radius:10px; height:24px; width:100%; overflow:hidden; margin: 20px 0; border: 1px solid #ddd;">
+                        <div style="background:linear-gradient(90deg, #3498db, #2ecc71); width:${progress}%; height:100%; transition:1s; display:flex; align-items:center; justify-content:flex-end; padding-right:10px; color:white; font-size:11px; font-weight:bold;">
+                            ${progress}%
+                        </div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:12px; color:#7f8c8d; font-weight:bold;">
+                        <span>R0</span>
+                        <span>Threshold Target: R50,000,000</span>
+                    </div>
+                </div>
+            `;
+
+            res.send(renderAdminPage('Regulatory Compliance', content));
+        } catch (error) {
+            res.send(renderAdminPage('Regulatory Compliance', '', error.message));
+        }
+    });
+
+    // ============================================================
+    // 🎓 AI COURSE BUILDER (LMS)
     // ============================================================
     app.get('/admin/course-builder', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
@@ -472,13 +539,13 @@ module.exports = function(app, { prisma }) {
 
             console.log(`🏦 Provisioning NetCash account for ${org.name}...`);
 
-            // 1. Map data for NetCash API (using fallbacks to prevent crashes if fields are missing)
+            // 1. Map data for NetCash API
             const netcashData = {
                 name: org.name,
                 adminName: org.contactPerson || 'Admin',
                 email: org.officialEmail || org.email || 'admin@seabe.tech',
                 phone: org.adminPhone || org.phone || '0000000000',
-                bankName: org.bankName || 'Standard Bank', // Ensure these fields exist in your Prisma schema!
+                bankName: org.bankName || 'Standard Bank', 
                 branchCode: org.branchCode || '051001',
                 accountNumber: org.accountNumber || '0000000000'
             };
@@ -495,7 +562,7 @@ module.exports = function(app, { prisma }) {
                         ficaStatus: 'ACTIVE',
                         netcashMerchantId: netcashResponse.MerchantId,
                         netcashPayNowKey: netcashResponse.PayNowKey,
-                        subaccountCode: netcashResponse.PayNowKey // Maps to your dashboard UI
+                        subaccountCode: netcashResponse.PayNowKey 
                     }
                 });
 
@@ -562,7 +629,7 @@ module.exports = function(app, { prisma }) {
                     <a href="/admin/churches/add" class="btn btn-primary" style="background:#00d2d3; color:black;">+ New Organization</a>
                 </div>
                 <table>
-                    <thead><tr><th>Organization</th><th>Type</th><th>Code</th><th>Paystack</th><th style="text-align:right;">Actions</th></tr></thead>
+                    <thead><tr><th>Organization</th><th>Type</th><th>Code</th><th>Gateway</th><th style="text-align:right;">Actions</th></tr></thead>
                     <tbody>${rows.length > 0 ? rows : '<tr><td colspan="5" style="text-align:center; padding:30px;">No results found.</td></tr>'}</tbody>
                 </table>
             `));
@@ -589,7 +656,7 @@ module.exports = function(app, { prisma }) {
                     <div class="form-group"><label>Premium/Fee (R)</label><input type="number" name="defaultPremium" value="150"></div>
                     <div class="form-group"><label>Platform Sub Fee (R)</label><input type="number" name="subscriptionFee" value="0"></div>
                 </div>
-                <div class="form-group"><label>Paystack Code</label><input name="subaccount"></div>
+                <div class="form-group"><label>Gateway/PayNow Code</label><input name="subaccount"></div>
                 <button class="btn btn-primary" style="width:100%">Create Organization</button>
             </form>
         `));
@@ -621,7 +688,7 @@ module.exports = function(app, { prisma }) {
                     <div class="form-group"><label>Premium</label><input name="defaultPremium" value="${c.defaultPremium}"></div>
                     <div class="form-group"><label>Sub Fee</label><input name="subscriptionFee" value="${c.subscriptionFee}"></div>
                 </div>
-                <div class="form-group"><label>Paystack</label><input name="subaccount" value="${c.subaccountCode||''}"></div>
+                <div class="form-group"><label>Gateway Code</label><input name="subaccount" value="${c.subaccountCode||''}"></div>
                 <button class="btn btn-primary">Update Organization</button>
             </form>
         `));
