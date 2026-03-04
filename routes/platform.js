@@ -1,5 +1,5 @@
 // routes/platform.js
-// VERSION: 9.1 (Added Regulatory Compliance & LSO Dashboard)
+// VERSION: 9.2 (Added Pricing Engine)
 require('dotenv').config(); 
 
 const fs = require('fs');
@@ -73,6 +73,7 @@ function renderAdminPage(title, content, error = null) {
                 .btn-primary { background: #1e272e; color: white; }
                 .btn-primary:hover { background: #00d2d3; color: #1e272e; }
                 .btn-edit { background: #dfe6e9; color: #2d3436; }
+                .btn-save { background: #2ecc71; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; }
                 .btn-danger { background: #ffebee; color: #c0392b; }
                 .btn-collection { background: #c0392b; color: white; margin-left:5px; }
                 .btn-collection:hover { background: #e74c3c; }
@@ -83,6 +84,9 @@ function renderAdminPage(title, content, error = null) {
                 .form-group label { display: block; margin-bottom: 8px; font-weight: bold; color: #1e272e; font-size: 12px; text-transform: uppercase; }
                 .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; font-family: inherit; }
                 .search-bar { display: flex; gap: 10px; margin-bottom: 20px; align-items: center; }
+                
+                /* Pricing Input */
+                .price-input { padding: 6px; width: 80px; border: 1px solid #ccc; border-radius: 4px; text-align:right; font-weight:bold; }
             </style>
         </head>
         <body>
@@ -91,8 +95,9 @@ function renderAdminPage(title, content, error = null) {
                 <a href="/admin">📊 Dashboard</a>
                 <a href="/admin/global-radar">🌍 Global Radar</a>
                 <a href="/admin/churches">🏢 Organizations</a>
-                <a href="/admin/fica">🛡️ FICA & KYB</a> 
-                <a href="/admin/compliance">⚖️ Compliance & LSO</a> <a href="/admin/global-collections">💰 Global Collections</a>
+                <a href="/admin/pricing">🏷️ Pricing Engine</a> <a href="/admin/fica">🛡️ FICA & KYB</a> 
+                <a href="/admin/compliance">⚖️ Compliance & LSO</a>
+                <a href="/admin/global-collections">💰 Global Collections</a>
                 <a href="/admin/course-builder">🤖 AI Course Builder</a>
                 <a href="/admin/events">🎟️ Events & Projects</a>
                 <a href="/admin/ads">📢 Broadcasts</a>
@@ -175,6 +180,80 @@ module.exports = function(app, { prisma }) {
             res.send(renderAdminPage('Dashboard', '', `Database Error: ${e.message}`));
         }
     });
+
+    // ============================================================
+    // 🏷️ NEW: PRICING ENGINE DASHBOARD
+    // ============================================================
+    app.get('/admin/pricing', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+
+        try {
+            // Fetch prices from DB (The Self-Healing service ensures they exist)
+            const prices = await prisma.servicePrice.findMany({ orderBy: { code: 'asc' } });
+            
+            const rows = prices.map(p => `
+                <tr>
+                    <td>
+                        <span style="font-family:monospace; font-weight:bold; background:#edf2f7; padding:4px 8px; border-radius:4px; color:#2d3748;">${p.code}</span>
+                    </td>
+                    <td style="color:#718096; font-size:13px;">${p.description || 'Standard Fee'}</td>
+                    <td>
+                        <form action="/admin/pricing/update" method="POST" style="display:flex; align-items:center; gap:5px; margin:0;">
+                            <input type="hidden" name="code" value="${p.code}">
+                            <span style="color:#718096; font-size:14px;">R</span>
+                            <input type="number" step="0.01" name="amount" class="price-input" value="${Number(p.amount).toFixed(2)}">
+                            <button type="submit" class="btn-save">Update</button>
+                        </form>
+                    </td>
+                    <td style="font-size:12px; color:#a0aec0;">${new Date(p.updatedAt).toLocaleDateString()}</td>
+                </tr>
+            `).join('');
+
+            const content = `
+                <div class="card-form" style="max-width:100%;">
+                    <p style="color:#7f8c8d; margin-top:-10px; margin-bottom:20px;">
+                        Manage the base costs for services across the platform. <br>
+                        <em>Note: Updates take up to 5 minutes to reflect in the WhatsApp bot due to caching.</em>
+                    </p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Service Code</th>
+                                <th>Description</th>
+                                <th>Price (ZAR)</th>
+                                <th>Last Updated</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows || '<tr><td colspan="4" style="text-align:center; padding:20px;">No pricing data found. Run the bot once to seed defaults.</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            res.send(renderAdminPage('Pricing Engine', content));
+
+        } catch (e) {
+            res.send(renderAdminPage('Pricing Engine', '', `Error loading pricing: ${e.message}`));
+        }
+    });
+
+    // POST: Update Price
+    app.post('/admin/pricing/update', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        
+        try {
+            const { code, amount } = req.body;
+            await prisma.servicePrice.update({
+                where: { code: code },
+                data: { amount: parseFloat(amount) }
+            });
+            res.redirect('/admin/pricing');
+        } catch (e) {
+            res.send(renderAdminPage('Pricing Error', '', e.message));
+        }
+    });
+
 
     // --- GLOBAL FRAUD & CLAIMS RADAR (IFRAME) ---
     app.get('/admin/global-radar', async (req, res) => {
