@@ -4,7 +4,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-// 1. 🛡️ Master Default Prices (Everything in ONE object)
+// 1. 🛡️ Master Default Prices (One single source of truth)
 const DEFAULT_PRICES = {
     // --- Platform Service Fees ---
     'KYC_CHECK': 5.00,
@@ -44,17 +44,18 @@ const CACHE_DURATION = 5 * 60 * 1000; // 5 Minutes
 
 /**
  * Syncs the Database with the code. 
+ * If a key exists here but NOT in the DB, it adds it automatically.
  */
 async function loadPrices() {
     const now = Date.now();
-    // Cache check: Skip if fresh
-    if (now - lastCacheTime < CACHE_DURATION && Object.keys(priceCache).length > 10) return;
+    // Cache check: Skip if fresh (and cache is mostly populated)
+    if (now - lastCacheTime < CACHE_DURATION && Object.keys(priceCache).length > 15) return;
 
     try {
         const dbPrices = await prisma.servicePrice.findMany();
         const dbKeys = dbPrices.map(p => p.code);
 
-        // A. Seed missing keys
+        // A. Seed missing keys individually
         for (const [code, amount] of Object.entries(DEFAULT_PRICES)) {
             if (!dbKeys.includes(code)) {
                 console.log(`🌱 [PRICING] Seeding missing key: ${code}`);
@@ -64,11 +65,11 @@ async function loadPrices() {
                         amount: amount,
                         description: `Auto-generated price for ${code}`
                     }
-                }).catch(() => {}); 
+                }).catch(() => {}); // Safety catch
             }
         }
 
-        // B. Update Cache
+        // B. Update Cache with DB values
         const updatedDbPrices = await prisma.servicePrice.findMany();
         updatedDbPrices.forEach(p => {
             priceCache[p.code] = Number(p.amount);
@@ -80,13 +81,18 @@ async function loadPrices() {
     }
 }
 
+/**
+ * Main accessor function used system-wide
+ */
 async function getPrice(code) {
     await loadPrices(); 
     const price = priceCache[code];
+    
     if (price === undefined) {
         console.error(`❌ [PRICING] Unknown Code '${code}'. returning R0.00`);
         return 0.00;
     }
+    
     return price;
 }
 
