@@ -4,7 +4,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-// 1. 🛡️ Master Default Prices
+// 1. 🛡️ Master Default Prices (Everything in ONE object)
 const DEFAULT_PRICES = {
     // --- Platform Service Fees ---
     'KYC_CHECK': 5.00,
@@ -28,13 +28,13 @@ const DEFAULT_PRICES = {
     'TX_RETAIL_WH_PCT': 0.039,    
     'TX_RETAIL_WH_FLAT': 8.00,
     'TX_RETAIL_RT_PCT': 0.050,    
-    'TX_RETAIL_RT_FLAT': 3.00  
+    'TX_RETAIL_RT_FLAT': 3.00,
 
-	// Add these to the DEFAULT_PRICES object in services/pricing.js
-	'MOD_LMS_PCT': 0.10,
-	'MOD_LMS_MIN': 5.00,
-	'MOD_REST_FLAT': 3.00,
-	'MOD_RETAIL_FLAT': 1.50	
+    // --- Module Surcharges (LMS, Restaurant, etc) ---
+    'MOD_LMS_PCT': 0.10,
+    'MOD_LMS_MIN': 5.00,
+    'MOD_REST_FLAT': 3.00,
+    'MOD_RETAIL_FLAT': 1.50
 };
 
 // In-memory cache
@@ -44,17 +44,17 @@ const CACHE_DURATION = 5 * 60 * 1000; // 5 Minutes
 
 /**
  * Syncs the Database with the code. 
- * If a key exists in DEFAULT_PRICES but NOT in the DB, it adds it.
  */
 async function loadPrices() {
     const now = Date.now();
-    if (now - lastCacheTime < CACHE_DURATION && Object.keys(priceCache).length > 5) return;
+    // Cache check: Skip if fresh
+    if (now - lastCacheTime < CACHE_DURATION && Object.keys(priceCache).length > 10) return;
 
     try {
         const dbPrices = await prisma.servicePrice.findMany();
         const dbKeys = dbPrices.map(p => p.code);
 
-        // A. Check for missing keys in DB and seed them
+        // A. Seed missing keys
         for (const [code, amount] of Object.entries(DEFAULT_PRICES)) {
             if (!dbKeys.includes(code)) {
                 console.log(`🌱 [PRICING] Seeding missing key: ${code}`);
@@ -64,11 +64,11 @@ async function loadPrices() {
                         amount: amount,
                         description: `Auto-generated price for ${code}`
                     }
-                }).catch(() => {}); // Prevent crash on race conditions
+                }).catch(() => {}); 
             }
         }
 
-        // B. Update Cache with current DB values
+        // B. Update Cache
         const updatedDbPrices = await prisma.servicePrice.findMany();
         updatedDbPrices.forEach(p => {
             priceCache[p.code] = Number(p.amount);
@@ -80,20 +80,14 @@ async function loadPrices() {
     }
 }
 
-/**
- * Get the current price for a service code.
- */
 async function getPrice(code) {
     await loadPrices(); 
     const price = priceCache[code];
-    
     if (price === undefined) {
         console.error(`❌ [PRICING] Unknown Code '${code}'. returning R0.00`);
         return 0.00;
     }
-    
     return price;
 }
 
-// Export at the very bottom
 module.exports = { getPrice };
