@@ -3,6 +3,7 @@ const cron = require('node-cron');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const sgMail = require('@sendgrid/mail'); 
+const { calculateTransaction } = require('./pricingEngine'); // 🚀 INJECTED PRICING ENGINE
 
 // Ensure SendGrid is configured
 if (process.env.SENDGRID_API_KEY) {
@@ -55,16 +56,31 @@ const startWeeklyReportEngine = () => {
                         orderBy: { createdAt: 'desc' }
                     });
 
-                    // --- BUILD TRANSACTION CSV ---
-                    let txCsv = "Date,Phone,Type,Amount,Reference\n";
-                    let totalRevenue = 0;
+                    // --- BUILD TRANSACTION CSV (NOW WITH PRICING ENGINE) ---
+                    let txCsv = "Date,Phone,Type,Gross (User Paid),Platform/Gateway Fees,Net Settlement,Reference\n";
+                    let totalGross = 0;
+                    let totalFees = 0;
+                    let totalNet = 0;
                     
                     transactions.forEach(t => {
+                        // 1. Determine who pays the fee based on the transaction type
+                        let passFeesToUser = true;
+                        if (['DONATION', 'OFFERING', 'TITHE'].includes(t.type)) {
+                            passFeesToUser = false; // Charities absorb the fee
+                        }
+
+                        // 2. Run it through the pricing engine
+                        const pricing = calculateTransaction(t.amount, 'STANDARD', 'DEFAULT', passFeesToUser);
+
                         const dateStr = t.date.toISOString().split('T')[0];
-                        txCsv += `${dateStr},${t.phone},${t.type},${t.amount.toFixed(2)},${t.reference}\n`;
-                        totalRevenue += parseFloat(t.amount);
+                        txCsv += `${dateStr},${t.phone},${t.type},R${pricing.totalChargedToUser.toFixed(2)},R${pricing.totalFees.toFixed(2)},R${pricing.settlementToMerchant.toFixed(2)},${t.reference}\n`;
+                        
+                        totalGross += pricing.totalChargedToUser;
+                        totalFees += pricing.totalFees;
+                        totalNet += pricing.settlementToMerchant;
                     });
-                    txCsv += `\nTOTAL,,,${totalRevenue.toFixed(2)},`;
+                    
+                    txCsv += `\nTOTALS,,,R${totalGross.toFixed(2)},R${totalFees.toFixed(2)},R${totalNet.toFixed(2)},\n`;
 
                     // --- BUILD CLAIMS CSV ---
                     let claimCsv = "Date Logged,Deceased ID,Claimant Phone,Status,AI Confidence\n";
@@ -75,9 +91,11 @@ const startWeeklyReportEngine = () => {
 
                     // --- ASSEMBLE EMAIL ---
                     let emailText = `Happy Friday!\n\nAttached is your automated weekly summary for ${org.name} covering the period of ${oneWeekAgo.toLocaleDateString()} to ${today.toLocaleDateString()}.\n\n`;
-                    emailText += `💰 Total Revenue Collected: R${totalRevenue.toFixed(2)}\n`;
+                    emailText += `💰 Total Gross Processed: R${totalGross.toFixed(2)}\n`;
+                    emailText += `📉 Gateway & Platform Fees: R${totalFees.toFixed(2)}\n`;
+                    emailText += `🏦 Net Settlement Expected: R${totalNet.toFixed(2)}\n\n`;
                     emailText += `📑 New Claims Logged: ${claims.length}\n\n`;
-                    emailText += `Thank you for using Seabe!`;
+                    emailText += `Thank you for using Seabe Digital!`;
 
                     const attachments = [];
 
@@ -104,7 +122,7 @@ const startWeeklyReportEngine = () => {
                     const msg = {
                         to: org.email,
                         from: process.env.EMAIL_FROM || 'admin@seabe.tech', // Make sure this matches your SendGrid verified sender!
-                        subject: `📊 Weekly Summary & Payout Report: ${org.name}`,
+                        subject: `📊 Weekly Summary & Settlement Report: ${org.name}`,
                         text: emailText,
                         attachments: attachments
                     };
