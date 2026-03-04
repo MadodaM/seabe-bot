@@ -4,7 +4,41 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { sendWhatsApp } = require('../services/whatsapp'); 
-const axios = require('axios'); // 🚀 NEW: Required for Netcash API calls
+const axios = require('axios');
+
+// ==========================================
+// 🛠️ HELPER: SA ID LUHN VALIDATOR
+// ==========================================
+function isValidSAID(idNumber) {
+    if (!/^\d{13}$/.test(idNumber)) return false;
+    let sum = 0;
+    let isEven = false;
+    for (let i = idNumber.length - 1; i >= 0; i--) {
+        let digit = parseInt(idNumber.charAt(i), 10);
+        if (isEven) {
+            digit *= 2;
+            if (digit > 9) digit -= 9;
+        }
+        sum += digit;
+        isEven = !isEven;
+    }
+    return (sum % 10) === 0;
+}
+
+// ==========================================
+// 🛠️ HELPER: DYNAMIC COLLECTION DATE
+// ==========================================
+function getNextCollectionDate() {
+    const now = new Date();
+    let year = now.getFullYear();
+    let month = now.getMonth() + 2; // +1 for next month, +1 because JS months are 0-indexed
+    if (month > 12) {
+        month = 1;
+        year += 1;
+    }
+    const paddedMonth = month.toString().padStart(2, '0');
+    return `${year}${paddedMonth}01`; // Formats as YYYYMMDD for Netcash
+}
 
 // ==========================================
 // 1. SERVE THE SECURE MANDATE FORM (UI)
@@ -97,6 +131,17 @@ router.post('/submit', express.urlencoded({ extended: true }), async (req, res) 
     try {
         console.log(`💳 Initiating DebiCheck TT1 Push for ${phone}...`);
         
+        // 🚀 PRE-FLIGHT CHECK: Validate SA ID Number
+        if (!isValidSAID(idNumber)) {
+            return res.send(`
+                <div style="font-family: sans-serif; text-align: center; padding: 50px;">
+                    <h2 style="color: #ef4444;">❌ Invalid ID Number</h2>
+                    <p>The ID number provided is not a valid South African ID. The bank will reject this mandate.</p>
+                    <button onclick="window.history.back()" style="padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 5px; cursor: pointer;">Go Back and Fix</button>
+                </div>
+            `);
+        }
+
         // 1. Clean data for Netcash
         let cleanPhone = phone.replace(/\D/g, '');
         let cleanPhoneForDB = cleanPhone;
@@ -118,6 +163,9 @@ router.post('/submit', express.urlencoded({ extended: true }), async (req, res) 
         // Map Account Type (1 = Current/Cheque, 2 = Savings)
         const accTypeCode = accountType === 'Cheque' ? '1' : '2';
 
+        // 🚀 DYNAMIC DATE CALCULATION
+        const collectionDate = getNextCollectionDate();
+
         // 2. Build the Netcash TT1 XML Payload
         const xmlPayload = `
             <DebiCheckAuthenticate>
@@ -126,7 +174,7 @@ router.post('/submit', express.urlencoded({ extended: true }), async (req, res) 
                     <AccountReference>${cleanPhone}</AccountReference>
                     <DebiCheckMandateTemplateId>${process.env.NETCASH_DEBICHECK_TEMPLATE_ID || 'TEST_TEMPLATE'}</DebiCheckMandateTemplateId>
                     <IsIdNumber>1</IsIdNumber>
-                    <DebtorIdentification>${idNumber || '0000000000000'}</DebtorIdentification>
+                    <DebtorIdentification>${idNumber}</DebtorIdentification>
                     <AccountName>${accountName}</AccountName>
                     <BankAccountName>${accountName}</BankAccountName>
                     <BranchCode>${branchCode}</BranchCode>
@@ -136,7 +184,7 @@ router.post('/submit', express.urlencoded({ extended: true }), async (req, res) 
                     <CollectionAmount>${cleanAmount}</CollectionAmount>
                     <FirstCollectionDiffers>0</FirstCollectionDiffers>
                     <FirstCollectionAmount>${cleanAmount}</FirstCollectionAmount>
-                    <FirstCollectionDate>20260401</FirstCollectionDate>
+                    <FirstCollectionDate>${collectionDate}</FirstCollectionDate>
                     <collectionDayCode>01</collectionDayCode>
                 </MethodParameters>
             </DebiCheckAuthenticate>
