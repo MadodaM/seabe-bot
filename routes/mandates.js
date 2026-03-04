@@ -26,18 +26,33 @@ function isValidSAID(idNumber) {
 }
 
 // ==========================================
-// 🛠️ HELPER: DYNAMIC COLLECTION DATE
+// 🛠️ HELPER: DYNAMIC COLLECTION DATE (WITH BANK LEAD TIME)
 // ==========================================
-function getNextCollectionDate() {
+function getNextCollectionDate(preferredDay) {
     const now = new Date();
     let year = now.getFullYear();
-    let month = now.getMonth() + 2; // +1 for next month, +1 because JS months are 0-indexed
+    let month = now.getMonth() + 1; // 1-12
+    let day = parseInt(preferredDay, 10);
+
+    // If they chose 31 (Last day of month), Netcash handles the leap year/short month logic, 
+    // but we need to generate a valid date for the FirstCollectionDate tag.
+    // So we safely default it to the 28th for the *First* collection just to guarantee it clears.
+    let targetDateDay = day === 31 ? 28 : day;
+
+    // Bank Lead Time Rule: If the chosen day is less than 5 days from today, 
+    // we MUST push the first collection to the NEXT month to avoid mandate failure.
+    if (targetDateDay <= now.getDate() + 5) {
+        month++;
+    }
+
     if (month > 12) {
         month = 1;
-        year += 1;
+        year++;
     }
+
     const paddedMonth = month.toString().padStart(2, '0');
-    return `${year}${paddedMonth}01`; // Formats as YYYYMMDD for Netcash
+    const paddedDay = targetDateDay.toString().padStart(2, '0');
+    return `${year}${paddedMonth}${paddedDay}`; // Formats as YYYYMMDD
 }
 
 // ==========================================
@@ -115,9 +130,17 @@ router.get('/sign', (req, res) => {
                         <option value="Cheque">Cheque / Current</option>
                     </select>
 
+                    <label>Preferred Deduction Day</label>
+                    <select name="collectionDay" required>
+                        <option value="1">1st of the month</option>
+                        <option value="15">15th of the month</option>
+                        <option value="25">25th of the month</option>
+                        <option value="31">Last day of the month</option>
+                    </select>
+
                     <div class="terms">
                         <input type="checkbox" required id="agree"> 
-                        <label for="agree" style="display:inline; text-transform:none; color:#1e293b;">I authorize Netcash and the above organization to deduct the specified amount from my account on the 1st of every month.</label>
+                        <label for="agree" style="display:inline; text-transform:none; color:#1e293b;">I authorize Netcash and the above organization to deduct the specified amount from my account on my selected day every month.</label>
                     </div>
 
                     <button type="submit">🔒 Authenticate Mandate</button>
@@ -148,19 +171,19 @@ router.get('/sign', (req, res) => {
 // 2. PROCESS THE MANDATE SUBMISSION (DEBICHECK TT1)
 // ==========================================
 router.post('/submit', express.urlencoded({ extended: true }), async (req, res) => {
-    const { phone, amount, org, accountName, idType, idNumber, bankName, accountNumber, accountType } = req.body;
+    // 🚀 NEW: Extract collectionDay from the form
+    const { phone, amount, org, accountName, idType, idNumber, bankName, accountNumber, accountType, collectionDay } = req.body;
 
     try {
         console.log(`💳 Initiating DebiCheck TT1 Push for ${phone}...`);
         
-        // 🚀 PRE-FLIGHT CHECK: Validate based on selected ID Type
         const isSAID = idType === 'SA_ID';
         
         if (isSAID && !isValidSAID(idNumber)) {
             return res.send(`
                 <div style="font-family: sans-serif; text-align: center; padding: 50px;">
                     <h2 style="color: #ef4444;">❌ Invalid ID Number</h2>
-                    <p>The ID number provided is not a valid South African ID. The bank will reject this mandate.</p>
+                    <p>The ID number provided is not a valid South African ID.</p>
                     <button onclick="window.history.back()" style="padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 5px; cursor: pointer;">Go Back and Fix</button>
                 </div>
             `);
@@ -174,31 +197,29 @@ router.post('/submit', express.urlencoded({ extended: true }), async (req, res) 
             `);
         }
 
-        // 1. Clean data for Netcash
         let cleanPhone = phone.replace(/\D/g, '');
         let cleanPhoneForDB = cleanPhone;
         if (cleanPhone.length === 10 && cleanPhone.startsWith('0')) {
             cleanPhoneForDB = '27' + cleanPhone.substring(1);
         } else if (cleanPhone.startsWith('27')) {
-            cleanPhone = '0' + cleanPhone.substring(2); // Netcash XML prefers local 082... format for mobile
+            cleanPhone = '0' + cleanPhone.substring(2);
         }
         
         const cleanAmount = parseFloat(amount).toFixed(2);
         
-        // Map Banks to Universal Branch Codes
         const branchCodes = {
             'Capitec': '470010', 'FNB': '250655', 'Standard Bank': '051001', 
             'Absa': '632005', 'Nedbank': '198765', 'TymeBank': '678910', 'African Bank': '430000'
         };
         const branchCode = branchCodes[bankName] || '000000';
         
-        // Map Account Type
         const accTypeCode = accountType === 'Cheque' ? '1' : '2';
 
-        // Dynamic Date
-        const collectionDate = getNextCollectionDate();
+        // 🚀 DYNAMIC DATE CALCULATIONS
+        const parsedCollectionDay = parseInt(collectionDay, 10);
+        const firstCollectionDateStr = getNextCollectionDate(parsedCollectionDay);
+        const dayCodeForNetcash = parsedCollectionDay.toString().padStart(2, '0');
         
-        // 🚀 DYNAMIC IS_ID_NUMBER FLAG FOR NETCASH
         const isIdNumberFlag = isSAID ? '1' : '0';
 
         // 2. Build the Netcash TT1 XML Payload
@@ -219,13 +240,13 @@ router.post('/submit', express.urlencoded({ extended: true }), async (req, res) 
                     <CollectionAmount>${cleanAmount}</CollectionAmount>
                     <FirstCollectionDiffers>0</FirstCollectionDiffers>
                     <FirstCollectionAmount>${cleanAmount}</FirstCollectionAmount>
-                    <FirstCollectionDate>${collectionDate}</FirstCollectionDate>
-                    <collectionDayCode>01</collectionDayCode>
+                    <FirstCollectionDate>${firstCollectionDateStr}</FirstCollectionDate>
+                    <collectionDayCode>${dayCodeForNetcash}</collectionDayCode>
                 </MethodParameters>
             </DebiCheckAuthenticate>
         `;
 
-        // 3. Fire to Netcash API (NIWS_NIF endpoint)
+        // 3. Fire to Netcash API
         const netcashResponse = await axios.post('https://ws.netcash.co.za/NIWS/NIWS_NIF.svc', xmlPayload, {
             headers: { 'Content-Type': 'text/xml' }
         });
@@ -233,12 +254,16 @@ router.post('/submit', express.urlencoded({ extended: true }), async (req, res) 
         // 4. Handle Response
         if (netcashResponse.data.includes('<ErrorCode>000</ErrorCode>')) {
             
+            // 🚀 NEW: Save the user's chosen collectionDay to Prisma so the daily cron can find them!
             await prisma.member.updateMany({
                 where: { phone: cleanPhoneForDB }, 
-                data: { status: 'PENDING_MANDATE' }
+                data: { 
+                    status: 'PENDING_MANDATE',
+                    collectionDay: parsedCollectionDay // Save 1, 15, 25, or 31 to the DB
+                }
             });
 
-            const promptMsg = `📱 *DebiCheck Request Sent*\n\nWe have requested authorization for your R${cleanAmount} monthly mandate.\n\n*Action Required:*\nPlease open your ${bankName} app now or check for a pop-up on your phone to approve the mandate!`;
+            const promptMsg = `📱 *DebiCheck Request Sent*\n\nWe have requested authorization for your monthly mandate of R${cleanAmount}.\n\n*Action Required:*\nPlease open your ${bankName} app now or check for a pop-up on your phone to approve the mandate!`;
             await sendWhatsApp(cleanPhoneForDB, promptMsg);
 
             res.send(`
