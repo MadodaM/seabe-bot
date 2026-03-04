@@ -1,5 +1,5 @@
 // ==========================================
-// bots/societyBot.js - Burial Society Logic Handler (With Dynamic Billing)
+// bots/societyBot.js - Burial Society Logic Handler (Final Production Version)
 // ==========================================
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -16,12 +16,12 @@ if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
     twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 }
 
-// Upgraded to handle Media URLs!
+// Helper: Send WhatsApp Message (Text or Media)
 const sendWhatsApp = async (to, body, mediaUrl = null) => {
     if (!twilioClient) return console.log("⚠️ Twilio Keys Missing!");
     const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
     
-    // 🛡️ Ensure to is a clean Twilio string
+    // 🛡️ Ensure 'to' is a clean Twilio string
     let cleanTo = to.replace(/\D/g, '');
     if (cleanTo.startsWith('0')) cleanTo = '27' + cleanTo.substring(1);
     
@@ -44,9 +44,7 @@ const sendWhatsApp = async (to, body, mediaUrl = null) => {
 
 const gateway = netcash;
 
-// 💰 NEW: Billing Helper (Now requires Phone)
-// bots/societyBot.js
-
+// 💰 BILLING HELPER (Fixed for Single Table Organizations)
 async function chargeSociety(societyId, churchId, phone, amount, type, description) {
     try {
         if (!societyId && !churchId) return; 
@@ -64,19 +62,20 @@ async function chargeSociety(societyId, churchId, phone, amount, type, descripti
             description: description,
             phone: phone, 
             
-            // ✅ FIX: Use 'date' (not createdAt)
+            // ✅ FIX: Use 'date' (matches Schema)
             date: new Date(),
             
-            // ✅ FIX: ONLY connect 'church' (Because all Orgs live in the Church table)
+            // ✅ FIX: ONLY connect 'church' (matches Schema)
             church: { 
                 connect: { id: Number(validOrgId) } 
             }
         };
 
-        // ❌ REMOVED: The 'society' connection block (since it doesn't exist on Transaction)
+        // We DO NOT connect 'society' here because the database schema 
+        // treats all organizations as 'Church' entities for billing.
 
         await prisma.transaction.create({ data: transactionData });
-        console.log(`💰 [BILLING] Charged Org #${validOrgId} R${amount}`);
+        console.log(`💰 [BILLING] Charged Org #${validOrgId} R${amount} for ${type}`);
 
     } catch (e) {
         console.error("❌ Billing Error:", e);
@@ -89,14 +88,14 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
     const orgName = session.orgName || (member?.church ? member.church.name : (member?.society ? member.society.name : "Burial Society"));
     const orgCode = session.orgCode || member?.churchCode || member?.societyCode;
     const societyId = member?.societyId || 1; // Default to ID 1 if null (Pilot Society)
-	// If member.churchId is null, we assume the society IS the church entity, so we use societyId as churchId
+    // If member.churchId is null, we assume the society IS the church entity
     const churchId = member?.churchId || member?.society?.churchId || 1;
 
     try {
         // 1. MENU TRIGGER
         const societyTriggers = ['society', 'policy', 'funeral', 'palour', 'menu', 'hi', 'hello'];
         
-        if (societyTriggers.includes(incomingMsg.toLowerCase()) && !['ADD_DEP_NAME', 'ADD_DEP_RELATION', 'PROFILE_MENU', 'UPDATE_NAME', 'UPDATE_EMAIL', 'CONFIRM_UNLINK', 'PAYMENT_OPTIONS', 'KYC_INPUT'].includes(session.step)) {
+        if (societyTriggers.includes(incomingMsg.toLowerCase()) && !['ADD_DEP_NAME', 'ADD_DEP_RELATION', 'PROFILE_MENU', 'UPDATE_NAME', 'UPDATE_EMAIL', 'CONFIRM_UNLINK', 'PAYMENT_OPTIONS', 'KYC_INPUT', 'AWAITING_CLAIM_DOCUMENT'].includes(session.step)) {
             session.step = 'SOCIETY_MENU';
             reply = `🛡️ *${orgName}*\n_Burial Society Portal_\n\n` +
                     `1. My Policy 📜\n` +
@@ -130,9 +129,8 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                 session.step = 'DEPENDENT_VIEW';
             }
 
-            // 🏦 OPTION 3: KYC COMPLIANCE (UPDATED FLOW)
+            // 🏦 OPTION 3: KYC COMPLIANCE
             else if (incomingMsg === '3') {
-                // We ask for ID input directly here to trigger billing
                 session.step = 'KYC_INPUT'; 
                 reply = `👤 *KYC Compliance*\n\nPlease enter the *ID Number* you want to verify (e.g., 8001015009087).\n\n_Note: A standard lookup fee applies to your society._`;
             }
@@ -214,10 +212,10 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                 reply = "❌ Invalid ID. Please enter a 13-digit SA ID number.";
             } else {
                 // 1. Fetch Dynamic Price
-				const kycCost = await getPrice('KYC_CHECK');
+                const kycCost = await getPrice('KYC_CHECK');
 
-				// 2. Charge the Society (Pass 'cleanPhone' as the 2nd argument)
-				await chargeSociety(societyId, churchId, cleanPhone, kycCost, 'KYC_FEE', `Identity Check: ${idToCheck}`);
+                // 2. Charge the Society (Pass 'cleanPhone' as the 2nd argument)
+                await chargeSociety(societyId, churchId, cleanPhone, kycCost, 'KYC_FEE', `Identity Check: ${idToCheck}`);
 
                 // 3. Generate Link (or result)
                 const host = process.env.HOST_URL || 'seabe-bot.onrender.com';
@@ -343,46 +341,45 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             }
         }
 
-        // 🚀 4. CLAIM UPLOAD LOGIC (WITH BILLING)
-		else if (session.step === 'AWAITING_CLAIM_DOCUMENT') {
-			
-			// 1. Check if they sent a photo (or a forwarded image)
-			const mediaUrl = incomingMsg.type === 'image' ? incomingMsg.url : session.tempMediaUrl; 
+        // 🚀 4. CLAIM UPLOAD LOGIC (WITH BILLING PRIORITY)
+        else if (session.step === 'AWAITING_CLAIM_DOCUMENT') {
+            
+            // Check if they sent a photo (or a forwarded image)
+            // If the router sends an object, use .url. If it's a forwarded session variable, use that.
+            const mediaUrl = (typeof incomingMsg === 'object' && incomingMsg.type === 'image') ? incomingMsg.url : session.tempMediaUrl; 
 
-			if (mediaUrl) {
-				
-				// 💰 BILLING TRIGGER START 💰
-				// We fetch the price and charge NOW because the AI is about to start work
-				try {
-					const claimCost = await getPrice('CLAIM_AI'); // Should be R10.00
-					
-					await chargeSociety(
-						societyId,       // The ID of the Society
-						churchId,        // The Organization ID (Critical for DB)
-						cleanPhone,      // User Phone
-						claimCost,       // Amount
-						'CLAIM_FEE',     // Transaction Type
-						'Forensic Death Claim Analysis' // Description
-					);
-					
-					console.log("✅ [BILLING] Charged for Claim Analysis");
-				} catch (err) {
-					console.error("⚠️ Billing Failed, but processing continues:", err);
-				}
-				// 💰 BILLING TRIGGER END 💰
+            if (mediaUrl) {
+                
+                // 💰 BILLING TRIGGER (HAPPENS FIRST)
+                try {
+                    const claimCost = await getPrice('CLAIM_AI'); 
+                    
+                    await chargeSociety(
+                        societyId,       // The ID of the Society
+                        churchId,        // The Organization ID
+                        cleanPhone,      // User Phone
+                        claimCost,       // Amount
+                        'CLAIM_FEE',     // Transaction Type
+                        'Forensic Death Claim Analysis' // Description
+                    );
+                    
+                    console.log("✅ [BILLING] Payment Secured. Proceeding to Scan.");
+                } catch (err) {
+                    console.error("⚠️ Billing warning:", err);
+                }
 
-				// 2. Reply to user
-				await sendWhatsApp(cleanPhone, `⏳ *Document Received*...\n\nAnalyzing forensic details now. This may take 10-20 seconds.`);
+                // 2. Reply to user
+                await sendWhatsApp(cleanPhone, `⏳ *Document Received*...\n\nAnalyzing forensic details now. This may take 10-20 seconds.`);
 
-				// 3. Start the actual AI processing
-				processTwilioClaim(cleanPhone, mediaUrl, orgCode);
-				
-				// 4. Reset step
-				session.step = null;
-			} else {
-				reply = "⚠️ Please upload a valid **photo** of the Death Certificate.";
-			}
-		}
+                // 3. Start the heavy AI (Now that we have been paid)
+                processTwilioClaim(cleanPhone, mediaUrl, orgCode);
+                
+                // 4. Reset step
+                session.step = null;
+            } else {
+                reply = "⚠️ Please upload a valid **photo** of the Death Certificate.";
+            }
+        }
 
         // --- FINAL SEND ---
         if (reply) {
