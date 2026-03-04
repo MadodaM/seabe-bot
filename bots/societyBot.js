@@ -341,37 +341,47 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             }
         }
 
-        // 🚀 4. CLAIM UPLOAD LOGIC (WITH BILLING PRIORITY)
+        // 🚀 4. CLAIM UPLOAD LOGIC (WITH ROBUST BILLING)
         else if (session.step === 'AWAITING_CLAIM_DOCUMENT') {
             
-            // Check if they sent a photo (or a forwarded image)
-            // If the router sends an object, use .url. If it's a forwarded session variable, use that.
-            const mediaUrl = (typeof incomingMsg === 'object' && incomingMsg.type === 'image') ? incomingMsg.url : session.tempMediaUrl; 
+            // Robust Media Detection: specific object OR string URL OR session var
+            let mediaUrl = session.tempMediaUrl;
+            if (!mediaUrl && typeof incomingMsg === 'object' && incomingMsg.type === 'image') mediaUrl = incomingMsg.url;
+            if (!mediaUrl && typeof incomingMsg === 'string' && incomingMsg.startsWith('http')) mediaUrl = incomingMsg;
 
             if (mediaUrl) {
                 
-                // 💰 BILLING TRIGGER (HAPPENS FIRST)
+                // 💰 BILLING TRIGGER (SAFETY NET ADDED)
                 try {
-                    const claimCost = await getPrice('CLAIM_AI'); 
+                    // 1. Try to get dynamic price, but Default to 10.00 if it fails
+                    let claimCost = 10.00; 
+                    try {
+                        const dynamicPrice = await getPrice('CLAIM_AI');
+                        if (dynamicPrice && !isNaN(dynamicPrice)) claimCost = dynamicPrice;
+                    } catch (pErr) {
+                        console.log("⚠️ Pricing service unavailable, using default R10.00");
+                    }
                     
+                    console.log(`💰 Attempting to charge R${claimCost}...`);
+
                     await chargeSociety(
-                        societyId,       // The ID of the Society
-                        churchId,        // The Organization ID
-                        cleanPhone,      // User Phone
-                        claimCost,       // Amount
-                        'CLAIM_FEE',     // Transaction Type
-                        'Forensic Death Claim Analysis' // Description
+                        societyId,       
+                        churchId,        
+                        cleanPhone,      
+                        claimCost,       
+                        'CLAIM_FEE',     
+                        'Forensic Death Claim Analysis'
                     );
                     
-                    console.log("✅ [BILLING] Payment Secured. Proceeding to Scan.");
+                    console.log("✅ [BILLING] Payment Secured.");
                 } catch (err) {
-                    console.error("⚠️ Billing warning:", err);
+                    console.error("🛑 BILLING FAILED (Check DB Logs):", err.message);
                 }
 
                 // 2. Reply to user
                 await sendWhatsApp(cleanPhone, `⏳ *Document Received*...\n\nAnalyzing forensic details now. This may take 10-20 seconds.`);
 
-                // 3. Start the heavy AI (Now that we have been paid)
+                // 3. Start the heavy AI
                 processTwilioClaim(cleanPhone, mediaUrl, orgCode);
                 
                 // 4. Reset step
