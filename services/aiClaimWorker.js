@@ -23,14 +23,22 @@ if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
 
 const sendWhatsApp = async (to, body) => {
     if (!twilioClient) return;
+    
+    // 🛡️ Bulletproof phone number cleaner for Twilio
+    let cleanTo = to.replace(/\D/g, ''); // Strip spaces and dashes
+    if (cleanTo.startsWith('0')) cleanTo = '27' + cleanTo.substring(1);
+    if (!cleanTo.startsWith('+')) cleanTo = '+' + cleanTo;
+
     try {
         await twilioClient.messages.create({
             from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '')}`,
-            to: `whatsapp:${to}`,
+            to: `whatsapp:${cleanTo}`,
             body: body
         });
-    } catch (e) { console.error("Worker Notify Error:", e.message); }
-};
+    } catch (e) { 
+        console.error("Worker Notify Error:", e.message); 
+    }
+}; 
 
 // ==========================================
 // UPGRADED processTwilioClaim (Fraud Engine)
