@@ -439,3 +439,12 @@ model TransactionLedger {
   updatedAt DateTime  @updatedAt
   settledAt DateTime? // When the money actually cleared to the merchant's bank
 }
+
+// 💰 NEW: Dynamic Pricing Catalog
+model ServicePrice {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique  // e.g. "KYC_CHECK", "CLAIM_AI", "SMS_NOTIF"
+  amount      Decimal  @default(0.00)
+  description String?
+  updatedAt   DateTime @updatedAt
+}

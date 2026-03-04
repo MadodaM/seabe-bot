@@ -1,13 +1,14 @@
 // ==========================================
-// bots/societyBot.js - Burial Society Logic Handler
+// bots/societyBot.js - Burial Society Logic Handler (With Dynamic Billing)
 // ==========================================
 const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient(); 
+const prisma = new PrismaClient();
 const netcash = require('../services/netcash');
 const { generatePolicyCard } = require('../services/cardGenerator');
 const { generateKYCLink } = require('../routes/kyc');
-const { calculateTransaction } = require('../services/pricingEngine'); 
-const { processTwilioClaim } = require('../services/aiClaimWorker'); // 🚀 AI WORKER IMPORTED HERE
+const { calculateTransaction } = require('../services/pricingEngine');
+const { processTwilioClaim } = require('../services/aiClaimWorker');
+const { getPrice } = require('../services/pricing'); // 🚀 NEW: Dynamic Pricing
 
 // Safely initialize Twilio for direct background messaging
 let twilioClient;
@@ -43,17 +44,40 @@ const sendWhatsApp = async (to, body, mediaUrl = null) => {
 
 const gateway = netcash;
 
+// 💰 NEW: Billing Helper
+async function chargeSociety(societyId, amount, type, description) {
+    try {
+        if (!societyId) return; // Safety check
+        await prisma.transaction.create({
+            data: {
+                amount: -amount, // Negative value reduces their payout
+                type: type,      // 'KYC_FEE' or 'CLAIM_FEE'
+                status: 'SUCCESS',
+                reference: `FEE-${Date.now()}`,
+                providerRef: 'INTERNAL',
+                description: description,
+                societyId: societyId,
+                createdAt: new Date()
+            }
+        });
+        console.log(`💰 [BILLING] Charged Society #${societyId} R${amount} for ${type}`);
+    } catch (e) {
+        console.error("❌ Billing Error:", e);
+    }
+}
+
 async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
     let reply = "";
     // Check both relation types depending on how they joined
     const orgName = session.orgName || (member?.church ? member.church.name : (member?.society ? member.society.name : "Burial Society"));
     const orgCode = session.orgCode || member?.churchCode || member?.societyCode;
+    const societyId = member?.societyId || 1; // Default to ID 1 if null (Pilot Society)
 
     try {
         // 1. MENU TRIGGER
         const societyTriggers = ['society', 'policy', 'funeral', 'palour', 'menu', 'hi', 'hello'];
         
-        if (societyTriggers.includes(incomingMsg.toLowerCase()) && !['ADD_DEP_NAME', 'ADD_DEP_RELATION', 'PROFILE_MENU', 'UPDATE_NAME', 'UPDATE_EMAIL', 'CONFIRM_UNLINK', 'PAYMENT_OPTIONS'].includes(session.step)) {
+        if (societyTriggers.includes(incomingMsg.toLowerCase()) && !['ADD_DEP_NAME', 'ADD_DEP_RELATION', 'PROFILE_MENU', 'UPDATE_NAME', 'UPDATE_EMAIL', 'CONFIRM_UNLINK', 'PAYMENT_OPTIONS', 'KYC_INPUT'].includes(session.step)) {
             session.step = 'SOCIETY_MENU';
             reply = `🛡️ *${orgName}*\n_Burial Society Portal_\n\n` +
                     `1. My Policy 📜\n` +
@@ -87,11 +111,11 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                 session.step = 'DEPENDENT_VIEW';
             }
 
-            // OPTION 3: KYC COMPLIANCE
+            // 🏦 OPTION 3: KYC COMPLIANCE (UPDATED FLOW)
             else if (incomingMsg === '3') {
-                const host = process.env.HOST_URL || 'seabe-bot-test.onrender.com';
-                const link = await generateKYCLink(cleanPhone, host, member.id);
-                reply = `👤 *KYC Compliance*\n\nPlease verify your identity to ensure your policy remains active (Valid for 24 hours):\n\n👉 ${link}`;
+                // We ask for ID input directly here to trigger billing
+                session.step = 'KYC_INPUT'; 
+                reply = `👤 *KYC Compliance*\n\nPlease enter the *ID Number* you want to verify (e.g., 8001015009087).\n\n_Note: A standard lookup fee applies to your society._`;
             }
 
             // OPTION 4: DIGITAL MEMBER CARD 🪪
@@ -100,21 +124,19 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
 
                 const orgData = member.church || member.society || { name: session.orgName };
                 const cardUrl = await generatePolicyCard(member, orgData);
-
-                const statusEmoji = member?.status === 'ACTIVE' ? '✅' : '🔴';
                 
-                reply = `🪪 *DIGITAL MEMBERSHIP CARD*\n\n` +
-                        `🏛️ *${orgName}*\n` +
-                        `👤 *Name:* ${member?.firstName || 'Member'} ${member?.lastName || ''}\n` +
-                        `💳 *Status:* ${member?.status || 'ACTIVE'} ${statusEmoji}\n\n` +
-                        `_Show this card to service providers for verification._\n\n` +
-                        `Reply *0* to go back.`;
-
                 if (cardUrl) {
+                    const statusEmoji = member?.status === 'ACTIVE' ? '✅' : '🔴';
+                    reply = `🪪 *DIGITAL MEMBERSHIP CARD*\n\n` +
+                            `🏛️ *${orgName}*\n` +
+                            `👤 *Name:* ${member?.firstName || 'Member'} ${member?.lastName || ''}\n` +
+                            `💳 *Status:* ${member?.status || 'ACTIVE'} ${statusEmoji}\n\n` +
+                            `_Show this card to service providers for verification._\n\n` +
+                            `Reply *0* to go back.`;
                     await sendWhatsApp(cleanPhone, reply, cardUrl);
                     reply = ""; 
                 } else {
-                    reply = "⚠️ Error generating image. " + reply; 
+                    reply = "⚠️ Error generating image."; 
                 }
             }
 
@@ -160,6 +182,30 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             else if (incomingMsg === '0') {
                 session.step = 'SOCIETY_MENU';
                 return handleSocietyMessage(cleanPhone, 'society', session, member);
+            }
+        }
+
+        // ==========================================
+        // 🏦 KYC PROCESSING STATE
+        // ==========================================
+        else if (session.step === 'KYC_INPUT') {
+            const idToCheck = incomingMsg.replace(/\D/g, '');
+            
+            if (idToCheck.length !== 13) {
+                reply = "❌ Invalid ID. Please enter a 13-digit SA ID number.";
+            } else {
+                // 1. Fetch Dynamic Price
+                const kycCost = await getPrice('KYC_CHECK');
+
+                // 2. Charge the Society
+                await chargeSociety(societyId, kycCost, 'KYC_FEE', `Identity Check: ${idToCheck}`);
+
+                // 3. Generate Link (or result)
+                const host = process.env.HOST_URL || 'seabe-bot.onrender.com';
+                const link = await generateKYCLink(cleanPhone, host, member.id);
+                
+                reply = `👤 *KYC Request Initiated*\n\nID: ${idToCheck}\n\n👉 Click here to complete verification:\n${link}\n\n_A fee of R${kycCost.toFixed(2)} has been billed to your society._\n\nReply *0* for menu.`;
+                session.step = 'SOCIETY_MENU';
             }
         }
 
@@ -278,7 +324,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             }
         }
 
-        // 🚀 4. CLAIM UPLOAD LOGIC (AI FORENSIC WORKER WIRED IN HERE!)
+        // 🚀 4. CLAIM UPLOAD LOGIC (WITH BILLING)
         else if (session.step === 'AWAITING_CLAIM_DOCUMENT') {
             // Your webhook should pass the Twilio Media URL into the session
             const mediaUrl = session.tempMediaUrl || incomingMsg; 
@@ -286,10 +332,16 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             if (!mediaUrl || !mediaUrl.startsWith('http')) {
                 reply = "⚠️ Please upload a *photo* or *document* of the Death Certificate.";
             } else {
-                // Send an immediate holding message
-                await sendWhatsApp(cleanPhone, "⏳ *Document Received!*\nOur Forensic AI is currently scanning the Death Certificate for verification. This will take about 10 seconds...");
+                // 1. Fetch Dynamic Price
+                const claimCost = await getPrice('CLAIM_AI');
 
-                // 🚀 Fire the background worker! (We do NOT await it here, so the bot doesn't hang)
+                // 2. Charge the Society
+                await chargeSociety(societyId, claimCost, 'CLAIM_FEE', 'Forensic Death Claim Analysis');
+
+                // 3. Send Holding Message
+                await sendWhatsApp(cleanPhone, `⏳ *Document Received!*\nOur Forensic AI is currently scanning the Death Certificate.\n\n_A processing fee of R${claimCost.toFixed(2)} has been billed to your society._`);
+
+                // 4. Fire the background worker!
                 processTwilioClaim(cleanPhone, mediaUrl, orgCode).catch(e => console.error("Worker trigger failed:", e));
                 
                 // Clear media from session and return to menu
