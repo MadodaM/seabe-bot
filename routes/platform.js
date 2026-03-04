@@ -182,20 +182,17 @@ module.exports = function(app, { prisma }) {
     });
 
 // ============================================================
-    // 🏷️ PRICING ENGINE DASHBOARD (Fixed Scope)
+    // 🏷️ PRICING ENGINE & MARGIN SIMULATOR
     // ============================================================
     app.get('/admin/pricing', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
 
         try {
-            // 1. Fetch all prices from DB
             const allPrices = await prisma.servicePrice.findMany({ orderBy: { code: 'asc' } });
             
-            // 2. Filter into groups
             const platformFees = allPrices.filter(p => !p.code.startsWith('TX_') && !p.code.startsWith('MOD_'));
             const txVars = allPrices.filter(p => p.code.startsWith('TX_') || p.code.startsWith('MOD_'));
 
-            // 3. Helper function for rows
             const makeRows = (data) => data.map(p => `
                 <tr>
                     <td><span class="tag" style="background:#edf2f7; color:#2d3748; font-family:monospace; border:none;">${p.code}</span></td>
@@ -211,8 +208,71 @@ module.exports = function(app, { prisma }) {
                 </tr>
             `).join('');
 
-            // 4. Using a unique name 'pricingHTML' to avoid clashing with other 'content' variables
-            const pricingHTML = `
+            // 🧮 Margin Simulator Component
+            const simulatorHTML = `
+                <div class="card-form" style="max-width:100%; margin-bottom:30px; border-top: 5px solid #00d2d3;">
+                    <h3 style="margin-top:0;">📈 Profit Margin Simulator</h3>
+                    <p style="font-size:12px; color:#718096; margin-top:-10px;">Test your pricing strategy before committing changes.</p>
+                    
+                    <div style="display:grid; grid-template-columns: 1fr 1fr 1.5fr; gap:20px; align-items: end;">
+                        <div class="form-group" style="margin:0;">
+                            <label>Premium Amount (R)</label>
+                            <input type="number" id="simPremium" value="150" oninput="runSim()">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label>Payment Method</label>
+                            <select id="simMethod" onchange="runSim()">
+                                <option value="CAPITEC">Capitec Pay / EFT</option>
+                                <option value="CARD">Credit/Debit Card</option>
+                                <option value="RETAIL">Retail Cash (Store)</option>
+                            </select>
+                        </div>
+                        <div id="simResult" style="background:#f8fafc; padding:15px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; border:1px solid #e2e8f0;">
+                            <div>
+                                <div style="font-size:10px; color:#64748b; text-transform:uppercase; font-weight:bold;">Seabe Net Profit</div>
+                                <div id="simProfit" style="font-size:24px; font-weight:bold; color:#10b981;">R 0.00</div>
+                            </div>
+                            <div style="text-align:right; font-size:12px; color:#475569;">
+                                <div>Retail Fee: <span id="simRetail">R0.00</span></div>
+                                <div>Wholesale: <span id="simWholesale">R0.00</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <script>
+                    function runSim() {
+                        const amount = parseFloat(document.getElementById('simPremium').value) || 0;
+                        const method = document.getElementById('simMethod').value;
+                        
+                        // Grab current values from the forms above (live preview)
+                        const getVal = (code) => {
+                            const input = document.querySelector('input[name="code"][value="'+code+'"]');
+                            return input ? parseFloat(input.parentElement.querySelector('input[name="amount"]').value) : 0;
+                        };
+
+                        const whPct = getVal('TX_' + method + '_WH_PCT');
+                        const whFlat = getVal('TX_' + method + '_WH_FLAT');
+                        const rtPct = getVal('TX_' + method + '_RT_PCT');
+                        const rtFlat = getVal('TX_' + method + '_RT_FLAT');
+
+                        const whCost = (amount * whPct) + whFlat;
+                        const rtFee = (amount * rtPct) + rtFlat;
+                        const profit = rtFee - whCost;
+
+                        document.getElementById('simProfit').innerText = 'R ' + profit.toFixed(2);
+                        document.getElementById('simRetail').innerText = 'R ' + rtFee.toFixed(2);
+                        document.getElementById('simWholesale').innerText = 'R ' + whCost.toFixed(2);
+                        
+                        // Color coding
+                        document.getElementById('simProfit').style.color = profit >= 1 ? '#10b981' : '#ef4444';
+                    }
+                    window.onload = runSim;
+                </script>
+            `;
+
+            const finalPricingHTML = `
+                ${simulatorHTML}
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:30px;">
                     <div class="card-form" style="max-width:100%;">
                         <h3 style="margin-top:0;">🛡️ Fixed Service Fees (ZAR)</h3>
@@ -223,7 +283,6 @@ module.exports = function(app, { prisma }) {
                     </div>
                     <div class="card-form" style="max-width:100%;">
                         <h3>💳 Transaction & Module Variables</h3>
-                        <p style="font-size:11px; color:#718096; margin-top:-10px;">PCT values: 0.025 = 2.5%</p>
                         <table>
                             <thead><tr><th>Code</th><th>Variable</th></tr></thead>
                             <tbody>${makeRows(txVars)}</tbody>
@@ -232,13 +291,13 @@ module.exports = function(app, { prisma }) {
                 </div>
             `;
 
-            res.send(renderAdminPage('Pricing Engine', pricingHTML));
+            res.send(renderAdminPage('Pricing Engine', finalPricingHTML));
 
         } catch (e) {
             res.send(renderAdminPage('Pricing Error', '', e.message));
         }
     });
-
+	
     // POST: Update Price
     app.post('/admin/pricing/update', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
