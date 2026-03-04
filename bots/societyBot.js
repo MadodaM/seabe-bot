@@ -47,30 +47,39 @@ const gateway = netcash;
 // 💰 NEW: Billing Helper (Now requires Phone)
 async function chargeSociety(societyId, churchId, phone, amount, type, description) {
     try {
+        // Validation: Ensure we have at least one ID
         if (!societyId && !churchId) return; 
 
-        // Ensure we have a valid ID to prevent crashes
-        const validChurchId = churchId || 1; // Fallback to 1 if null
-        const validSocietyId = societyId || undefined; // Leave undefined if null
+        const validChurchId = churchId || 1; 
 
-        await prisma.transaction.create({
-            data: {
-                amount: -amount, 
-                type: type,      
-                status: 'SUCCESS',
-                reference: `FEE-${Date.now()}`,
-                providerRef: 'INTERNAL',
-                description: description,
-                
-                // 🔗 LINKING BOTH ORGANIZATIONS
-                churchId: validChurchId,   // 👈 REQUIRED FIELD
-                societyId: validSocietyId, // Optional/Secondary
-                
-                phone: phone, 
-                createdAt: new Date()
+        // 🏗️ PREPARE THE DATA OBJECT
+        let transactionData = {
+            amount: -amount, 
+            type: type,      
+            status: 'SUCCESS',
+            reference: `FEE-${Date.now()}`,
+            providerRef: 'INTERNAL',
+            description: description,
+            phone: phone, 
+            createdAt: new Date(),
+            
+            // ✅ THE FIX: Explicitly 'Connect' the Church
+            church: { 
+                connect: { id: Number(validChurchId) } 
             }
-        });
-        console.log(`💰 [BILLING] Charged Org #${validChurchId} (Society #${validSocietyId}) R${amount}`);
+        };
+
+        // If a Society ID exists, connect it too (Optional)
+        if (societyId) {
+            transactionData.society = { 
+                connect: { id: Number(societyId) } 
+            };
+        }
+
+        await prisma.transaction.create({ data: transactionData });
+
+        console.log(`💰 [BILLING] Charged Church #${validChurchId} (Society #${societyId}) R${amount}`);
+
     } catch (e) {
         console.error("❌ Billing Error:", e);
     }
