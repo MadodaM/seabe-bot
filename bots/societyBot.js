@@ -354,7 +354,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                 // 💰 BILLING TRIGGER (SAFETY NET ADDED)
                 try {
                     // 1. Try to get dynamic price, but Default to 10.00 if it fails
-                    let claimCost = 10.00; 
+                    let claimCost = 10.00; // FORCE UPDATE: Death Claim Billing Fix
                     try {
                         const dynamicPrice = await getPrice('CLAIM_AI');
                         if (dynamicPrice && !isNaN(dynamicPrice)) claimCost = dynamicPrice;
