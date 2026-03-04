@@ -6,7 +6,8 @@ const prisma = new PrismaClient();
 const netcash = require('../services/netcash');
 const { generatePolicyCard } = require('../services/cardGenerator');
 const { generateKYCLink } = require('../routes/kyc');
-const { calculateTransaction } = require('../services/pricingEngine'); // 🚀 ADDED PRICING ENGINE
+const { calculateTransaction } = require('../services/pricingEngine'); 
+const { processTwilioClaim } = require('../services/aiClaimWorker'); // 🚀 AI WORKER IMPORTED HERE
 
 // Safely initialize Twilio for direct background messaging
 let twilioClient;
@@ -117,7 +118,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                 }
             }
 
-            // 🚀 OPTION 5: PREMIUM PAYMENT (Pricing Engine + Mandate Offer)
+            // 🚀 OPTION 5: PREMIUM PAYMENT
             else if (incomingMsg === '5') {
                 const amount = member?.monthlyPremium || 150.00;
                 session.tempPaymentAmount = amount;
@@ -277,10 +278,24 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             }
         }
 
-        // 4. CLAIM UPLOAD LOGIC
+        // 🚀 4. CLAIM UPLOAD LOGIC (AI FORENSIC WORKER WIRED IN HERE!)
         else if (session.step === 'AWAITING_CLAIM_DOCUMENT') {
-            reply = "⏳ *Document Uploaded*\n\nYour document is being processed by our AI worker. You will receive a notification once the claim is logged.";
-            session.step = 'SOCIETY_MENU';
+            // Your webhook should pass the Twilio Media URL into the session
+            const mediaUrl = session.tempMediaUrl || incomingMsg; 
+
+            if (!mediaUrl || !mediaUrl.startsWith('http')) {
+                reply = "⚠️ Please upload a *photo* or *document* of the Death Certificate.";
+            } else {
+                // Send an immediate holding message
+                await sendWhatsApp(cleanPhone, "⏳ *Document Received!*\nOur Forensic AI is currently scanning the Death Certificate for verification. This will take about 10 seconds...");
+
+                // 🚀 Fire the background worker! (We do NOT await it here, so the bot doesn't hang)
+                processTwilioClaim(cleanPhone, mediaUrl, orgCode).catch(e => console.error("Worker trigger failed:", e));
+                
+                // Clear media from session and return to menu
+                delete session.tempMediaUrl;
+                session.step = 'SOCIETY_MENU';
+            }
         }
 
         // --- FINAL SEND ---
