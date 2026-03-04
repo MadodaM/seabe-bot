@@ -142,6 +142,7 @@ model Transaction {
   reference  String   @unique
   status     String // 👈 Is the default 'pending' or 'PENDING'?
   method     String? // 👈 Add this line!
+  description String?
   date       DateTime @default(now())
 }
 
