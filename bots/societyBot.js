@@ -58,7 +58,7 @@ async function chargeSociety(societyId, churchId, phone, amount, type, descripti
             type: type,      
             status: 'SUCCESS',
             reference: `FEE-${Date.now()}`,
-            providerRef: 'INTERNAL',
+            method: 'INTERNAL',
             description: description,
             phone: phone, 
             createdAt: new Date(),
