@@ -344,30 +344,45 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
         }
 
         // 🚀 4. CLAIM UPLOAD LOGIC (WITH BILLING)
-        else if (session.step === 'AWAITING_CLAIM_DOCUMENT') {
-            // Your webhook should pass the Twilio Media URL into the session
-            const mediaUrl = session.tempMediaUrl || incomingMsg; 
+		else if (session.step === 'AWAITING_CLAIM_DOCUMENT') {
+			
+			// 1. Check if they sent a photo (or a forwarded image)
+			const mediaUrl = incomingMsg.type === 'image' ? incomingMsg.url : session.tempMediaUrl; 
 
-            if (!mediaUrl || !mediaUrl.startsWith('http')) {
-                reply = "⚠️ Please upload a *photo* or *document* of the Death Certificate.";
-            } else {
-                // 1. Fetch Dynamic Price
-				const claimCost = await getPrice('CLAIM_AI');
+			if (mediaUrl) {
+				
+				// 💰 BILLING TRIGGER START 💰
+				// We fetch the price and charge NOW because the AI is about to start work
+				try {
+					const claimCost = await getPrice('CLAIM_AI'); // Should be R10.00
+					
+					await chargeSociety(
+						societyId,       // The ID of the Society
+						churchId,        // The Organization ID (Critical for DB)
+						cleanPhone,      // User Phone
+						claimCost,       // Amount
+						'CLAIM_FEE',     // Transaction Type
+						'Forensic Death Claim Analysis' // Description
+					);
+					
+					console.log("✅ [BILLING] Charged for Claim Analysis");
+				} catch (err) {
+					console.error("⚠️ Billing Failed, but processing continues:", err);
+				}
+				// 💰 BILLING TRIGGER END 💰
 
-				// 2. Charge the Society (Pass 'cleanPhone' as the 2nd argument)
-				await chargeSociety(societyId, churchId, cleanPhone, claimCost, 'CLAIM_FEE', 'Forensic Death Claim Analysis');
+				// 2. Reply to user
+				await sendWhatsApp(cleanPhone, `⏳ *Document Received*...\n\nAnalyzing forensic details now. This may take 10-20 seconds.`);
 
-                // 3. Send Holding Message
-                await sendWhatsApp(cleanPhone, `⏳ *Document Received!*\nOur Forensic AI is currently scanning the Death Certificate.\n\n_A processing fee of R${claimCost.toFixed(2)} has been billed to your society._`);
-
-                // 4. Fire the background worker!
-                processTwilioClaim(cleanPhone, mediaUrl, orgCode).catch(e => console.error("Worker trigger failed:", e));
-                
-                // Clear media from session and return to menu
-                delete session.tempMediaUrl;
-                session.step = 'SOCIETY_MENU';
-            }
-        }
+				// 3. Start the actual AI processing
+				processTwilioClaim(cleanPhone, mediaUrl, orgCode);
+				
+				// 4. Reset step
+				session.step = null;
+			} else {
+				reply = "⚠️ Please upload a valid **photo** of the Death Certificate.";
+			}
+		}
 
         // --- FINAL SEND ---
         if (reply) {
