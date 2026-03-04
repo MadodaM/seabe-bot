@@ -1,15 +1,40 @@
 // services/pricing.js
-// 💰 Central Pricing Strategy (Self-Healing)
+// 💰 Central Pricing Strategy (Self-Healing & Grouped)
 
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-// 1. 🛡️ Default Prices (Used if DB is empty)
+// 1. 🛡️ Master Default Prices
 const DEFAULT_PRICES = {
-    'KYC_CHECK': 5.00,       
-    'CLAIM_AI': 10.00,       // R10.00 per scan
-    'MEMBER_CARD': 2.50,     
-    'DEBIT_ORDER_FEE': 5.00  
+    // --- Platform Service Fees ---
+    'KYC_CHECK': 5.00,
+    'CLAIM_AI': 10.00,
+    'MEMBER_CARD': 2.50,
+    'DEBIT_ORDER_FEE': 5.00,
+
+    // --- Transaction Fees: Capitec Pay / EFT ---
+    'TX_CAPITEC_WH_PCT': 0.016,  
+    'TX_CAPITEC_WH_FLAT': 1.50, 
+    'TX_CAPITEC_RT_PCT': 0.025,  
+    'TX_CAPITEC_RT_FLAT': 1.50, 
+
+    // --- Transaction Fees: Credit/Debit Card ---
+    'TX_CARD_WH_PCT': 0.0295,    
+    'TX_CARD_WH_FLAT': 1.50,
+    'TX_CARD_RT_PCT': 0.035,     
+    'TX_CARD_RT_FLAT': 2.50,    
+
+    // --- Transaction Fees: Retail Cash ---
+    'TX_RETAIL_WH_PCT': 0.039,    
+    'TX_RETAIL_WH_FLAT': 8.00,
+    'TX_RETAIL_RT_PCT': 0.050,    
+    'TX_RETAIL_RT_FLAT': 3.00  
+
+	// Add these to the DEFAULT_PRICES object in services/pricing.js
+	'MOD_LMS_PCT': 0.10,
+	'MOD_LMS_MIN': 5.00,
+	'MOD_REST_FLAT': 3.00,
+	'MOD_RETAIL_FLAT': 1.50	
 };
 
 // In-memory cache
@@ -17,58 +42,51 @@ let priceCache = { ...DEFAULT_PRICES };
 let lastCacheTime = 0;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 Minutes
 
+/**
+ * Syncs the Database with the code. 
+ * If a key exists in DEFAULT_PRICES but NOT in the DB, it adds it.
+ */
 async function loadPrices() {
     const now = Date.now();
-    
-    // Only refresh if cache is expired
-    if (now - lastCacheTime > CACHE_DURATION) {
-        // console.log("🔄 [PRICING] Syncing with Database...");
-        
-        try {
-            // A. Fetch from DB
-            const dbPrices = await prisma.servicePrice.findMany();
-            
-            // B. If DB is empty, SEED it automatically!
-            if (dbPrices.length === 0) {
-                console.log("🌱 [PRICING] Table empty. Seeding defaults...");
-                for (const [code, amount] of Object.entries(DEFAULT_PRICES)) {
-                    await prisma.servicePrice.create({
-                        data: { 
-                            code, 
-                            amount: amount,
-                            description: `Auto-generated price for ${code}`
-                        }
-                    });
-                }
-                // Cache is already set to defaults, so we are good.
-            } else {
-                // C. If DB has data, update our cache
-                dbPrices.forEach(p => {
-                    priceCache[p.code] = Number(p.amount);
-                });
-                // console.log(`✅ [PRICING] Synced ${dbPrices.length} prices.`);
-            }
-            
-            lastCacheTime = now;
+    if (now - lastCacheTime < CACHE_DURATION && Object.keys(priceCache).length > 5) return;
 
-        } catch (err) {
-            console.warn("⚠️ [PRICING] DB Sync failed (Table missing?), using Defaults.");
-            // We just keep using the DEFAULT_PRICES we loaded at the top
+    try {
+        const dbPrices = await prisma.servicePrice.findMany();
+        const dbKeys = dbPrices.map(p => p.code);
+
+        // A. Check for missing keys in DB and seed them
+        for (const [code, amount] of Object.entries(DEFAULT_PRICES)) {
+            if (!dbKeys.includes(code)) {
+                console.log(`🌱 [PRICING] Seeding missing key: ${code}`);
+                await prisma.servicePrice.create({
+                    data: { 
+                        code, 
+                        amount: amount,
+                        description: `Auto-generated price for ${code}`
+                    }
+                }).catch(() => {}); // Prevent crash on race conditions
+            }
         }
+
+        // B. Update Cache with current DB values
+        const updatedDbPrices = await prisma.servicePrice.findMany();
+        updatedDbPrices.forEach(p => {
+            priceCache[p.code] = Number(p.amount);
+        });
+
+        lastCacheTime = now;
+    } catch (err) {
+        console.warn("⚠️ [PRICING] DB Sync failed, using Cache/Defaults.", err.message);
     }
 }
 
 /**
  * Get the current price for a service code.
- * @param {string} code - The unique service code (e.g. 'CLAIM_AI')
- * @returns {Promise<number>} - The price in Rands
  */
 async function getPrice(code) {
-    await loadPrices(); // Ensure sync
-    
+    await loadPrices(); 
     const price = priceCache[code];
     
-    // Safety check: if code is unknown, return 0 or a safe default
     if (price === undefined) {
         console.error(`❌ [PRICING] Unknown Code '${code}'. returning R0.00`);
         return 0.00;
@@ -77,4 +95,5 @@ async function getPrice(code) {
     return price;
 }
 
+// Export at the very bottom
 module.exports = { getPrice };

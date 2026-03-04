@@ -208,6 +208,45 @@ module.exports = function(app, { prisma }) {
                     <td style="font-size:12px; color:#a0aec0;">${new Date(p.updatedAt).toLocaleDateString()}</td>
                 </tr>
             `).join('');
+			
+			// Group the prices for a cleaner UI
+			const serviceFees = prices.filter(p => !p.code.startsWith('TX_'));
+			const txVariables = prices.filter(p => p.code.startsWith('TX_'));
+
+			const renderTable = (data) => data.map(p => `
+				<tr>
+					<td><span class="tag" style="background:#eee; color:#333; border:none; font-family:monospace;">${p.code}</span></td>
+					<td>
+						<form action="/admin/pricing/update" method="POST" style="display:flex; gap:10px; margin:0;">
+							<input type="hidden" name="code" value="${p.code}">
+							<input type="number" step="0.0001" name="amount" class="price-input" 
+								   value="${Number(p.amount)}" 
+								   style="width:100px; text-align:right; font-weight:bold; padding:5px;">
+							<button type="submit" class="btn btn-primary" style="padding:5px 10px; font-size:11px;">Save</button>
+						</form>
+					</td>
+				</tr>
+			`).join('');
+
+			const content = `
+				<div style="display:grid; grid-template-columns: 1fr 1fr; gap:30px;">
+					<div>
+						<h3>🛡️ Fixed Service Fees (ZAR)</h3>
+						<p style="font-size:12px; color:gray;">Platform costs for AI and KYC.</p>
+						<table>${renderTable(serviceFees)}</table>
+					</div>
+					<div>
+						<h3>💳 Transaction Fee Variables</h3>
+						<p style="font-size:12px; color:gray;">PCT values are decimals (0.025 = 2.5%).</p>
+						<table>${renderTable(txVariables)}</table>
+					</div>
+				</div>
+				
+				<div class="card-form" style="max-width:100%; margin-top:30px; border-left: 5px solid #2ecc71;">
+					<h3 style="color:#27ae60;">💡 Pricing Tip</h3>
+					<p style="font-size:13px;">To lock in a <strong>R1.00 platform profit</strong>, ensure the Retail Flat fee is exactly <strong>R1.00 higher</strong> than the Wholesale Flat fee if the percentages are equal.</p>
+				</div>
+			`;
 
             const content = `
                 <div class="card-form" style="max-width:100%;">

@@ -1,66 +1,55 @@
 // services/pricingEngine.js
+const { getPrice } = require('./pricing');
 
 /**
- * 💳 SEABE PRICING MODEL (2026)
- * Guaranteed Minimum Margin: R1.00 per transaction
+ * 💳 DYNAMIC SEABE PRICING ENGINE (2026)
+ * Fetches all variables from the Database to calculate fees.
  */
-const PRICING_TIERS = {
-    // Payment Gateway Fees (Seabe Retail Cost)
-    GATEWAY: {
-        CAPITEC_PAY: { percent: 0.025, flat: 1.50 }, // 2.5% + R1.50
-        INSTANT_EFT: { percent: 0.025, flat: 1.50 }, // 2.5% + R1.50
-        CARD:        { percent: 0.035, flat: 2.50 }, // 3.5% + R2.50
-        CASH_RETAIL: { percent: 0.050, flat: 3.00 }, // 5.0% + R3.00
-        DEBIT_ORDER: { percent: 0.000, flat: 5.00 }, // 🚀 NEW: Flat R5.00 for Mandates
-        DEFAULT:     { percent: 0.025, flat: 1.50 }  // Fallback
-    },
-    // Module-Specific Platform Surcharges
-    MODULE: {
-        LMS_COURSE:      { percent: 0.10, minFlat: 5.00 }, // 10% (Min R5)
-        RESTAURANT_BILL: { percent: 0.00, flat: 3.00 },    // R3.00 Table Fee
-        RETAIL_ORDER:    { percent: 0.00, flat: 1.50 },    // R1.50 Conversational Fee
-        STANDARD:        { percent: 0.00, flat: 0.00 }     // Churches/Burial (No extra platform fee)
-    }
-};
-
-/**
- * Calculates the exact fee split and total amount to charge the user.
- * * @param {number} baseAmount - The original cost of the item/donation.
- * @param {string} moduleType - 'LMS_COURSE', 'RESTAURANT_BILL', 'RETAIL_ORDER', 'STANDARD'
- * @param {string} paymentMethod - 'CAPITEC_PAY', 'INSTANT_EFT', 'CARD', 'CASH_RETAIL'
- * @param {boolean} passFeesToUser - If true, user pays fees. If false, merchant absorbs them.
- */
-function calculateTransaction(baseAmount, moduleType = 'STANDARD', paymentMethod = 'DEFAULT', passFeesToUser = true) {
+async function calculateTransaction(baseAmount, moduleType = 'STANDARD', paymentMethod = 'CAPITEC_PAY', passFeesToUser = true) {
     const amount = parseFloat(baseAmount);
     if (isNaN(amount) || amount <= 0) throw new Error("Invalid base amount");
 
-    // 1. Calculate Module Platform Fee (Seabe's App Revenue)
-    const modRule = PRICING_TIERS.MODULE[moduleType] || PRICING_TIERS.MODULE.STANDARD;
-    let platformFee = (amount * modRule.percent) + (modRule.flat || 0);
-    
-    // Enforce Minimums (e.g., LMS minimum R5.00)
-    if (modRule.minFlat && platformFee < modRule.minFlat) {
-        platformFee = modRule.minFlat;
+    // 1. Map paymentMethod strings to DB keys
+    // (Translates 'CAPITEC_PAY' -> 'TX_CAPITEC', etc.)
+    let keyPrefix = 'TX_CAPITEC'; // Default
+    if (paymentMethod === 'CARD') keyPrefix = 'TX_CARD';
+    if (paymentMethod === 'CASH_RETAIL') keyPrefix = 'TX_RETAIL';
+
+    // 2. Fetch Gateway Variables from DB
+    const gatePct  = await getPrice(`${keyPrefix}_RT_PCT`);
+    const gateFlat = await getPrice(`${keyPrefix}_RT_FLAT`);
+
+    // 3. Fetch Module Variables from DB
+    let modPct = 0;
+    let modFlat = 0;
+    let modMin = 0;
+
+    if (moduleType === 'LMS_COURSE') {
+        modPct = await getPrice('MOD_LMS_PCT');
+        modMin = await getPrice('MOD_LMS_MIN');
+    } else if (moduleType === 'RESTAURANT_BILL') {
+        modFlat = await getPrice('MOD_REST_FLAT');
+    } else if (moduleType === 'RETAIL_ORDER') {
+        modFlat = await getPrice('MOD_RETAIL_FLAT');
     }
 
-    // 2. Calculate Gateway Fee (Netcash coverage + Seabe Margin)
-    const gateRule = PRICING_TIERS.GATEWAY[paymentMethod] || PRICING_TIERS.GATEWAY.DEFAULT;
-    const gatewayFee = (amount * gateRule.percent) + gateRule.flat;
+    // 4. Calculate Fees
+    let platformFee = (amount * modPct) + modFlat;
+    if (modMin && platformFee < modMin) platformFee = modMin;
 
-    // 3. Tally the Totals
+    const gatewayFee = (amount * gatePct) + gateFlat;
     const totalFees = platformFee + gatewayFee;
-    
+
+    // 5. Tally the Totals
     let totalChargedToUser = amount;
     let settlementToMerchant = amount;
 
     if (passFeesToUser) {
-        // The user pays the premium (e.g., R100 meal + R3 fee + Gateway = R105.50)
         totalChargedToUser = amount + totalFees;
-        settlementToMerchant = amount; 
+        settlementToMerchant = amount;
     } else {
-        // The merchant absorbs the cost (e.g., Church Tithe of R100. Member pays R100, Church gets R96)
         totalChargedToUser = amount;
-        settlementToMerchant = amount - totalFees; 
+        settlementToMerchant = amount - totalFees;
     }
 
     return {
@@ -74,4 +63,4 @@ function calculateTransaction(baseAmount, moduleType = 'STANDARD', paymentMethod
     };
 }
 
-module.exports = { calculateTransaction, PRICING_TIERS };	
+module.exports = { calculateTransaction };
