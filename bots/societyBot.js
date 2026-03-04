@@ -44,23 +44,24 @@ const sendWhatsApp = async (to, body, mediaUrl = null) => {
 
 const gateway = netcash;
 
-// 💰 NEW: Billing Helper
-async function chargeSociety(societyId, amount, type, description) {
+// 💰 NEW: Billing Helper (Now requires Phone)
+async function chargeSociety(societyId, phone, amount, type, description) {
     try {
-        if (!societyId) return; // Safety check
+        if (!societyId) return; 
         await prisma.transaction.create({
             data: {
                 amount: -amount, // Negative value reduces their payout
-                type: type,      // 'KYC_FEE' or 'CLAIM_FEE'
+                type: type,      
                 status: 'SUCCESS',
                 reference: `FEE-${Date.now()}`,
                 providerRef: 'INTERNAL',
                 description: description,
                 societyId: societyId,
+                phone: phone, // 👈 ADDED: Links the cost to the user who triggered it
                 createdAt: new Date()
             }
         });
-        console.log(`💰 [BILLING] Charged Society #${societyId} R${amount} for ${type}`);
+        console.log(`💰 [BILLING] Charged Society #${societyId} R${amount} for ${type} (User: ${phone})`);
     } catch (e) {
         console.error("❌ Billing Error:", e);
     }
@@ -195,10 +196,10 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                 reply = "❌ Invalid ID. Please enter a 13-digit SA ID number.";
             } else {
                 // 1. Fetch Dynamic Price
-                const kycCost = await getPrice('KYC_CHECK');
+				const kycCost = await getPrice('KYC_CHECK');
 
-                // 2. Charge the Society
-                await chargeSociety(societyId, kycCost, 'KYC_FEE', `Identity Check: ${idToCheck}`);
+				// 2. Charge the Society (Pass 'cleanPhone' as the 2nd argument)
+				await chargeSociety(societyId, cleanPhone, kycCost, 'KYC_FEE', `Identity Check: ${idToCheck}`);
 
                 // 3. Generate Link (or result)
                 const host = process.env.HOST_URL || 'seabe-bot.onrender.com';
@@ -333,10 +334,10 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                 reply = "⚠️ Please upload a *photo* or *document* of the Death Certificate.";
             } else {
                 // 1. Fetch Dynamic Price
-                const claimCost = await getPrice('CLAIM_AI');
+				const claimCost = await getPrice('CLAIM_AI');
 
-                // 2. Charge the Society
-                await chargeSociety(societyId, claimCost, 'CLAIM_FEE', 'Forensic Death Claim Analysis');
+				// 2. Charge the Society (Pass 'cleanPhone' as the 2nd argument)
+				await chargeSociety(societyId, cleanPhone, claimCost, 'CLAIM_FEE', 'Forensic Death Claim Analysis');
 
                 // 3. Send Holding Message
                 await sendWhatsApp(cleanPhone, `⏳ *Document Received!*\nOur Forensic AI is currently scanning the Death Certificate.\n\n_A processing fee of R${claimCost.toFixed(2)} has been billed to your society._`);
