@@ -31,6 +31,9 @@ model Member {
   rejectionReason   String?
   verifiedAt        DateTime?
 
+// 🚀 NEW: The specific day of the month they want to be billed (1-31)
+  collectionDay   Int       @default(1)
+  
   // Link 1: Church (Optional)
   churchCode String?
   church     Church? @relation("ChurchMembers", fields: [churchCode], references: [code])
@@ -104,6 +107,7 @@ model Church {
   societyMembers Member[] @relation("SocietyMembers")
 
   transactions   Transaction[]
+  ledgerEntries  TransactionLedger[]
   events         Event[]
   claims         Claim[]
   ads            Ad[]
@@ -130,8 +134,8 @@ model Transaction {
   id         Int      @id @default(autoincrement())
   churchCode String
   church     Church   @relation(fields: [churchCode], references: [code])
-  phone      String   // Keep this for easy Twilio replies
-  memberId   Int?     // Add this new field
+  phone      String // Keep this for easy Twilio replies
+  memberId   Int? // Add this new field
   member     Member?  @relation(fields: [memberId], references: [id])
   type       String // OFFERING, TITHE, PREM, TICKET
   amount     Float
@@ -187,8 +191,8 @@ model Claim {
   church     Church @relation(fields: [churchCode], references: [code])
 
   // Link to Member
-  memberId    Int?
-  member      Member? @relation(fields: [memberId], references: [id])
+  memberId Int?
+  member   Member? @relation(fields: [memberId], references: [id])
 
   beneficiaryName String
   payoutAmount    Float
@@ -250,9 +254,9 @@ model AuditLog {
 }
 
 model RiskFlag {
-  id          Int    @id @default(autoincrement())
-  memberId    Int
-  member      Member @relation(fields: [memberId], references: [id])
+  id       Int    @id @default(autoincrement())
+  memberId Int
+  member   Member @relation(fields: [memberId], references: [id])
 
   flagType    String // "VELOCITY_SPIKE", "DUPLICATE_CLAIM", "FICA_EXPIRED"
   severity    String // "LOW", "MEDIUM", "CRITICAL"
@@ -331,10 +335,10 @@ model PolicyPlan {
   monthlyPremium  Float // e.g., 160.00
   benefitsSummary String   @db.Text // e.g., "Grocery + Vegetables + 2 Sheep + R500 Cash"
   createdAt       DateTime @default(now())
-  
-  joiningFee      Float?   
-  coverAmount     Float?   
-  maxMembers      Int?
+
+  joiningFee  Float?
+  coverAmount Float?
+  maxMembers  Int?
 }
 
 model PolicyAddon {
@@ -360,29 +364,29 @@ model Course {
 }
 
 model CourseModule {
-  id              Int      @id @default(autoincrement())
+  id              Int     @id @default(autoincrement())
   courseId        Int
-  course          Course   @relation(fields: [courseId], references: [id])
+  course          Course  @relation(fields: [courseId], references: [id])
   title           String
-  contentUrl      String?  // Optional PDF/Video link
-  dailyLessonText String?  // 07:00 AM WhatsApp Blast
-  quizQuestion    String?  // 12:00 PM Check on Learning
-  quizAnswer      String?  // The correct answer/rubric for AI to check against
-  quizExplanation String?  // The AI's fallback explanation
-  order           Int      // Day 1, Day 2, etc.
+  contentUrl      String? // Optional PDF/Video link
+  dailyLessonText String? // 07:00 AM WhatsApp Blast
+  quizQuestion    String? // 12:00 PM Check on Learning
+  quizAnswer      String? // The correct answer/rubric for AI to check against
+  quizExplanation String? // The AI's fallback explanation
+  order           Int // Day 1, Day 2, etc.
 }
 
 model Enrollment {
-  id            Int      @id @default(autoincrement())
-  memberId      Int
-  member        Member   @relation(fields: [memberId], references: [id])
-  courseId      Int
-  course        Course   @relation(fields: [courseId], references: [id])
-  status        String   @default("PENDING_PAYMENT") // ACTIVE, COMPLETED
-  progress      Int      @default(1) // Which Module/Day they are on
-  quizState     String   @default("IDLE") // IDLE, AWAITING_QUIZ
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @default(now()) @updatedAt
+  id        Int      @id @default(autoincrement())
+  memberId  Int
+  member    Member   @relation(fields: [memberId], references: [id])
+  courseId  Int
+  course    Course   @relation(fields: [courseId], references: [id])
+  status    String   @default("PENDING_PAYMENT") // ACTIVE, COMPLETED
+  progress  Int      @default(1) // Which Module/Day they are on
+  quizState String   @default("IDLE") // IDLE, AWAITING_QUIZ
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 }
 
 model BotSession {
@@ -391,4 +395,47 @@ model BotSession {
   mode      String?
   data      Json?    @default("{}")
   updatedAt DateTime @updatedAt
+}
+
+// 1. Strict Categorization for the Ledger
+enum TxModule {
+  SUREPOL_PREMIUM // Burial Society Collections
+  CHURCH_TITHE // General church donations
+  LMS_COURSE // AI Discipleship/Course purchases
+  EVENT_TICKET // Event bookings
+  RESTAURANT_BILL // Table-side QR payments
+  RETAIL_ORDER // Conversational commerce
+}
+
+enum TxStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+// 2. The Master Ledger (The Source of Truth)
+model TransactionLedger {
+  id         String @id @default(uuid())
+  netcashRef String @unique // The exact reference generated for Netcash
+  amount     Float // Total amount paid by customer
+  seabeFee   Float? // Your calculated margin (e.g., the R1.50 + 2.5%)
+
+  status TxStatus @default(PENDING)
+  module TxModule // What product generated this sale?
+
+  // 3. The Merchant Link (Who gets the money?)
+  churchId Int // Links back to the Church/Restaurant/Society
+  church   Church @relation(fields: [churchId], references: [id])
+
+  // 4. The Context Links (Optional connections to specific modules)
+  collectionId Int?    @unique // If it was a Surepol debt collection
+  eventId      Int? // If it was an event ticket
+  courseId     Int? // If it was an LMS course
+  orderId      String? // If it was a restaurant/retail order
+
+  // Audit Timestamps
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  settledAt DateTime? // When the money actually cleared to the merchant's bank
 }
