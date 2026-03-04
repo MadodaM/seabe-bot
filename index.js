@@ -12,6 +12,7 @@ const { PrismaClient } = require('@prisma/client');
 const { startCronJobs } = require('./services/scheduler');
 const { startDripCampaign } = require('./services/dripCampaign');
 const { startBillingEngine } = require('./services/billingCron');
+const { startBatchEngine } = require('./services/batchCron');  
 const { startWeeklyReportEngine } = require('./services/weeklyReportCron');
 const blastEngineRoute = require('./routes/blastEngine');
 const webhooksRoute = require('./routes/webhooks');
@@ -91,6 +92,7 @@ if (process.env.NODE_ENV !== 'test') {
             startDripCampaign(); // Turn on the LMS Heartbeat
 			startBillingEngine();
 			startWeeklyReportEngine();
+			startBatchEngine();
             console.log(`✅ Automated Cron Jobs scheduled.`);			
         } catch (e) {
             console.log("⚠️ Scheduler module failed to start.");
