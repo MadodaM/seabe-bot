@@ -45,23 +45,32 @@ const sendWhatsApp = async (to, body, mediaUrl = null) => {
 const gateway = netcash;
 
 // 💰 NEW: Billing Helper (Now requires Phone)
-async function chargeSociety(societyId, phone, amount, type, description) {
+async function chargeSociety(societyId, churchId, phone, amount, type, description) {
     try {
-        if (!societyId) return; 
+        if (!societyId && !churchId) return; 
+
+        // Ensure we have a valid ID to prevent crashes
+        const validChurchId = churchId || 1; // Fallback to 1 if null
+        const validSocietyId = societyId || undefined; // Leave undefined if null
+
         await prisma.transaction.create({
             data: {
-                amount: -amount, // Negative value reduces their payout
+                amount: -amount, 
                 type: type,      
                 status: 'SUCCESS',
                 reference: `FEE-${Date.now()}`,
                 providerRef: 'INTERNAL',
                 description: description,
-                societyId: societyId,
-                phone: phone, // 👈 ADDED: Links the cost to the user who triggered it
+                
+                // 🔗 LINKING BOTH ORGANIZATIONS
+                churchId: validChurchId,   // 👈 REQUIRED FIELD
+                societyId: validSocietyId, // Optional/Secondary
+                
+                phone: phone, 
                 createdAt: new Date()
             }
         });
-        console.log(`💰 [BILLING] Charged Society #${societyId} R${amount} for ${type} (User: ${phone})`);
+        console.log(`💰 [BILLING] Charged Org #${validChurchId} (Society #${validSocietyId}) R${amount}`);
     } catch (e) {
         console.error("❌ Billing Error:", e);
     }
@@ -73,6 +82,8 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
     const orgName = session.orgName || (member?.church ? member.church.name : (member?.society ? member.society.name : "Burial Society"));
     const orgCode = session.orgCode || member?.churchCode || member?.societyCode;
     const societyId = member?.societyId || 1; // Default to ID 1 if null (Pilot Society)
+	// If member.churchId is null, we assume the society IS the church entity, so we use societyId as churchId
+    const churchId = member?.churchId || member?.society?.churchId || 1;
 
     try {
         // 1. MENU TRIGGER
@@ -199,7 +210,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
 				const kycCost = await getPrice('KYC_CHECK');
 
 				// 2. Charge the Society (Pass 'cleanPhone' as the 2nd argument)
-				await chargeSociety(societyId, cleanPhone, kycCost, 'KYC_FEE', `Identity Check: ${idToCheck}`);
+				await chargeSociety(societyId, churchId, cleanPhone, kycCost, 'KYC_FEE', `Identity Check: ${idToCheck}`);
 
                 // 3. Generate Link (or result)
                 const host = process.env.HOST_URL || 'seabe-bot.onrender.com';
@@ -337,7 +348,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
 				const claimCost = await getPrice('CLAIM_AI');
 
 				// 2. Charge the Society (Pass 'cleanPhone' as the 2nd argument)
-				await chargeSociety(societyId, cleanPhone, claimCost, 'CLAIM_FEE', 'Forensic Death Claim Analysis');
+				await chargeSociety(societyId, churchId, cleanPhone, claimCost, 'CLAIM_FEE', 'Forensic Death Claim Analysis');
 
                 // 3. Send Holding Message
                 await sendWhatsApp(cleanPhone, `⏳ *Document Received!*\nOur Forensic AI is currently scanning the Death Certificate.\n\n_A processing fee of R${claimCost.toFixed(2)} has been billed to your society._`);
