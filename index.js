@@ -10,6 +10,7 @@ const axios = require('axios');
 const sgMail = require('@sendgrid/mail'); 
 const { PrismaClient } = require('@prisma/client');
 const { startCronJobs } = require('./services/scheduler');
+const { startCourseEngine } = require('./services/courseCron');
 const { startDripCampaign } = require('./services/dripCampaign');
 const { startBillingEngine } = require('./services/billingCron');
 const { startBatchEngine } = require('./services/batchCron');  
@@ -93,6 +94,7 @@ if (process.env.NODE_ENV !== 'test') {
 			startBillingEngine();
 			startWeeklyReportEngine();
 			startBatchEngine();
+			startCourseEngine();
             console.log(`✅ Automated Cron Jobs scheduled.`);			
         } catch (e) {
             console.log("⚠️ Scheduler module failed to start.");
