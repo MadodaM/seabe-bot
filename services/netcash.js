@@ -8,8 +8,8 @@ require('dotenv').config();
 const { calculateTransaction } = require('./pricingEngine');
 
 // NetCash uses specific Service Keys for different features
-const PAYNOW_SERVICE_KEY = process.env.NETCASH_PAYNOW_KEY || 'TEST_PAYNOW_KEY';
-const DEBIT_ORDER_KEY = process.env.NETCASH_DEBIT_ORDER_KEY || 'TEST_DEBIT_ORDER_KEY';
+const PAYNOW_SERVICE_KEY = process.env.NETCASH_PAYNOW_KEY;
+const DEBIT_ORDER_KEY = process.env.NETCASH_DEBIT_ORDER_KEY;
 
 // ==========================================
 // 🛠️ HELPER: MONEY SANITIZER
@@ -30,19 +30,18 @@ async function createPaymentLink(finalAmount, ref, userPhone, orgName) {
         const cleanAmount = sanitizeMoney(finalAmount);
         if (cleanAmount == 0) return null;
 
-        // 🛑 We are currently returning the Sandbox Preview page.
-        // When NetCash approves your account, you will swap to the live link below!
-        
-        /*
-        // NetCash Pay Now requires passing data via query parameters or a form POST
+        if (!PAYNOW_SERVICE_KEY) {
+            console.error("❌ MISSING NETCASH PAYNOW KEY");
+            return null;
+        }
+
+        // 🚀 LIVE NETCASH URL GENERATION
+        // NetCash Pay Now requires passing data via query parameters
+        // Method 8 = Credit Card / Instant EFT / Scan to Pay
         const baseUrl = "https://paynow.netcash.co.za/site/paynow.aspx";
-        const paymentUrl = `${baseUrl}?Method=8&ServiceKey=${PAYNOW_SERVICE_KEY}&p2=${ref}&p3=Payment to ${orgName}&p4=${cleanAmount}&p11=${userPhone}`;
+        const paymentUrl = `${baseUrl}?Method=8&ServiceKey=${PAYNOW_SERVICE_KEY}&p2=${ref}&p3=Payment to ${encodeURIComponent(orgName)}&p4=${cleanAmount}&p11=${userPhone}`;
         
         return paymentUrl;
-        */
-
-        // Returning a mock Sandbox Preview for now
-        return 'https://seabe.tech/netcash-sandbox-preview';
 
     } catch (error) {
         console.error("❌ NetCash Link Error:", error.message);
@@ -55,11 +54,11 @@ async function createPaymentLink(finalAmount, ref, userPhone, orgName) {
 // ==========================================
 async function verifyPayment(reference) {
     try {
-        // NetCash Pay Now verification usually happens via an inbound Webhook (Postback)
-        // or by polling their statement API using the Account Service Key.
-        
-        // Mock verification for the Sandbox phase
-        return { status: 'Complete', amount: 100.00, reference: reference };
+        // ⚠️ DEPRECATED FOR PRODUCTION
+        // We now rely 100% on the `routes/webhooks.js` file (ITN) to verify payments.
+        // Polling is inefficient. We return null here to force the system to wait for the Webhook.
+        console.log(`ℹ️ Payment verification for ${reference} deferred to Webhook.`);
+        return null; 
     } catch (error) {
         console.error("❌ NetCash Verification Error:", error.message);
         return null;
@@ -82,7 +81,7 @@ async function getTransactionHistory(memberId) {
         let historyMessage = "📜 *Your Last 5 Contributions:*\n\n";
         transactions.forEach((tx, index) => {
             const date = new Date(tx.date).toLocaleDateString('en-ZA');
-            historyMessage += `${index + 1}. *R${tx.amount}* - ${tx.type || 'Payment'} (${date})\n`;
+            historyMessage += `${index + 1}. *R${tx.amount.toFixed(2)}* - ${tx.type || 'Payment'} (${date})\n`;
         });
         return historyMessage;
     } catch (error) {
@@ -96,9 +95,10 @@ async function getTransactionHistory(memberId) {
 // ==========================================
 async function setupDebitOrderMandate(baseAmount, userPhone, orgName, ref) {
     try {
-        // 🚀 PRICING ENGINE INTERCEPTION
+        // 🚀 PRICING ENGINE INTERCEPTION (ASYNC UPDATE)
         // Calculate the exact recurring monthly deduction including our margin
-        const pricing = calculateTransaction(baseAmount, 'STANDARD', 'DEBIT_ORDER', true);
+        // We use 'await' here because calculateTransaction fetches DB prices now
+        const pricing = await calculateTransaction(baseAmount, 'STANDARD', 'DEBIT_ORDER', true);
 
         console.log(`💳 Generating Netcash Mandate for ${userPhone}. Base: R${baseAmount} -> Monthly Total: R${pricing.totalChargedToUser}`);
 
@@ -118,15 +118,15 @@ async function setupDebitOrderMandate(baseAmount, userPhone, orgName, ref) {
 }
 
 async function listActiveSubscriptions(phone) {
-    // NetCash dominates the Debit Order space. 
-    // This function will eventually pull active NetCash mandates.
-    return "NetCash Debit Order mandates are currently in Sandbox mode. No active mandates found.";
+    // Placeholder: This typically requires a separate API call to Netcash NIF
+    // For now, we return a generic message as this integration is complex.
+    return "To view or cancel active debit orders, please contact your administrator directly.";
 }
 
 module.exports = { 
     createPaymentLink, 
     verifyPayment, 
     getTransactionHistory,
-    setupDebitOrderMandate, // 🚀 Exported new engine
+    setupDebitOrderMandate,
     listActiveSubscriptions
 };
