@@ -103,14 +103,12 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
                 where: { id: ledgerEntry.id },
                 data: { 
                     status: 'SUCCESS',
-                    // Note: Ensure your Prisma schema has a 'seabeFee' column on Transaction table if you want to store this.
-                    // If not, we just log it or you might need to add it to schema.
-                    // seabeFee: calculatedSeabeFee, 
+                    platformFee: calculatedSeabeFee, // 💰 SAVING THE PROFIT HERE
                     date: new Date() // Updates timestamp to settlement time
                 }
             });
 
-            console.log(`📈 Revenue Tracked: R${calculatedSeabeFee.toFixed(2)} on Ref: ${reference}`);
+            console.log(`📈 Revenue Tracked & Saved: R${calculatedSeabeFee.toFixed(2)} on Ref: ${reference}`);
 
             // 2. BUSINESS LOGIC ROUTING 
             if (reference.startsWith('AUTO-') || reference.startsWith('BLAST-')) {

@@ -139,6 +139,7 @@ model Transaction {
   member     Member?  @relation(fields: [memberId], references: [id])
   type       String // OFFERING, TITHE, PREM, TICKET
   amount     Float
+  platformFee Float?
   reference  String   @unique
   status     String // 👈 Is the default 'pending' or 'PENDING'?
   method     String? // 👈 Add this line!
