@@ -59,14 +59,19 @@ const startCourseEngine = () => {
             for (const enrollment of activeEnrollments) {
                 const student = enrollment.member;
                 const course = enrollment.course;
-                const currentDay = enrollment.currentDay;
+                
+                // --- FIX: Use 'progress' instead of 'currentDay' ---
+                // If progress is null/0, start at Day 1. Otherwise, move to next day.
+                const lastProgress = enrollment.progress || 0;
+                const dayToSend = lastProgress + 1; 
 
                 // 3. Find today's specific module
-                const todaysModule = course.modules.find(m => m.dayNumber === currentDay);
+                // Note: Ensure your Module table uses 'dayNumber' or 'day'. Adjust if needed.
+                const todaysModule = course.modules.find(m => m.dayNumber === dayToSend || m.day === dayToSend);
 
                 if (todaysModule) {
                     // Assemble the beautiful WhatsApp Lesson
-                    let lessonMessage = `🎓 *${course.title}* (Day ${currentDay})\n\n`;
+                    let lessonMessage = `🎓 *${course.title}* (Day ${dayToSend})\n\n`;
                     lessonMessage += `*${todaysModule.title}*\n\n`;
                     lessonMessage += `${todaysModule.content}\n\n`;
                     
@@ -79,11 +84,16 @@ const startCourseEngine = () => {
                     await sendWhatsApp(student.phone, lessonMessage);
                     lessonsDelivered++;
 
-                    // 4. Increment the student's progress to the next day
+                    // 4. UPDATE THE DATABASE (Using correct column 'progress')
                     await prisma.enrollment.update({
                         where: { id: enrollment.id },
-                        data: { currentDay: currentDay + 1 }
+                        data: { 
+                            progress: dayToSend,  // <--- FIXED
+                            updatedAt: new Date()
+                        }
                     });
+                    
+                    console.log(`✅ Sent Day ${dayToSend} to ${student.phone}`);
                     
                 } else {
                     // If no module is found for this day, they have finished the course!
@@ -94,6 +104,7 @@ const startCourseEngine = () => {
                         where: { id: enrollment.id },
                         data: { status: 'COMPLETED' }
                     });
+                    console.log(`🏁 Course Completed for ${student.phone}`);
                 }
             }
 
