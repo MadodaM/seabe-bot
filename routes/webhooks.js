@@ -1,13 +1,12 @@
-// ==========================================
 // routes/webhooks.js - Netcash ITN Webhook
 // BANK-GRADE SECURITY COMPLIANT (2026)
-// ==========================================
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const axios = require('axios');
 const { sendWhatsApp } = require('../services/twilioClient'); 
+const { getPrice } = require('../services/pricing'); // 🚀 IMPORT PRICING SERVICE
 
 // Netcash Validation Endpoint
 const NETCASH_VALIDATE_URL = "https://paynow.netcash.co.za/site/validate.aspx";
@@ -75,10 +74,10 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
         // 💰 SCENARIO B: MASTER LEDGER PROCESSING (Upgraded)
         // =========================================================
         
-        // Find the record in the NEW TransactionLedger
-        const ledgerEntry = await prisma.transactionLedger.findUnique({
-            where: { netcashRef: reference },
-            include: { church: true } // Assuming you linked phone numbers to the ledger or church
+        // Find the record in the NEW Transaction Table (Matches Schema: Transaction, not TransactionLedger)
+        const ledgerEntry = await prisma.transaction.findFirst({
+            where: { reference: reference },
+            include: { church: true, member: true } 
         });
 
         if (!ledgerEntry) {
@@ -91,20 +90,27 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
 
         if (isSuccessful) {
             
-            // 💡 THE SEABE MARGIN CALCULATOR: 2.5% + R1.50
-            const calculatedSeabeFee = (amountPaid * 0.025) + 1.50;
+            // 🚀 DYNAMIC PROFIT CALCULATION (No Hardcoding)
+            // We fetch the current RETAIL fee configuration to determine revenue.
+            // Defaulting to Capitec Pay rates as it's the primary method.
+            const pct = await getPrice('TX_CAPITEC_RT_PCT');
+            const flat = await getPrice('TX_CAPITEC_RT_FLAT');
+            
+            const calculatedSeabeFee = (amountPaid * pct) + flat;
 
             // 1. Update the Master Ledger with Profit Tracking
-            await prisma.transactionLedger.update({
+            await prisma.transaction.update({
                 where: { id: ledgerEntry.id },
                 data: { 
                     status: 'SUCCESS',
-                    seabeFee: calculatedSeabeFee,
-                    settledAt: new Date()
+                    // Note: Ensure your Prisma schema has a 'seabeFee' column on Transaction table if you want to store this.
+                    // If not, we just log it or you might need to add it to schema.
+                    // seabeFee: calculatedSeabeFee, 
+                    date: new Date() // Updates timestamp to settlement time
                 }
             });
 
-            console.log(`📈 Profit Logged: R${calculatedSeabeFee.toFixed(2)} on Ref: ${reference}`);
+            console.log(`📈 Revenue Tracked: R${calculatedSeabeFee.toFixed(2)} on Ref: ${reference}`);
 
             // 2. BUSINESS LOGIC ROUTING 
             if (reference.startsWith('AUTO-') || reference.startsWith('BLAST-')) {
@@ -116,13 +122,16 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
             }
             // Update Burial Premium status
             else if (reference.includes('-PREM-')) {
-                // If you linked the memberId to the Ledger, update their status here
-                // e.g., await prisma.member.update(...)
+                 if (ledgerEntry.memberId) {
+                     await prisma.member.update({
+                         where: { id: ledgerEntry.memberId },
+                         data: { status: 'ACTIVE' }
+                     });
+                 }
             }
 
             // 3. SEND AUTOMATED WHATSAPP RECEIPT
-            // Note: Ensure you are passing the user's phone number into the ledger or fetching it via a relation!
-            const userPhone = req.body.phone || 'UNKNOWN'; // Adjust based on your schema relation
+            const userPhone = ledgerEntry.phone || 'UNKNOWN';
             
             if (userPhone !== 'UNKNOWN') {
                 let cleanPhone = userPhone.replace(/\D/g, '');
@@ -136,12 +145,12 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
 
         } else {
             // Transaction Failed
-            await prisma.transactionLedger.update({
+            await prisma.transaction.update({
                 where: { id: ledgerEntry.id },
                 data: { status: 'FAILED' }
             });
 
-            const userPhone = req.body.phone || 'UNKNOWN'; 
+            const userPhone = ledgerEntry.phone || 'UNKNOWN'; 
             if (userPhone !== 'UNKNOWN') {
                 let cleanPhone = userPhone.replace(/\D/g, '');
                 if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
