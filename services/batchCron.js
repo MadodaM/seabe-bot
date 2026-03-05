@@ -5,6 +5,7 @@ const prisma = new PrismaClient();
 const axios = require('axios');
 const sgMail = require('@sendgrid/mail');
 const { calculateTransaction } = require('./pricingEngine');
+const { validateBatchRecord } = require('./netcashValidator'); // 🚀 NEW: Import Validator
 
 // Ensure SendGrid is configured for Admin Alerts
 if (process.env.SENDGRID_API_KEY) {
@@ -53,34 +54,39 @@ const startBatchEngine = () => {
             let recordCount = 0;
             const serviceKey = process.env.NETCASH_DEBIT_ORDER_KEY;
             
-            // Note: Netcash Tab-delimited format (H = Header, K = Transaction, T = Trailer)
+            // Header Record (H)
             let batchContent = `H\t${serviceKey}\t1\tSeabe_Batch_${Date.now()}\t\t\t\t\t\n`;
 
             // 3. Process Each Member
             for (const member of activeMembers) {
-                // If they don't have a premium set, fallback to the organization's default
-                const basePremium = member.monthlyPremium || member.church?.defaultPremium || 150.00;
-                
-                // 🚀 PRICING ENGINE INTERCEPTION
-                // Pass fee to user, apply the DEBIT_ORDER tier dynamically from DB
-                const pricing = await calculateTransaction(basePremium, 'STANDARD', 'DEBIT_ORDER', true);
-                
-                // Clean phone number to use as the Account Reference
-                let cleanPhone = member.phone.replace(/\D/g, '');
-                if (cleanPhone.startsWith('27')) cleanPhone = '0' + cleanPhone.substring(2);
+                try {
+                    // Fallback premium if missing
+                    const basePremium = member.monthlyPremium || member.church?.defaultPremium || 150.00;
+                    
+                    // 🚀 PRICING ENGINE (Async)
+                    const pricing = await calculateTransaction(basePremium, 'STANDARD', 'DEBIT_ORDER', true);
+                    
+                    // 🚀 VALIDATOR (Sanitize Data)
+                    // This replaces the manual string building and ensures no illegal characters break the batch
+                    const cleanRecord = validateBatchRecord({
+                        ref: member.phone,
+                        name: `${member.firstName} ${member.lastName}`,
+                        amount: pricing.totalChargedToUser,
+                        actionDate: actionDate
+                    });
 
-                const amountInCents = Math.round(pricing.totalChargedToUser * 100); 
-                const formattedAmount = pricing.totalChargedToUser.toFixed(2);
+                    // Append to Batch
+                    batchContent += cleanRecord + "\n";
+                    
+                    totalAmount += pricing.totalChargedToUser;
+                    recordCount++;
 
-                // Transaction Row (K-record)
-                // Format: K | AccountRef | AccountName | Amount | ActionDate | ...
-                batchContent += `K\t${cleanPhone}\t${member.firstName} ${member.lastName}\t${formattedAmount}\t${actionDate}\t\t\t\t\n`;
-
-                totalAmount += pricing.totalChargedToUser;
-                recordCount++;
+                } catch (rowError) {
+                    console.error(`⚠️ [CRON] Skipped member ${member.phone} due to error:`, rowError.message);
+                }
             }
 
-            // 4. Trailer Record (T-record)
+            // 4. Trailer Record (T)
             const formattedTotal = totalAmount.toFixed(2);
             batchContent += `T\t${recordCount}\t${formattedTotal}\t9999\n`;
 
@@ -96,8 +102,7 @@ const startBatchEngine = () => {
             // 6. Push to Netcash API
             console.log(`📤 [CRON] Uploading Batch to Netcash (Total Value: R${formattedTotal})...`);
             
-            // UNCOMMENT TO GO LIVE:
-            /*
+            /* // UNCOMMENT TO GO LIVE:
             const netcashResponse = await axios.post(NETCASH_BATCH_URL, xmlPayload, {
                 headers: { 'Content-Type': 'text/xml' }
             });
