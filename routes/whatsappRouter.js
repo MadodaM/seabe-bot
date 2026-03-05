@@ -357,7 +357,17 @@ router.post('/', (req, res) => {
                         const botNum = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
                         const quoteLink = `${host}/quote.html?code=${session.churchCode}&phone=${cleanPhone}&bot=${botNum}`;
 
-                        const msg = `*Quote: ${plan.planName}*\nBase Premium: *R${plan.monthlyPremium} / month*\n\n*Benefits Included:*\n${plan.benefitsSummary}\n\nTo add extended family (children/adults) and complete your registration, click your secure link below:\n👉 ${quoteLink}\n\nReply *Exit* to return to the start.`;
+                        // 🚀 DYNAMIC PRICING: Calculate Final Debit Order Amount
+                        // We use 'DEBIT_ORDER' method to get the correct R5.00 fee
+                        const pricing = await calculateTransaction(plan.monthlyPremium, 'STANDARD', 'DEBIT_ORDER', true);
+
+                        const msg = `*Quote: ${plan.planName}*\n` +
+                                    `Premium: R${plan.monthlyPremium.toFixed(2)}\n` +
+                                    `Admin Fee: R${pricing.totalFees.toFixed(2)}\n` +
+                                    `*Total Monthly: R${pricing.totalChargedToUser.toFixed(2)}*\n\n` +
+                                    `*Benefits Included:*\n${plan.benefitsSummary}\n\n` +
+                                    `To add extended family (children/adults) and complete your registration, click your secure link below:\n👉 ${quoteLink}\n\n` +
+                                    `Reply *Exit* to return to the start.`;
                         
                         session.step = 'AWAITING_QUOTE_ACCEPTANCE';
                         session.monthlyPremium = plan.monthlyPremium; 
