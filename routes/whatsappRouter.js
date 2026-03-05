@@ -574,6 +574,167 @@ router.post('/', (req, res) => {
                 return;
             }
 
+// ================================================
+            // 👤 MY PROFILE & COURSES MENU
+            // ================================================
+            const profileKeywords = ['my profile', 'profile', 'my courses', 'settings'];
+            if (profileKeywords.includes(incomingMsg)) {
+                if (!member) {
+                    await sendWhatsApp(cleanPhone, "⚠️ You are not registered yet. Reply *Join* to start.");
+                    return;
+                }
+
+                // 1. Fetch Active Enrollments
+                const enrollments = await prisma.enrollment.findMany({
+                    where: { memberId: member.id, status: 'ACTIVE' },
+                    include: { course: true }
+                });
+
+                let menuMsg = `👤 *USER PROFILE: ${member.firstName} ${member.lastName}*\n\n`;
+                menuMsg += `*Active Courses:* ${enrollments.length}\n`;
+                
+                if (enrollments.length > 0) {
+                    enrollments.forEach((e, i) => {
+                        const progress = e.progress || 0;
+                        menuMsg += `\n📚 *${i + 1}. ${e.course.title}*\n   - Current Day: ${progress}\n   - Status: Active`;
+                    });
+                    menuMsg += `\n\n👇 *Reply with an option:*\n`;
+                    menuMsg += `*View 1* - To open course #1\n`;
+                    menuMsg += `*Update Name* - To change your profile name`;
+                } else {
+                    menuMsg += `\nYou have no active courses.\nReply *Courses* to browse catalog.\n\n👇 *Options:*\n*Update Name* - Change profile details`;
+                }
+
+                session.step = 'PROFILE_MENU';
+                // Store enrollments in session for easy access in next step
+                // We map them to a simple index object for safety
+                session.myCourses = enrollments.map(e => ({ id: e.id, title: e.course.title, progress: e.progress || 0 }));
+                
+                await sendWhatsApp(cleanPhone, menuMsg);
+                return;
+            }
+
+            // --- HANDLE PROFILE MENU SELECTIONS ---
+            if (session.step === 'PROFILE_MENU') {
+                
+                // A. Handle "View X" (Select Course)
+                if (incomingMsg.startsWith('view ')) {
+                    const index = parseInt(incomingMsg.split(' ')[1]) - 1;
+                    const courses = session.myCourses || [];
+
+                    if (courses[index]) {
+                        const selectedCourse = courses[index];
+                        session.selectedEnrollmentId = selectedCourse.id;
+                        session.step = 'COURSE_ACTIONS';
+                        
+                        let msg = `📚 *${selectedCourse.title}*\n`;
+                        msg += `You are currently on Day ${selectedCourse.progress}.\n\n`;
+                        msg += `👇 *What would you like to do?*\n`;
+                        msg += `1. *Resume* (Get today's lesson)\n`;
+                        msg += `2. *Previous* (Go back to yesterday's lesson)\n`;
+                        msg += `3. *Back* (Return to profile)`;
+                        
+                        await sendWhatsApp(cleanPhone, msg);
+                    } else {
+                        await sendWhatsApp(cleanPhone, "⚠️ Invalid course number. Please reply with 'View 1', 'View 2', etc.");
+                    }
+                    return;
+                }
+
+                // B. Handle "Update Name"
+                if (incomingMsg === 'update name') {
+                    session.step = 'UPDATE_NAME_FIRST';
+                    await sendWhatsApp(cleanPhone, "📝 Please reply with your *First Name*:");
+                    return;
+                }
+            }
+
+            // --- HANDLE COURSE ACTIONS (Resume / Previous) ---
+            if (session.step === 'COURSE_ACTIONS') {
+                const enrollmentId = session.selectedEnrollmentId;
+                
+                // Fetch fresh data to ensure accuracy
+                const enrollment = await prisma.enrollment.findUnique({
+                    where: { id: enrollmentId },
+                    include: { course: { include: { modules: true } } }
+                });
+
+                if (!enrollment) {
+                    await sendWhatsApp(cleanPhone, "⚠️ Error loading course. Type *Profile* to restart.");
+                    return;
+                }
+
+                if (incomingMsg === '1' || incomingMsg === 'resume') {
+                    // Same logic as "Resume" keyword
+                    const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress;
+                    const module = enrollment.course.modules.find(m => m.day === targetDay || m.dayNumber === targetDay);
+                    
+                    if (module) {
+                        let msg = `🎓 *RESUMING: ${enrollment.course.title}* (Day ${targetDay})\n\n*${module.title}*\n\n${module.content}`;
+                        if (module.quiz) msg += `\n\n🧠 *Quiz:* ${module.quiz}\n_Reply with answer!_`;
+                        await sendWhatsApp(cleanPhone, msg);
+                        // Reset session so they can answer quiz
+                        session.step = null; 
+                        // Update DB to await quiz if needed
+                        if(module.quiz) await prisma.enrollment.update({ where: { id: enrollment.id }, data: { quizState: 'AWAITING_QUIZ' }});
+                    } else {
+                        await sendWhatsApp(cleanPhone, "✅ You are up to date!");
+                    }
+                    return;
+                }
+
+                if (incomingMsg === '2' || incomingMsg === 'previous') {
+                    // Calculate Previous Day
+                    const currentDay = enrollment.progress || 1;
+                    const prevDay = currentDay > 1 ? currentDay - 1 : 1;
+
+                    if (prevDay === currentDay && currentDay === 1) {
+                        await sendWhatsApp(cleanPhone, "⚠️ You are on Day 1. There is no previous lesson.");
+                        return;
+                    }
+
+                    const module = enrollment.course.modules.find(m => m.day === prevDay || m.dayNumber === prevDay);
+                    
+                    if (module) {
+                        // NOTE: We do NOT decrement 'progress' in DB, we just show the content.
+                        let msg = `⏮️ *PREVIOUS LESSON: ${enrollment.course.title}* (Day ${prevDay})\n\n*${module.title}*\n\n${module.content}`;
+                        await sendWhatsApp(cleanPhone, msg);
+                    } else {
+                        await sendWhatsApp(cleanPhone, `⚠️ Could not find content for Day ${prevDay}.`);
+                    }
+                    return;
+                }
+
+                if (incomingMsg === '3' || incomingMsg === 'back') {
+                    // Trigger the profile menu again manually
+                    session.step = null;
+                    // Recursive call to show profile or just instruct user
+                    await sendWhatsApp(cleanPhone, "🔙 Returned to main menu. Reply *Profile* to see your list again.");
+                    return;
+                }
+            }
+
+            // --- HANDLE NAME UPDATES ---
+            if (session.step === 'UPDATE_NAME_FIRST') {
+                session.newFirstName = req.body.Body.trim(); // Use raw casing (e.g. "John")
+                session.step = 'UPDATE_NAME_LAST';
+                await sendWhatsApp(cleanPhone, `Thanks ${session.newFirstName}. Now, please reply with your *Surname*:`);
+                return;
+            }
+
+            if (session.step === 'UPDATE_NAME_LAST') {
+                const newLastName = req.body.Body.trim();
+                
+                await prisma.member.update({
+                    where: { id: member.id },
+                    data: { firstName: session.newFirstName, lastName: newLastName }
+                });
+
+                session.step = null; // Clear session
+                await sendWhatsApp(cleanPhone, `✅ Profile Updated!\n\nNice to meet you, *${session.newFirstName} ${newLastName}*.\n\nReply *Menu* to continue.`);
+                return;
+            }
+
             // ================================================
             // 🏛️ BRANCH ROUTING (CHURCH, NPO, PROVIDERS)
             // ================================================
