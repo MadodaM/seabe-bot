@@ -55,7 +55,7 @@ async function chargeSociety(societyId, churchId, phone, amount, type, descripti
 
         const transactionData = {
             amount: -amount, 
-            type: type,      
+            type: type,       
             status: 'SUCCESS',
             reference: `FEE-${Date.now()}`,
             method: 'INTERNAL', 
@@ -159,16 +159,21 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
 
             // 🚀 OPTION 5: PREMIUM PAYMENT
             else if (incomingMsg === '5') {
-                const amount = member?.monthlyPremium || 150.00;
-                session.tempPaymentAmount = amount;
-                session.step = 'PAYMENT_OPTIONS';
-
-                reply = `💳 *Premium Payment*\nYour base premium is R${amount.toFixed(2)}.\n\nHow would you like to pay today?\n\n` +
-                        `*1️⃣ Set up a Monthly Debit Order* (Recommended)\n` +
-                        `_Automatically pay every month. R5.00 processing fee applies._\n\n` +
-                        `*2️⃣ Make a Once-Off Payment*\n` +
-                        `_Pay manually via Capitec Pay or Card today._\n\n` +
-                        `Reply 1 or 2.`;
+                const amount = member?.monthlyPremium || 0; // Don't guess R150 anymore
+                
+                if (amount === 0) {
+                    reply = `💳 *Premium Payment*\n\nWe don't have a set premium amount for your profile.\n\nPlease reply with the amount you wish to pay (e.g. 150):`;
+                    session.step = 'PAYMENT_AMOUNT_INPUT';
+                } else {
+                    session.tempPaymentAmount = amount;
+                    session.step = 'PAYMENT_OPTIONS';
+                    reply = `💳 *Premium Payment*\nYour base premium is R${amount.toFixed(2)}.\n\nHow would you like to pay today?\n\n` +
+                            `*1️⃣ Set up a Monthly Debit Order* (Recommended)\n` +
+                            `_Automatically pay every month. R5.00 processing fee applies._\n\n` +
+                            `*2️⃣ Make a Once-Off Payment*\n` +
+                            `_Pay manually via Capitec Pay or Card today._\n\n` +
+                            `Reply 1 or 2.`;
+                }
             }
 
             // OPTION 6: LOG A DEATH CLAIM
@@ -203,6 +208,23 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
         }
 
         // ==========================================
+        // 💰 MANUAL PAYMENT AMOUNT INPUT
+        // ==========================================
+        else if (session.step === 'PAYMENT_AMOUNT_INPUT') {
+            const inputAmount = parseFloat(incomingMsg.replace(/\D/g, ''));
+            if (isNaN(inputAmount) || inputAmount < 10) {
+                reply = "⚠️ Invalid amount. Please enter a value like '150'.";
+            } else {
+                session.tempPaymentAmount = inputAmount;
+                session.step = 'PAYMENT_OPTIONS';
+                reply = `💳 *Premium Payment*\nAmount: R${inputAmount.toFixed(2)}.\n\nHow would you like to pay today?\n\n` +
+                        `*1️⃣ Set up a Monthly Debit Order* (Recommended)\n` +
+                        `*2️⃣ Make a Once-Off Payment*\n\n` +
+                        `Reply 1 or 2.`;
+            }
+        }
+
+        // ==========================================
         // 🏦 KYC PROCESSING STATE
         // ==========================================
         else if (session.step === 'KYC_INPUT') {
@@ -230,7 +252,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
         // 💳 PAYMENT PROCESSING STATE
         // ==========================================
         else if (session.step === 'PAYMENT_OPTIONS') {
-            const amount = session.tempPaymentAmount || 150.00;
+            const amount = session.tempPaymentAmount;
             
             if (incomingMsg === '1') {
                 // 1. DEBIT ORDER MANDATE
@@ -246,7 +268,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
 
             } else if (incomingMsg === '2') {
                 // 2. ONCE-OFF PAYMENT
-                const pricing = calculateTransaction(amount, 'STANDARD', 'DEFAULT', true);
+                const pricing = await calculateTransaction(amount, 'STANDARD', 'DEFAULT', true);
                 const ref = `${orgCode}-ONCEOFF-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
                 const link = await gateway.createPaymentLink(pricing.totalChargedToUser, ref, cleanPhone, orgName);
 
@@ -351,31 +373,26 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
 
             if (mediaUrl) {
                 
-                // 💰 BILLING TRIGGER (SAFETY NET ADDED)
+                // 💰 BILLING TRIGGER (Dynamic Pricing Engine)
                 try {
-                    // 1. Try to get dynamic price, but Default to 10.00 if it fails
-                    let claimCost = 10.00; // FORCE UPDATE: Death Claim Billing Fix
-                    try {
-                        const dynamicPrice = await getPrice('CLAIM_AI');
-                        if (dynamicPrice && !isNaN(dynamicPrice)) claimCost = dynamicPrice;
-                    } catch (pErr) {
-                        console.log("⚠️ Pricing service unavailable, using default R10.00");
-                    }
+                    // Fetch dynamic price (Will return DB value or Default from code)
+                    const claimCost = await getPrice('CLAIM_AI'); 
                     
-                    console.log(`💰 Attempting to charge R${claimCost}...`);
+                    console.log(`💰 [BILLING] Charging Society R${claimCost.toFixed(2)} for Claim Analysis...`);
 
                     await chargeSociety(
-                        societyId,       
-                        churchId,        
-                        cleanPhone,      
-                        claimCost,       
-                        'CLAIM_FEE',     
+                        societyId,        
+                        churchId,         
+                        cleanPhone,       
+                        claimCost,        
+                        'CLAIM_FEE',      
                         'Forensic Death Claim Analysis'
                     );
                     
                     console.log("✅ [BILLING] Payment Secured.");
                 } catch (err) {
-                    console.error("🛑 BILLING FAILED (Check DB Logs):", err.message);
+                    console.error("🛑 BILLING FAILED (CRITICAL):", err.message);
+                    // We continue processing even if billing fails, but log it critically
                 }
 
                 // 2. Reply to user
@@ -396,7 +413,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             await sendWhatsApp(cleanPhone, reply);
         }
 
-    } catch (e) {
+    } catch (e) { 
         console.error("❌ Society Bot Error:", e.message);
         await sendWhatsApp(cleanPhone, "⚠️ System error loading society menu.");
     }
