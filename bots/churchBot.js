@@ -4,20 +4,19 @@
 // ==========================================
 
 const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient(); // ✅ Independent DB connection so it never drops
-const netcash = require('../services/netcash'); // 🚀 FIX: Removed Ozow, standardizing on Netcash
+const prisma = new PrismaClient(); // ✅ Independent DB connection
+const netcash = require('../services/netcash'); // 🚀 FIX: Standardized on Netcash
+const { calculateTransaction } = require('../services/pricingEngine'); // 🚀 NEW: Dynamic Pricing
 
-// Safely initialize Twilio for direct background messaging
+// Safely initialize Twilio
 let twilioClient;
 if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
     twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 }
 
-// Our magic background sender!
+// Background Sender
 const sendWhatsApp = async (to, body) => {
     if (!twilioClient) return console.log("⚠️ Twilio Keys Missing! Could not send message.");
-    
-    // ✨ Foolproof cleaner: strips 'whatsapp:' if it exists, then adds it back cleanly
     const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
 
     try {
@@ -32,7 +31,6 @@ const sendWhatsApp = async (to, body) => {
     }
 };
 
-// 🚀 FIX: Forced Netcash exclusively.
 const gateway = netcash;
 
 // --- HELPER: DYNAMIC ADS ---
@@ -55,7 +53,6 @@ async function getAdSuffix(churchCode) {
 async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
     let reply = "";
 
-    // Ensure session properties exist so we don't crash
     session.orgName = session.orgName || member?.church?.name || "Organization";
     session.orgType = session.orgType || member?.church?.type || "CHURCH";
     session.orgCode = session.orgCode || member?.churchCode;
@@ -66,7 +63,7 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
         // ====================================================
         const triggers = ['amen', 'hi', 'menu', 'hello', 'npo', 'donate', 'help', 'pay'];
         
-        if (triggers.includes(incomingMsg.toLowerCase())) { // Added toLowerCase for safety
+        if (triggers.includes(incomingMsg.toLowerCase())) { 
             
             // 🅰️ SCENARIO: NON-PROFIT ORGANIZATION (NPO)
             if (session.orgType === 'NON_PROFIT') {
@@ -203,7 +200,6 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
 
             // --- OPTION 7: HISTORY ---
             else if (incomingMsg === '7') {
-                 // 🚀 FIX: Passed member.id instead of phone number for multi-tenant isolation
                  reply = await gateway.getTransactionHistory(member.id);
                  session.step = 'CHURCH_MENU';
             }
@@ -221,7 +217,7 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
         }
 
         // ====================================================
-        // 3. PAYMENT PROCESSING
+        // 3. PAYMENT PROCESSING (User Input)
         // ====================================================
         else if (session.step === 'CHURCH_PAY') {
             let amount = incomingMsg.replace(/\D/g,''); 
@@ -237,17 +233,17 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
 
             const ref = `${session.orgCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
 
+            // For dynamic user input, we take the amount as is (no added fees typically for donations)
             const link = await gateway.createPaymentLink(amount, ref, cleanPhone, session.orgName);
             
             if (link) {
                 delete session.selectedEvent;
                 reply = `Tap to securely pay R${amount} via Netcash:\n👉 ${link}`;
                 
-                // 🚀 FIX: Embedded memberId to ensure payment registers on this specific profile
                 await prisma.transaction.create({ 
                     data: { 
                         churchCode: session.orgCode, 
-                        memberId: member.id, // <--- Crucial!
+                        memberId: member.id, 
                         phone: cleanPhone, 
                         type: type, 
                         amount: parseFloat(amount), 
@@ -263,7 +259,7 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
         }
 
         // ====================================================
-        // 4. EVENT & PROJECT SELECTION
+        // 4. EVENT & PROJECT SELECTION (With Pricing Engine)
         // ====================================================
         else if (session.step === 'EVENT_SELECT') {
             const index = parseInt(incomingMsg) - 1;
@@ -278,27 +274,36 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
                     session.choice = '1'; 
                     reply = `🏗️ *${selected.name}*\n\nHow much would you like to contribute?`;
                 } else {
-                    session.step = 'CHURCH_PAY'; 
                     session.choice = 'EVENT'; 
+                    
+                    // 🚀 DYNAMIC PRICING IMPLEMENTATION
+                    // Calculates: Ticket Price + Any Platform Fees defined in DB
+                    const pricing = await calculateTransaction(selected.price, 'STANDARD', 'CAPITEC');
+                    
                     const ref = `${session.orgCode}-EVENT-${selected.id}-${Date.now().toString().slice(-5)}`;
                     
-                    const link = await gateway.createPaymentLink(selected.price, ref, cleanPhone, session.orgName);
+                    // Generate Link with TOTAL Amount
+                    const link = await gateway.createPaymentLink(pricing.totalChargedToUser, ref, cleanPhone, session.orgName);
                     
-                    // 🚀 FIX: Attached memberId
                     await prisma.transaction.create({ 
                         data: { 
                             churchCode: session.orgCode, 
                             memberId: member.id, 
                             phone: cleanPhone, 
                             type: `TICKET-${selected.id}`, 
-                            amount: parseFloat(selected.price), 
+                            amount: pricing.totalChargedToUser, // Save total amount
                             reference: ref, 
                             status: 'PENDING', 
                             date: new Date() 
                         } 
                     });
 
-                    reply = `Tap to buy a ticket for ${selected.name} (R${selected.price}) via Netcash:\n👉 ${link}`;
+                    reply = `Tap to buy a ticket for *${selected.name}* via Netcash:\n` +
+                            `Ticket: R${pricing.baseAmount.toFixed(2)}\n` +
+                            (pricing.totalFees > 0 ? `Service Fee: R${pricing.totalFees.toFixed(2)}\n` : '') +
+                            `*Total: R${pricing.totalChargedToUser.toFixed(2)}*\n` +
+                            `👉 ${link}`;
+                    
                     session.step = 'CHURCH_MENU';
                 }
             } else {
@@ -319,7 +324,6 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
                  session.step = 'CANCEL_SUB_SELECT';
             } 
             else if (incomingMsg === '3') {
-                // 🚀 FIX: Used member.id for safe Multi-Tenant update
                 await prisma.member.update({ where: { id: member.id }, data: { churchCode: null, status: 'INACTIVE' } });
                 delete session.mode; 
                 delete session.orgCode;
@@ -332,7 +336,6 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
             if (!newEmail.includes('@')) {
                 reply = "⚠️ Invalid email.";
             } else {
-                // 🚀 FIX: Used member.id
                 await prisma.member.update({ where: { id: member.id }, data: { email: newEmail } });
                 reply = `✅ Email updated to: *${newEmail}*`;
                 session.step = 'CHURCH_MENU'; 
@@ -350,7 +353,6 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
         }
 
         // --- FINAL SEND ---
-        // Send the reply in the background using Twilio Client!
         if (reply) {
             await sendWhatsApp(cleanPhone, reply);
         }
