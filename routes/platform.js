@@ -1,5 +1,5 @@
 // routes/platform.js
-// VERSION: 9.2 (Added Pricing Engine)
+// VERSION: 9.3 (Clean Pricing Engine & Admin Tools)
 require('dotenv').config(); 
 
 const fs = require('fs');
@@ -8,7 +8,7 @@ const express = require('express');
 const { provisionNetCashAccount } = require('../services/netcashProvisioner');
 const sgMail = require('@sendgrid/mail');
 const multer = require('multer');
-const upload = multer({ dest: 'uploads/' }); // For parsing PDF uploads
+const upload = multer({ dest: 'uploads/' }); 
 
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'seabe123';
@@ -42,33 +42,23 @@ function renderAdminPage(title, content, error = null) {
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
                 body { font-family: 'Segoe UI', sans-serif; background: #f4f7f6; margin: 0; display: flex; color: #333; }
-                
-                /* Sidebar */
                 .sidebar { width: 250px; background: #1e272e; color: white; min-height: 100vh; padding: 20px; box-sizing: border-box; position: fixed; }
                 .sidebar h2 { color: #00d2d3; margin-top: 0; padding-bottom:10px; border-bottom:1px solid rgba(255,255,255,0.1); }
                 .sidebar a { display: block; color: #ccc; text-decoration: none; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.05); transition:0.2s; }
                 .sidebar a:hover { color: #00d2d3; padding-left: 5px; }
-                
-                /* Main Area */
                 .main { margin-left: 250px; flex: 1; padding: 40px; }
                 h1 { color: #1e272e; border-bottom: 3px solid #00d2d3; display: inline-block; padding-bottom: 5px; margin-bottom: 30px; }
-                
-                /* Components */
                 .error-box { background: #fee; color: #c00; padding: 15px; border-radius: 5px; border: 1px solid #fcc; margin-bottom: 20px; }
                 table { width:100%; border-collapse:collapse; background:white; border-radius:8px; overflow:hidden; box-shadow:0 4px 10px rgba(0,0,0,0.05); margin-top: 20px; }
                 thead { background:#1e272e; color:white; }
                 th { padding:15px; text-align:left; font-weight:600; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
                 td { padding:12px 15px; border-bottom:1px solid #eee; font-size:14px; }
                 tr:hover { background-color: #f9f9f9; }
-                
-                /* Tags */
                 .tag { padding:4px 8px; border-radius:4px; font-weight:bold; font-size:11px; text-transform:uppercase; display:inline-block; margin-bottom:2px; }
                 .tag-church { background:#eefdf5; color:green; border:1px solid green; }
                 .tag-society { background:#eefafc; color:#0984e3; border:1px solid #0984e3; }
                 .tag-npo { background:#fff8e1; color:#f39c12; border:1px solid #f39c12; }
                 .tag-provider { background:#f5eef8; color:#8e44ad; border:1px solid #8e44ad; }
-                
-                /* Buttons */
                 .btn { padding: 8px 15px; border-radius: 4px; text-decoration: none; font-size: 13px; font-weight: bold; cursor: pointer; border: none; display: inline-block; transition: 0.2s; }
                 .btn-primary { background: #1e272e; color: white; }
                 .btn-primary:hover { background: #00d2d3; color: #1e272e; }
@@ -76,17 +66,11 @@ function renderAdminPage(title, content, error = null) {
                 .btn-save { background: #2ecc71; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; }
                 .btn-danger { background: #ffebee; color: #c0392b; }
                 .btn-collection { background: #c0392b; color: white; margin-left:5px; }
-                .btn-collection:hover { background: #e74c3c; }
-                
-                /* Forms */
                 .card-form { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); max-width: 600px; }
                 .form-group { margin-bottom: 20px; }
                 .form-group label { display: block; margin-bottom: 8px; font-weight: bold; color: #1e272e; font-size: 12px; text-transform: uppercase; }
                 .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; font-family: inherit; }
                 .search-bar { display: flex; gap: 10px; margin-bottom: 20px; align-items: center; }
-                
-                /* Pricing Input */
-                .price-input { padding: 6px; width: 80px; border: 1px solid #ccc; border-radius: 4px; text-align:right; font-weight:bold; }
             </style>
         </head>
         <body>
@@ -95,7 +79,8 @@ function renderAdminPage(title, content, error = null) {
                 <a href="/admin">📊 Dashboard</a>
                 <a href="/admin/global-radar">🌍 Global Radar</a>
                 <a href="/admin/churches">🏢 Organizations</a>
-                <a href="/admin/pricing">🏷️ Pricing Engine</a> <a href="/admin/fica">🛡️ FICA & KYB</a> 
+                <a href="/admin/pricing">🏷️ Pricing Engine</a> 
+                <a href="/admin/fica">🛡️ FICA & KYB</a> 
                 <a href="/admin/compliance">⚖️ Compliance & LSO</a>
                 <a href="/admin/global-collections">💰 Global Collections</a>
                 <a href="/admin/course-builder">🤖 AI Course Builder</a>
@@ -181,18 +166,25 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-// ============================================================
-    // 🏷️ PRICING ENGINE & MARGIN SIMULATOR
+    // ============================================================
+    // 🏷️ PRICING ENGINE (Simulator + Tables + Reset)
     // ============================================================
     app.get('/admin/pricing', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
 
         try {
+            // 1. FORCE SYNC: Ensure DB has all keys
+            const { loadPrices } = require('../services/pricing');
+            await loadPrices(); 
+
+            // 2. Fetch all prices
             const allPrices = await prisma.servicePrice.findMany({ orderBy: { code: 'asc' } });
             
+            // 3. Group them
             const platformFees = allPrices.filter(p => !p.code.startsWith('TX_') && !p.code.startsWith('MOD_'));
             const txVars = allPrices.filter(p => p.code.startsWith('TX_') || p.code.startsWith('MOD_'));
 
+            // 4. Helper for Table Rows
             const makeRows = (data) => data.map(p => `
                 <tr>
                     <td><span class="tag" style="background:#edf2f7; color:#2d3748; font-family:monospace; border:none;">${p.code}</span></td>
@@ -208,8 +200,8 @@ module.exports = function(app, { prisma }) {
                 </tr>
             `).join('');
 
-            // 🧮 Margin Simulator Component
-            const simulatorHTML = `
+            // --- COMPONENT 1: The Simulator ---
+            const simulatorSection = `
                 <div class="card-form" style="max-width:100%; margin-bottom:30px; border-top: 5px solid #00d2d3;">
                     <h3 style="margin-top:0;">📈 Profit Margin Simulator</h3>
                     <p style="font-size:12px; color:#718096; margin-top:-10px;">Test your pricing strategy before committing changes.</p>
@@ -245,7 +237,6 @@ module.exports = function(app, { prisma }) {
                         const amount = parseFloat(document.getElementById('simPremium').value) || 0;
                         const method = document.getElementById('simMethod').value;
                         
-                        // Grab current values from the forms above (live preview)
                         const getVal = (code) => {
                             const input = document.querySelector('input[name="code"][value="'+code+'"]');
                             return input ? parseFloat(input.parentElement.querySelector('input[name="amount"]').value) : 0;
@@ -263,16 +254,33 @@ module.exports = function(app, { prisma }) {
                         document.getElementById('simProfit').innerText = 'R ' + profit.toFixed(2);
                         document.getElementById('simRetail').innerText = 'R ' + rtFee.toFixed(2);
                         document.getElementById('simWholesale').innerText = 'R ' + whCost.toFixed(2);
-                        
-                        // Color coding
                         document.getElementById('simProfit').style.color = profit >= 1 ? '#10b981' : '#ef4444';
                     }
                     window.onload = runSim;
                 </script>
             `;
-			
-			// ... (Inside app.get('/admin/pricing') ...
 
+            // --- COMPONENT 2: The Tables ---
+            const tablesSection = `
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:30px;">
+                    <div class="card-form" style="max-width:100%;">
+                        <h3 style="margin-top:0;">🛡️ Fixed Service Fees (ZAR)</h3>
+                        <table>
+                            <thead><tr><th>Code</th><th>Amount</th></tr></thead>
+                            <tbody>${makeRows(platformFees)}</tbody>
+                        </table>
+                    </div>
+                    <div class="card-form" style="max-width:100%;">
+                        <h3>💳 Transaction & Module Variables</h3>
+                        <table>
+                            <thead><tr><th>Code</th><th>Variable</th></tr></thead>
+                            <tbody>${makeRows(txVars)}</tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+
+            // --- COMPONENT 3: The Danger Zone ---
             const resetSection = `
                 <div style="margin-top:50px; border-top:1px solid #e2e8f0; padding-top:20px; text-align:right;">
                     <h4 style="color:#e53e3e; margin:0;">🚨 Danger Zone</h4>
@@ -285,61 +293,19 @@ module.exports = function(app, { prisma }) {
                 </div>
             `;
 
-            // Add it to the final HTML response
-            const finalPricingHTML = `
-                ${simulatorHTML}
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:30px;">
-                    <div class="card-form" style="max-width:100%;">
-                        <h3 style="margin-top:0;">🛡️ Fixed Service Fees (ZAR)</h3>
-                        <table>
-                            <thead><tr><th>Code</th><th>Amount</th></tr></thead>
-                            <tbody>${makeRows(platformFees)}</tbody>
-                        </table>
-                    </div>
-                    <div class="card-form" style="max-width:100%;">
-                        <h3>💳 Transaction & Module Variables</h3>
-                        <table>
-                            <thead><tr><th>Code</th><th>Variable</th></tr></thead>
-                            <tbody>${makeRows(txVars)}</tbody>
-                        </table>
-                    </div>
-                </div>
-                ${resetSection} 
-            `;
-            
-            res.send(renderAdminPage('Pricing Engine', finalPricingHTML));
+            // Combine everything into one unique variable
+            const fullPageContent = simulatorSection + tablesSection + resetSection;
 
-            const finalPricingHTML = `
-                ${simulatorHTML}
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:30px;">
-                    <div class="card-form" style="max-width:100%;">
-                        <h3 style="margin-top:0;">🛡️ Fixed Service Fees (ZAR)</h3>
-                        <table>
-                            <thead><tr><th>Code</th><th>Amount</th></tr></thead>
-                            <tbody>${makeRows(platformFees)}</tbody>
-                        </table>
-                    </div>
-                    <div class="card-form" style="max-width:100%;">
-                        <h3>💳 Transaction & Module Variables</h3>
-                        <table>
-                            <thead><tr><th>Code</th><th>Variable</th></tr></thead>
-                            <tbody>${makeRows(txVars)}</tbody>
-                        </table>
-                    </div>
-                </div>
-            `;
-
-            res.send(renderAdminPage('Pricing Engine', finalPricingHTML));
+            res.send(renderAdminPage('Pricing Engine', fullPageContent));
 
         } catch (e) {
             res.send(renderAdminPage('Pricing Error', '', e.message));
         }
     });
-	
+
     // POST: Update Price
     app.post('/admin/pricing/update', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
-        
         try {
             const { code, amount } = req.body;
             await prisma.servicePrice.update({
@@ -352,7 +318,7 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-// POST: Emergency Reset to Defaults
+    // POST: Emergency Reset to Defaults
     app.post('/admin/pricing/reset', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         
