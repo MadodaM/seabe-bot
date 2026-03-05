@@ -10,10 +10,10 @@ const { calculateTransaction } = require('./pricingEngine'); // 🚀 ADDED PRICI
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const startBillingEngine = () => {
-    console.log("⚙️ Billing Engine Initialized. Scheduled for 08:00 AM (SAST) daily.");
+    console.log("⚙️ Billing Engine Initialized. Scheduled for 02:00 AM (SAST) daily.");
 
-    // The cron expression '0 8 * * *' means: Minute 0, Hour 8, Every Day, Every Month
-    cron.schedule('0 8 * * *', async () => {
+    // The cron expression '0 2 * * *' means: Minute 0, Hour 2, Every Day, Every Month
+    cron.schedule('0 2 * * *', async () => {
         console.log("⏰ [CRON] Waking up Billing Engine...");
 
         try {
@@ -36,9 +36,9 @@ const startBillingEngine = () => {
                     const org = await prisma.church.findUnique({ where: { code: debt.churchCode } });
                     const orgName = org ? org.name : "Your Organization";
 
-                    // 🚀 PRICING ENGINE INTERCEPTION
-                    // We assume STANDARD tier, DEFAULT gateway, and pass fees to user
-                    const pricing = calculateTransaction(debt.amount, 'STANDARD', 'DEFAULT', true);
+                    // 🚀 PRICING ENGINE INTERCEPTION (Async + Capitec)
+                    // We explicitly use 'CAPITEC' to get the lower wholesale rate for automated billing
+                    const pricing = await calculateTransaction(debt.amount, 'STANDARD', 'CAPITEC', true);
 
                     // Generate a unique Netcash tracking reference
                     const ref = `AUTO-${debt.reference}-${Date.now().toString().slice(-4)}`;
@@ -80,7 +80,7 @@ const startBillingEngine = () => {
         }
     }, {
         scheduled: true,
-        timezone: "Africa/Johannesburg" // Ensures it runs at 8 AM South African time, regardless of Render's server timezone!
+        timezone: "Africa/Johannesburg" // Ensures it runs at 2 AM South African time
     });
 };
 
