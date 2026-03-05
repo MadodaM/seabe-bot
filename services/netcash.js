@@ -4,12 +4,14 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 require('dotenv').config();
 
-// 🚀 NEW: Import the Pricing Engine
+// 🚀 Import the Pricing Engine
 const { calculateTransaction } = require('./pricingEngine');
 
-// NetCash uses specific Service Keys for different features
+// 🔑 NETCASH CONFIGURATION
 const PAYNOW_SERVICE_KEY = process.env.NETCASH_PAYNOW_KEY;
 const DEBIT_ORDER_KEY = process.env.NETCASH_DEBIT_ORDER_KEY;
+const VENDOR_KEY = '24ade73c-98cf-47b3-99be-cc7b867b3080'; // 🚀 COMPLIANCE: Official Netcash ISV Key
+const PAYNOW_URL = "https://paynow.netcash.co.za/site/paynow.aspx";
 
 // ==========================================
 // 🛠️ HELPER: MONEY SANITIZER
@@ -17,13 +19,47 @@ const DEBIT_ORDER_KEY = process.env.NETCASH_DEBIT_ORDER_KEY;
 function sanitizeMoney(amount) {
     let cleanString = amount.toString().replace(/,/g, '.').replace(/[^\d.]/g, '');
     let numericAmount = parseFloat(cleanString);
-    if (isNaN(numericAmount) || numericAmount <= 0) return 0;
-    return numericAmount.toFixed(2); // NetCash also expects standard decimal format
+    if (isNaN(numericAmount) || numericAmount <= 0) return "0.00";
+    return numericAmount.toFixed(2); 
 }
 
 // ==========================================
-// 1. STANDARD PAYMENT LINK (Pay Now)
-// NOTE: This expects the FINAL amount (After Pricing Engine has run in the router)
+// 1. GENERATE COMPLIANT POST FORM (Auto-Submit)
+// 🚀 This replaces the old GET redirect to ensure ISV Compliance
+// ==========================================
+function generateAutoPostForm(txData) {
+    const amount = sanitizeMoney(txData.amount);
+    
+    // We render a full HTML page that automatically submits the form upon loading
+    return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Secure Payment Redirect</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>body{display:flex;justify-content:center;align-items:center;height:100vh;background:#f4f7f6;font-family:sans-serif;}.loader{border:4px solid #f3f3f3;border-top:4px solid #3498db;border-radius:50%;width:30px;height:30px;animation:spin 1s linear infinite;}@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}</style>
+    </head>
+    <body onload="document.forms['netcash_pay'].submit()">
+        <div style="text-align:center;">
+            <div class="loader" style="margin:0 auto 15px auto;"></div>
+            <p><strong>Securing connection to Netcash...</strong></p>
+            <p style="font-size:12px; color:#7f8c8d;">Please do not close this window.</p>
+        </div>
+        
+        <form name="netcash_pay" action="${PAYNOW_URL}" method="POST" target="_top">
+            <input type="hidden" name="M1" value="${PAYNOW_SERVICE_KEY}">
+            <input type="hidden" name="M2" value="${VENDOR_KEY}"> <input type="hidden" name="p2" value="${txData.reference}">
+            <input type="hidden" name="p3" value="${txData.description}">
+            <input type="hidden" name="p4" value="${amount}">
+            <input type="hidden" name="Budget" value="Y"> <input type="hidden" name="p11" value="${txData.phone}">
+        </form>
+    </body>
+    </html>
+    `;
+}
+
+// ==========================================
+// 2. STANDARD PAYMENT LINK (Wrapper)
 // ==========================================
 async function createPaymentLink(finalAmount, ref, userPhone, orgName) {
     try {
@@ -35,13 +71,14 @@ async function createPaymentLink(finalAmount, ref, userPhone, orgName) {
             return null;
         }
 
-        // 🚀 LIVE NETCASH URL GENERATION
-        // NetCash Pay Now requires passing data via query parameters
-        // Method 8 = Credit Card / Instant EFT / Scan to Pay
-        const baseUrl = "https://paynow.netcash.co.za/site/paynow.aspx";
-        const paymentUrl = `${baseUrl}?Method=8&ServiceKey=${PAYNOW_SERVICE_KEY}&p2=${ref}&p3=Payment to ${encodeURIComponent(orgName)}&p4=${cleanAmount}&p11=${userPhone}`;
+        const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
         
-        return paymentUrl;
+        // 🚀 COMPLIANCE UPDATE:
+        // Instead of sending the user directly to Netcash (GET), we send them to OUR internal route (GET).
+        // Our internal route (routes/link.js) will then render the POST form (generateAutoPostForm).
+        // We pass the parameters securely in the URL query string.
+        const encodedOrg = encodeURIComponent(orgName);
+        return `${host}/pay/redirect/${ref}?a=${cleanAmount}&p=${userPhone}&o=${encodedOrg}`;
 
     } catch (error) {
         console.error("❌ NetCash Link Error:", error.message);
@@ -50,7 +87,7 @@ async function createPaymentLink(finalAmount, ref, userPhone, orgName) {
 }
 
 // ==========================================
-// 2. VERIFY PAYMENT
+// 3. VERIFY PAYMENT (Deprecated/Polling)
 // ==========================================
 async function verifyPayment(reference) {
     try {
@@ -66,7 +103,7 @@ async function verifyPayment(reference) {
 }
 
 // ==========================================
-// 3. TRANSACTION HISTORY (Multi-Tenant Safe)
+// 4. TRANSACTION HISTORY
 // ==========================================
 async function getTransactionHistory(memberId) {
     try {
@@ -91,19 +128,16 @@ async function getTransactionHistory(memberId) {
 }
 
 // ==========================================
-// 4. DEBIT ORDERS (Mandates)
+// 5. DEBIT ORDERS (Mandates)
 // ==========================================
 async function setupDebitOrderMandate(baseAmount, userPhone, orgName, ref) {
     try {
         // 🚀 PRICING ENGINE INTERCEPTION (ASYNC UPDATE)
-        // Calculate the exact recurring monthly deduction including our margin
-        // We use 'await' here because calculateTransaction fetches DB prices now
         const pricing = await calculateTransaction(baseAmount, 'STANDARD', 'DEBIT_ORDER', true);
 
         console.log(`💳 Generating Netcash Mandate for ${userPhone}. Base: R${baseAmount} -> Monthly Total: R${pricing.totalChargedToUser}`);
 
         // Netcash Debit Order API integration goes here.
-        // We generate a secure link where the user types in their bank account details and accepts the mandate.
         const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
         const mandateUrl = `${host}/mandate/sign?ref=${ref}&amount=${pricing.totalChargedToUser}&phone=${userPhone}&org=${encodeURIComponent(orgName)}`;
         
@@ -118,13 +152,13 @@ async function setupDebitOrderMandate(baseAmount, userPhone, orgName, ref) {
 }
 
 async function listActiveSubscriptions(phone) {
-    // Placeholder: This typically requires a separate API call to Netcash NIF
-    // For now, we return a generic message as this integration is complex.
+    // Placeholder: This requires a separate API call to Netcash NIF
     return "To view or cancel active debit orders, please contact your administrator directly.";
 }
 
 module.exports = { 
     createPaymentLink, 
+    generateAutoPostForm, // 🚀 New Export
     verifyPayment, 
     getTransactionHistory,
     setupDebitOrderMandate,
