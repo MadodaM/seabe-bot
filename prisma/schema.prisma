@@ -30,6 +30,7 @@ model Member {
   isIdVerified      Boolean   @default(false)
   rejectionReason   String?
   verifiedAt        DateTime?
+  consecutiveFailures Int @default(0) // 🛡️ Tracks Clause 8.2 (2 Strikes)
 
 // 🚀 NEW: The specific day of the month they want to be billed (1-31)
   collectionDay   Int       @default(1)
