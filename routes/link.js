@@ -95,6 +95,9 @@ module.exports = (app, { prisma }) => {
                         <div class="input-group">
                             <label>Payer Details</label>
                             <input type="text" name="name" placeholder="Full Name" required style="margin-bottom:10px">
+                            
+                            <input type="email" name="email" placeholder="Email Address (For Invoice)" required style="margin-bottom:10px">
+                            
                             <input type="tel" name="phone" placeholder="WhatsApp Number" required>
                         </div>
                         <button type="submit" class="btn">Proceed to Secure Pay</button>
@@ -129,7 +132,7 @@ module.exports = (app, { prisma }) => {
     router.post('/link/:code/process', async (req, res) => {
         try {
             const { code } = req.params;
-            const { amount, type, phone } = req.body;
+            const { amount, type, phone, email } = req.body; // 🚀 Capture Email
             const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
             
             if (!org) return res.status(404).send("Organization not found.");
@@ -162,13 +165,13 @@ module.exports = (app, { prisma }) => {
                 }
             });
 
-            // 6. 🚀 COMPLIANCE FIX: Render Auto-POST Form
-            // This replaces the old 'res.redirect' which was a security risk.
+            // 6. 🚀 Render Auto-POST Form (Passing Email)
             const htmlForm = netcash.generateAutoPostForm({
                 amount: pricing.totalChargedToUser,
                 reference: ref,
                 description: `Payment to ${org.name} (${type})`,
-                phone: cleanPhone
+                phone: cleanPhone,
+                email: email // 🚀 Pass to Netcash p10
             });
 
             res.send(htmlForm);
@@ -189,6 +192,7 @@ module.exports = (app, { prisma }) => {
             const amount = req.query.a; 
             const orgName = req.query.o || 'Seabe Merchant';
             const phone = req.query.p || '';
+            const email = req.query.e || ''; // 🚀 Capture Email from URL
 
             if (!amount) return res.send("Invalid Link: Missing Amount");
 
@@ -196,7 +200,8 @@ module.exports = (app, { prisma }) => {
                 amount: amount,
                 reference: ref,
                 description: `Payment to ${orgName}`,
-                phone: phone
+                phone: phone,
+                email: email // 🚀 Pass to Netcash p10
             });
 
             res.send(htmlForm);

@@ -1,4 +1,5 @@
 // services/netcash.js
+// VERSION: 9.6 (Full Compliance + Email Invoicing)
 const axios = require('axios');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -14,7 +15,6 @@ const PAYNOW_URL = "https://paynow.netcash.co.za/site/paynow.aspx";
 
 // 🚀 VENDOR KEY (Optional)
 // Only load this if you have been issued an ISV Key by Netcash.
-// If missing, we simply won't send the M2 field.
 const VENDOR_KEY = process.env.NETCASH_VENDOR_KEY; 
 
 // ==========================================
@@ -29,7 +29,6 @@ function sanitizeMoney(amount) {
 
 // ==========================================
 // 1. GENERATE COMPLIANT POST FORM (Auto-Submit)
-// 🚀 This replaces the old GET redirect to ensure ISV Compliance
 // ==========================================
 function generateAutoPostForm(txData) {
     const amount = sanitizeMoney(txData.amount);
@@ -56,10 +55,13 @@ function generateAutoPostForm(txData) {
         
         <form name="netcash_pay" action="${PAYNOW_URL}" method="POST" target="_top">
             <input type="hidden" name="M1" value="${PAYNOW_SERVICE_KEY}">
-            ${vendorInput} <input type="hidden" name="p2" value="${txData.reference}">
+            ${vendorInput} 
+            <input type="hidden" name="p2" value="${txData.reference}">
             <input type="hidden" name="p3" value="${txData.description}">
             <input type="hidden" name="p4" value="${amount}">
-            <input type="hidden" name="Budget" value="Y"> <input type="hidden" name="p11" value="${txData.phone}">
+            <input type="hidden" name="Budget" value="Y"> <input type="hidden" name="p10" value="${txData.email || ''}"> 
+            
+            <input type="hidden" name="p11" value="${txData.phone}">
         </form>
     </body>
     </html>
@@ -69,7 +71,7 @@ function generateAutoPostForm(txData) {
 // ==========================================
 // 2. STANDARD PAYMENT LINK (Wrapper)
 // ==========================================
-async function createPaymentLink(finalAmount, ref, userPhone, orgName) {
+async function createPaymentLink(finalAmount, ref, userPhone, orgName, email = '') {
     try {
         const cleanAmount = sanitizeMoney(finalAmount);
         if (cleanAmount == 0) return null;
@@ -81,12 +83,11 @@ async function createPaymentLink(finalAmount, ref, userPhone, orgName) {
 
         const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
         
-        // 🚀 COMPLIANCE UPDATE:
-        // Instead of sending the user directly to Netcash (GET), we send them to OUR internal route (GET).
-        // Our internal route (routes/link.js) will then render the POST form (generateAutoPostForm).
-        // We pass the parameters securely in the URL query string.
+        // Encode parameters securely
         const encodedOrg = encodeURIComponent(orgName);
-        return `${host}/pay/redirect/${ref}?a=${cleanAmount}&p=${userPhone}&o=${encodedOrg}`;
+        const encodedEmail = encodeURIComponent(email); // 🚀 Add Email to URL
+        
+        return `${host}/pay/redirect/${ref}?a=${cleanAmount}&p=${userPhone}&o=${encodedOrg}&e=${encodedEmail}`;
 
     } catch (error) {
         console.error("❌ NetCash Link Error:", error.message);
@@ -99,9 +100,6 @@ async function createPaymentLink(finalAmount, ref, userPhone, orgName) {
 // ==========================================
 async function verifyPayment(reference) {
     try {
-        // ⚠️ DEPRECATED FOR PRODUCTION
-        // We now rely 100% on the `routes/webhooks.js` file (ITN) to verify payments.
-        // Polling is inefficient. We return null here to force the system to wait for the Webhook.
         console.log(`ℹ️ Payment verification for ${reference} deferred to Webhook.`);
         return null; 
     } catch (error) {
@@ -160,7 +158,6 @@ async function setupDebitOrderMandate(baseAmount, userPhone, orgName, ref) {
 }
 
 async function listActiveSubscriptions(phone) {
-    // Placeholder: This requires a separate API call to Netcash NIF
     return "To view or cancel active debit orders, please contact your administrator directly.";
 }
 
