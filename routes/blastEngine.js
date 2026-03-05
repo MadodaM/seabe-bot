@@ -43,9 +43,10 @@ router.post('/api/crm/collections/blast/:churchCode', async (req, res) => {
         // 3. Fire the Blast
         for (const account of overdueAccounts) {
             try {
-                // 🚀 PRICING ENGINE INTERCEPTION
-                // Assuming STANDARD tier, DEFAULT gateway, and passing fees to the user (true)
-                const pricing = calculateTransaction(account.amount, 'STANDARD', 'DEFAULT', true);
+                // 🚀 DYNAMIC PRICING: Calculate Final Amount
+                // We use 'CAPITEC' as the preferred low-cost method for mass blasts
+                // This ensures the fee calculation uses the exact vars from your DB (e.g. 2.5% vs 3.5%)
+                const pricing = await calculateTransaction(account.amount, 'STANDARD', 'CAPITEC', true);
 
                 // Generate a unique Netcash link using the NEW total charged to the user
                 const ref = `BLAST-${account.reference}-${Date.now().toString().slice(-4)}`;
