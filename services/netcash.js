@@ -10,8 +10,12 @@ const { calculateTransaction } = require('./pricingEngine');
 // 🔑 NETCASH CONFIGURATION
 const PAYNOW_SERVICE_KEY = process.env.NETCASH_PAYNOW_KEY;
 const DEBIT_ORDER_KEY = process.env.NETCASH_DEBIT_ORDER_KEY;
-const VENDOR_KEY = '24ade73c-98cf-47b3-99be-cc7b867b3080'; // 🚀 COMPLIANCE: Official Netcash ISV Key
 const PAYNOW_URL = "https://paynow.netcash.co.za/site/paynow.aspx";
+
+// 🚀 VENDOR KEY (Optional)
+// Only load this if you have been issued an ISV Key by Netcash.
+// If missing, we simply won't send the M2 field.
+const VENDOR_KEY = process.env.NETCASH_VENDOR_KEY; 
 
 // ==========================================
 // 🛠️ HELPER: MONEY SANITIZER
@@ -30,7 +34,11 @@ function sanitizeMoney(amount) {
 function generateAutoPostForm(txData) {
     const amount = sanitizeMoney(txData.amount);
     
-    // We render a full HTML page that automatically submits the form upon loading
+    // Conditional Vendor Key Logic
+    const vendorInput = VENDOR_KEY 
+        ? `<input type="hidden" name="M2" value="${VENDOR_KEY}">` 
+        : ``;
+
     return `
     <!DOCTYPE html>
     <html>
@@ -48,7 +56,7 @@ function generateAutoPostForm(txData) {
         
         <form name="netcash_pay" action="${PAYNOW_URL}" method="POST" target="_top">
             <input type="hidden" name="M1" value="${PAYNOW_SERVICE_KEY}">
-            <input type="hidden" name="M2" value="${VENDOR_KEY}"> <input type="hidden" name="p2" value="${txData.reference}">
+            ${vendorInput} <input type="hidden" name="p2" value="${txData.reference}">
             <input type="hidden" name="p3" value="${txData.description}">
             <input type="hidden" name="p4" value="${amount}">
             <input type="hidden" name="Budget" value="Y"> <input type="hidden" name="p11" value="${txData.phone}">
@@ -158,7 +166,7 @@ async function listActiveSubscriptions(phone) {
 
 module.exports = { 
     createPaymentLink, 
-    generateAutoPostForm, // 🚀 New Export
+    generateAutoPostForm,
     verifyPayment, 
     getTransactionHistory,
     setupDebitOrderMandate,
