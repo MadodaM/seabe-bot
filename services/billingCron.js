@@ -10,10 +10,10 @@ const { calculateTransaction } = require('./pricingEngine'); // 🚀 ADDED PRICI
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const startBillingEngine = () => {
-    console.log("⚙️ Billing Engine Initialized. Scheduled for 02:00 AM (SAST) daily.");
+    console.log("⚙️ Billing Engine Initialized. Scheduled for 09:15 AM (SAST) daily.");
 
-    // The cron expression '0 2 * * *' means: Minute 0, Hour 2, Every Day, Every Month
-    cron.schedule('0 2 * * *', async () => {
+    // The cron expression '15 9 * * *' means: Minute 15, Hour 9, Every Day
+    cron.schedule('15 9 * * *', async () => {
         console.log("⏰ [CRON] Waking up Billing Engine...");
 
         try {
@@ -80,7 +80,7 @@ const startBillingEngine = () => {
         }
     }, {
         scheduled: true,
-        timezone: "Africa/Johannesburg" // Ensures it runs at 2 AM South African time
+        timezone: "Africa/Johannesburg" // Ensures it runs at 09:15 SAST
     });
 };
 
