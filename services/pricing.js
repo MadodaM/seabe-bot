@@ -96,4 +96,4 @@ async function getPrice(code) {
     return price;
 }
 
-module.exports = { getPrice };
+module.exports = { getPrice, loadPrices, DEFAULT_PRICES };

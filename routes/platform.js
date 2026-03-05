@@ -270,6 +270,44 @@ module.exports = function(app, { prisma }) {
                     window.onload = runSim;
                 </script>
             `;
+			
+			// ... (Inside app.get('/admin/pricing') ...
+
+            const resetSection = `
+                <div style="margin-top:50px; border-top:1px solid #e2e8f0; padding-top:20px; text-align:right;">
+                    <h4 style="color:#e53e3e; margin:0;">🚨 Danger Zone</h4>
+                    <p style="font-size:12px; color:#718096; margin-bottom:10px;">
+                        Messed up the pricing? Click below to revert all fees to the system defaults defined in code.
+                    </p>
+                    <form action="/admin/pricing/reset" method="POST" onsubmit="return confirm('⚠️ Are you sure? This will overwrite all custom pricing with the system defaults.');">
+                        <button class="btn btn-danger" style="background:#e53e3e; padding:8px 15px;">Reset All to Defaults</button>
+                    </form>
+                </div>
+            `;
+
+            // Add it to the final HTML response
+            const finalPricingHTML = `
+                ${simulatorHTML}
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:30px;">
+                    <div class="card-form" style="max-width:100%;">
+                        <h3 style="margin-top:0;">🛡️ Fixed Service Fees (ZAR)</h3>
+                        <table>
+                            <thead><tr><th>Code</th><th>Amount</th></tr></thead>
+                            <tbody>${makeRows(platformFees)}</tbody>
+                        </table>
+                    </div>
+                    <div class="card-form" style="max-width:100%;">
+                        <h3>💳 Transaction & Module Variables</h3>
+                        <table>
+                            <thead><tr><th>Code</th><th>Variable</th></tr></thead>
+                            <tbody>${makeRows(txVars)}</tbody>
+                        </table>
+                    </div>
+                </div>
+                ${resetSection} 
+            `;
+            
+            res.send(renderAdminPage('Pricing Engine', finalPricingHTML));
 
             const finalPricingHTML = `
                 ${simulatorHTML}
@@ -314,6 +352,29 @@ module.exports = function(app, { prisma }) {
         }
     });
 
+// POST: Emergency Reset to Defaults
+    app.post('/admin/pricing/reset', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        
+        // Import the master defaults
+        const { DEFAULT_PRICES } = require('../services/pricing');
+
+        try {
+            console.log("⚠️ [ADMIN] Resetting Pricing to Defaults...");
+            
+            // Loop through defaults and force update the DB
+            for (const [code, amount] of Object.entries(DEFAULT_PRICES)) {
+                await prisma.servicePrice.upsert({
+                    where: { code: code },
+                    update: { amount: amount },
+                    create: { code, amount, description: `Auto-generated price for ${code}` }
+                });
+            }
+            res.redirect('/admin/pricing');
+        } catch (e) {
+            res.send(renderAdminPage('Reset Error', '', e.message));
+        }
+    });
 
     // --- GLOBAL FRAUD & CLAIMS RADAR (IFRAME) ---
     app.get('/admin/global-radar', async (req, res) => {
