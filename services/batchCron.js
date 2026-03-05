@@ -62,20 +62,18 @@ const startBatchEngine = () => {
                 const basePremium = member.monthlyPremium || member.church?.defaultPremium || 150.00;
                 
                 // 🚀 PRICING ENGINE INTERCEPTION
-                // Pass fee to user, apply the flat R5.00 DEBIT_ORDER tier
-                const pricing = calculateTransaction(basePremium, 'STANDARD', 'DEBIT_ORDER', true);
+                // Pass fee to user, apply the DEBIT_ORDER tier dynamically from DB
+                const pricing = await calculateTransaction(basePremium, 'STANDARD', 'DEBIT_ORDER', true);
                 
                 // Clean phone number to use as the Account Reference
                 let cleanPhone = member.phone.replace(/\D/g, '');
                 if (cleanPhone.startsWith('27')) cleanPhone = '0' + cleanPhone.substring(2);
 
-                const amountInCents = Math.round(pricing.totalChargedToUser * 100); // Netcash requires cents in some formats, but for standard TXT, it's 155.00. We will use two decimals.
+                const amountInCents = Math.round(pricing.totalChargedToUser * 100); 
                 const formattedAmount = pricing.totalChargedToUser.toFixed(2);
 
                 // Transaction Row (K-record)
                 // Format: K | AccountRef | AccountName | Amount | ActionDate | ...
-                // Note: For live production, you pull the actual branch/account from the DB if stored.
-                // Since DebiCheck validates via Phone/ID, the reference ties it to the Netcash mandate.
                 batchContent += `K\t${cleanPhone}\t${member.firstName} ${member.lastName}\t${formattedAmount}\t${actionDate}\t\t\t\t\n`;
 
                 totalAmount += pricing.totalChargedToUser;
@@ -98,7 +96,8 @@ const startBatchEngine = () => {
             // 6. Push to Netcash API
             console.log(`📤 [CRON] Uploading Batch to Netcash (Total Value: R${formattedTotal})...`);
             
-            /* // UNCOMMENT THIS BLOCK TO ACTUALLY FIRE TO NETCASH
+            // UNCOMMENT TO GO LIVE:
+            /*
             const netcashResponse = await axios.post(NETCASH_BATCH_URL, xmlPayload, {
                 headers: { 'Content-Type': 'text/xml' }
             });
