@@ -1,11 +1,12 @@
 // routes/platform.js
-// VERSION: 9.3 (Clean Pricing Engine & Admin Tools)
+// VERSION: 9.4 (Restored Full Logic + Added QR Generator Panel)
 require('dotenv').config(); 
 
 const fs = require('fs');
 const { processAndImportCoursePDF } = require('../services/courseImporter');
 const express = require('express');
 const { provisionNetCashAccount } = require('../services/netcashProvisioner');
+const { generatePaymentQR } = require('../services/paymentQrgen'); // 🚀 NEW: QR Module Imported
 const sgMail = require('@sendgrid/mail');
 const multer = require('multer');
 const upload = multer({ dest: 'uploads/' }); 
@@ -844,7 +845,6 @@ module.exports = function(app, { prisma }) {
         } catch (e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
-    // 2. ADD ORGANIZATION FORM
     app.get('/admin/churches/add', (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         res.send(renderAdminPage('Add New Organization', `
@@ -884,22 +884,51 @@ module.exports = function(app, { prisma }) {
         } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
+    // 🚀 EDITED: EDIT ORGANIZATION (With QR Code Generator)
     app.get('/admin/churches/edit/:code', async (req, res) => {
-        const c = await prisma.church.findUnique({ where: { code: req.params.code } });
-        res.send(renderAdminPage('Edit Organization', `
-            <form action="/admin/churches/update" method="POST" class="card-form">
-                <input type="hidden" name="code" value="${c.code}">
-                <div class="form-group"><label>Name (Locked)</label><input value="${c.name}" disabled style="background:#f0f0f0;"></div>
-                <div class="form-group"><label>Admin Phone</label><input name="adminPhone" value="${c.adminPhone}"></div>
-                <div class="form-group"><label>Email</label><input name="email" value="${c.email}"></div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px;">
-                    <div class="form-group"><label>Premium</label><input name="defaultPremium" value="${c.defaultPremium}"></div>
-                    <div class="form-group"><label>Sub Fee</label><input name="subscriptionFee" value="${c.subscriptionFee}"></div>
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        
+        try {
+            const c = await prisma.church.findUnique({ where: { code: req.params.code } });
+            
+            // 🚀 Generate QR Code
+            const qrImage = await generatePaymentQR(c.code);
+
+            res.send(renderAdminPage('Edit Organization', `
+                <div style="display:flex; flex-wrap:wrap; gap:30px; align-items:start;">
+                    <div style="flex:2; min-width:300px;">
+                        <form action="/admin/churches/update" method="POST" class="card-form" style="max-width:100%;">
+                            <input type="hidden" name="code" value="${c.code}">
+                            <div class="form-group"><label>Name (Locked)</label><input value="${c.name}" disabled style="background:#f0f0f0;"></div>
+                            <div class="form-group"><label>Admin Phone</label><input name="adminPhone" value="${c.adminPhone}"></div>
+                            <div class="form-group"><label>Email</label><input name="email" value="${c.email}"></div>
+                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px;">
+                                <div class="form-group"><label>Premium</label><input name="defaultPremium" value="${c.defaultPremium}"></div>
+                                <div class="form-group"><label>Sub Fee</label><input name="subscriptionFee" value="${c.subscriptionFee}"></div>
+                            </div>
+                            <div class="form-group"><label>Gateway Code</label><input name="subaccount" value="${c.subaccountCode||''}"></div>
+                            <button class="btn btn-primary">Update Organization</button>
+                        </form>
+                    </div>
+
+                    <div style="flex:1; min-width:250px;">
+                        <div class="card-form" style="text-align:center; height:100%; box-sizing:border-box; display:flex; flex-direction:column; justify-content:center;">
+                            <h3 style="margin-top:0; color:#2c3e50;">📲 Scan to Pay</h3>
+                            <p style="font-size:12px; color:#95a5a6; margin-bottom:15px;">Official payment portal for <strong>${c.code}</strong></p>
+                            
+                            <img src="${qrImage}" style="width:100%; max-width:200px; border-radius:8px; border:4px solid #fff; box-shadow:0 2px 10px rgba(0,0,0,0.1); margin:0 auto; display:block;">
+                            
+                            <div style="margin-top:20px; display:flex; flex-direction:column; gap:10px;">
+                                <a href="${qrImage}" download="QR_${c.code}.png" class="btn" style="background:#2d3436; color:white; width:100%; text-align:center; box-sizing:border-box;">⬇️ Download PNG</a>
+                                <a href="/link/${c.code}" target="_blank" class="btn" style="background:#ecf0f1; color:#2d3436; width:100%; text-align:center; box-sizing:border-box;">🔗 Test Link</a>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="form-group"><label>Gateway Code</label><input name="subaccount" value="${c.subaccountCode||''}"></div>
-                <button class="btn btn-primary">Update Organization</button>
-            </form>
-        `));
+            `));
+        } catch(e) {
+            res.send(renderAdminPage('Error', '', e.message));
+        }
     });
 
     app.post('/admin/churches/update', async (req, res) => {
