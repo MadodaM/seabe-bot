@@ -1,5 +1,7 @@
 // routes/web.js
-// PURPOSE: Public Website (Home, Register, Demo, Terms)
+// PURPOSE: Public Website (Home, Register, Demo, Terms, Privacy)
+// DESIGN SYSTEM: Deep Navy (#0f172a), Warm Teal (#14b8a6), Gold (#f59e0b)
+
 const express = require('express');
 const sgMail = require('@sendgrid/mail');
 const fs = require('fs');
@@ -11,161 +13,263 @@ if (process.env.SENDGRID_KEY) sgMail.setApiKey(process.env.SENDGRID_KEY);
 
 module.exports = function(app, upload, { prisma, syncToHubSpot }) {
 
-    // --- BRANDED EMAIL HELPERS ---
-    const emailStyle = "font-family: 'Inter', -apple-system, sans-serif; color: #333; line-height: 1.6;";
-    const headerStyle = "background-color: #1e272e; color: #ffffff; padding: 30px; text-align: center; border-bottom: 4px solid #00d2d3;";
-    const btnStyle = "display: inline-block; background-color: #00d2d3; color: #ffffff; padding: 12px 25px; text-decoration: none; font-weight: bold; border-radius: 6px; margin-top: 20px;";
+    // --- CONFIGURATION & HELPERS ---
+    const emailStyle = "font-family: 'Inter', sans-serif; color: #333; line-height: 1.6;";
+    const headerStyle = "background-color: #0f172a; color: #ffffff; padding: 30px; text-align: center; border-bottom: 4px solid #f59e0b;";
 
-    // --- SHARED TAILWIND HEADER ---
-    const tailwindHeader = `
+    // --- SHARED HEAD (Tailwind + Fonts + Floating WhatsApp) ---
+    const sharedHead = `
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <script src="https://cdn.tailwindcss.com"></script>
         <script>
             tailwind.config = {
-                theme: { extend: { colors: { brand: { navy: '#1e272e', teal: '#00d2d3', light: '#f4f7f6', accent: '#0984e3' } } } }
+                theme: { 
+                    extend: { 
+                        colors: { 
+                            seabe: { navy: '#0f172a', teal: '#14b8a6', gold: '#f59e0b', light: '#f8fafc' } 
+                        },
+                        fontFamily: { sans: ['Inter', 'sans-serif'] }
+                    } 
+                }
             }
         </script>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
-        <style>body { font-family: 'Inter', sans-serif; }</style>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+        <style>
+            body { font-family: 'Inter', sans-serif; scroll-behavior: smooth; }
+            .whatsapp-float { position: fixed; bottom: 20px; right: 20px; background-color: #25d366; color: white; border-radius: 50px; padding: 12px 20px; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; text-decoration: none; display: flex; align-items: center; gap: 8px; transition: transform 0.2s; }
+            .whatsapp-float:hover { transform: translateY(-3px); }
+        </style>
+    `;
+
+    const whatsAppButton = `
+        <a href="https://wa.me/27600000000" class="whatsapp-float" target="_blank">
+            <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M13.601 2.326A7.854 7.854 0 0 0 7.994 0C3.627 0 .068 3.558.064 7.926c0 1.399.366 2.76 1.057 3.965L0 16l4.204-1.102a7.933 7.933 0 0 0 3.79.965h.004c4.368 0 7.926-3.558 7.93-7.93A7.898 7.898 0 0 0 13.6 2.326zM7.994 14.521a6.573 6.573 0 0 1-3.356-.92l-.24-.144-2.494.654.666-2.433-.156-.251a6.56 6.56 0 0 1-1.007-3.505c0-3.626 2.957-6.584 6.591-6.584a6.56 6.56 0 0 1 4.66 1.931 6.557 6.557 0 0 1 1.928 4.66c-.004 3.639-2.961 6.592-6.592 6.592z"/></svg>
+            Chat with Seabe
+        </a>
     `;
 
     // ==========================================
-    // 1. PUBLIC HOMEPAGE (Serves the new UI)
+    // 1. HOME LANDING PAGE (New Design)
     // ==========================================
     app.get('/', (req, res) => {
-        res.sendFile(path.join(__dirname, '../public/index.html'));
+        res.send(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <title>Seabe Digital | Administer with Ease</title>
+                <meta name="description" content="Automated administration for Churches, Burial Societies, and NPOs. Reclaim time with Seabe Digital.">
+                ${sharedHead}
+            </head>
+            <body class="bg-seabe-light text-slate-800">
+                <nav class="bg-white border-b border-gray-100 py-4 px-6 md:px-12 flex justify-between items-center sticky top-0 z-50">
+                    <div class="text-2xl font-extrabold text-seabe-navy tracking-tight">Seabe<span class="text-seabe-teal">.</span></div>
+                    <div class="hidden md:flex gap-8 text-sm font-semibold text-gray-600">
+                        <a href="#features" class="hover:text-seabe-teal transition">Features</a>
+                        <a href="#use-cases" class="hover:text-seabe-teal transition">Who We Serve</a>
+                        <a href="/pricing" class="hover:text-seabe-teal transition">Pricing</a>
+                    </div>
+                    <div class="flex gap-3">
+                        <a href="/demo" class="px-4 py-2 text-sm font-bold text-seabe-navy border border-gray-200 rounded-lg hover:bg-gray-50 transition">Book Demo</a>
+                        <a href="/register" class="px-4 py-2 text-sm font-bold text-white bg-seabe-navy rounded-lg hover:bg-slate-800 transition shadow-lg shadow-blue-900/20">Get Started</a>
+                    </div>
+                </nav>
+
+                <header class="pt-20 pb-24 px-6 text-center bg-seabe-navy relative overflow-hidden">
+                    <div class="absolute top-0 left-0 w-full h-full opacity-10 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]"></div>
+                    <div class="max-w-4xl mx-auto relative z-10">
+                        <span class="inline-block py-1 px-3 rounded-full bg-seabe-teal/10 text-seabe-teal text-xs font-bold uppercase tracking-wider mb-6 border border-seabe-teal/20">The Operating System for Community Leaders</span>
+                        <h1 class="text-4xl md:text-6xl font-extrabold text-white mb-6 leading-tight">
+                            Administer with Ease.<br/>
+                            <span class="text-transparent bg-clip-text bg-gradient-to-r from-seabe-teal to-emerald-400">Lead with Purpose.</span>
+                        </h1>
+                        <p class="text-lg md:text-xl text-slate-300 mb-10 max-w-2xl mx-auto leading-relaxed">
+                            Seabe Digital automates the complex so you can focus on the community. From automated billing to digital FICA, we turn administrative hours into community minutes.
+                        </p>
+                        <div class="flex flex-col md:flex-row gap-4 justify-center">
+                            <a href="/register" class="px-8 py-4 bg-seabe-gold text-seabe-navy font-bold text-lg rounded-xl hover:bg-yellow-400 transition transform hover:-translate-y-1 shadow-xl">Start Your Free Trial</a>
+                            <a href="/demo" class="px-8 py-4 bg-white/10 text-white border border-white/20 font-bold text-lg rounded-xl hover:bg-white/20 transition backdrop-blur-sm">See How It Works</a>
+                        </div>
+                    </div>
+                </header>
+
+                <section id="use-cases" class="py-20 px-6 max-w-6xl mx-auto">
+                    <div class="text-center mb-16">
+                        <h2 class="text-3xl font-bold text-seabe-navy mb-4">Tailored for Your Mission</h2>
+                        <p class="text-gray-500 max-w-2xl mx-auto">We understand the unique challenges of community organizations. Our tools are built to solve your specific pain points.</p>
+                    </div>
+
+                    <div class="grid md:grid-cols-3 gap-8">
+                        <div class="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 hover:shadow-xl transition hover:border-seabe-teal/30 group">
+                            <div class="w-12 h-12 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center text-2xl mb-6 group-hover:bg-blue-600 group-hover:text-white transition">⛪</div>
+                            <h3 class="text-xl font-bold text-seabe-navy mb-3">The Church Leader</h3>
+                            <p class="text-gray-600 leading-relaxed mb-4">Replace Sunday cash counting and manual spreadsheets with real-time digital reports.</p>
+                            <ul class="text-sm text-gray-500 space-y-2">
+                                <li class="flex gap-2">✅ Automate Tithes & Offerings</li>
+                                <li class="flex gap-2">✅ WhatsApp Payment Links</li>
+                                <li class="flex gap-2">✅ Real-time Financial Reporting</li>
+                            </ul>
+                        </div>
+
+                        <div class="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 hover:shadow-xl transition hover:border-seabe-gold/30 group">
+                            <div class="w-12 h-12 bg-amber-50 text-amber-600 rounded-lg flex items-center justify-center text-2xl mb-6 group-hover:bg-seabe-gold group-hover:text-seabe-navy transition">🛡️</div>
+                            <h3 class="text-xl font-bold text-seabe-navy mb-3">Burial Societies</h3>
+                            <p class="text-gray-600 leading-relaxed mb-4">Eliminate the stress of premium collection. Automated reminders ensure funds are collected on time.</p>
+                            <ul class="text-sm text-gray-500 space-y-2">
+                                <li class="flex gap-2">✅ "Pay Now" WhatsApp Reminders</li>
+                                <li class="flex gap-2">✅ Policy Management</li>
+                                <li class="flex gap-2">✅ Automated Receipts</li>
+                            </ul>
+                        </div>
+
+                        <div class="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 hover:shadow-xl transition hover:border-seabe-teal/30 group">
+                            <div class="w-12 h-12 bg-teal-50 text-seabe-teal rounded-lg flex items-center justify-center text-2xl mb-6 group-hover:bg-seabe-teal group-hover:text-white transition">🤝</div>
+                            <h3 class="text-xl font-bold text-seabe-navy mb-3">NPO Administrators</h3>
+                            <p class="text-gray-600 leading-relaxed mb-4">Effortless transparency. Generate donor reports and manage compliance-heavy documentation.</p>
+                            <ul class="text-sm text-gray-500 space-y-2">
+                                <li class="flex gap-2">✅ Donor Tax Certificates</li>
+                                <li class="flex gap-2">✅ Secure FICA Vault</li>
+                                <li class="flex gap-2">✅ Grant Reporting</li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="bg-slate-50 border-y border-gray-200 py-16 px-6">
+                    <div class="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-8">
+                        <div>
+                            <h3 class="text-2xl font-bold text-seabe-navy mb-2">Bank-Grade Security & Compliance</h3>
+                            <p class="text-gray-600">We partner with Netcash to ensure your funds and data are secure, POPIA compliant, and auditable.</p>
+                        </div>
+                        <div class="flex gap-6 opacity-60 grayscale hover:grayscale-0 transition duration-500">
+                             <div class="font-bold text-xl text-gray-400">Netcash</div>
+                             <div class="font-bold text-xl text-gray-400">Ozow</div>
+                             <div class="font-bold text-xl text-gray-400">HubSpot</div>
+                        </div>
+                    </div>
+                </section>
+
+                <footer class="bg-seabe-navy text-white py-12 px-6 mt-12">
+                    <div class="max-w-6xl mx-auto grid md:grid-cols-4 gap-8 mb-8">
+                        <div class="col-span-1 md:col-span-2">
+                            <h4 class="text-2xl font-bold mb-4">Seabe<span class="text-seabe-teal">.</span></h4>
+                            <p class="text-slate-400 text-sm max-w-sm">The digital operating system for African community organizations. Secure, efficient, and built for growth.</p>
+                        </div>
+                        <div>
+                            <h5 class="font-bold mb-4 text-seabe-gold">Platform</h5>
+                            <ul class="space-y-2 text-sm text-slate-400">
+                                <li><a href="/register" class="hover:text-white">Register Organization</a></li>
+                                <li><a href="/demo" class="hover:text-white">Book a Demo</a></li>
+                                <li><a href="/login" class="hover:text-white">Admin Login</a></li>
+                            </ul>
+                        </div>
+                        <div>
+                            <h5 class="font-bold mb-4 text-seabe-gold">Legal</h5>
+                            <ul class="space-y-2 text-sm text-slate-400">
+                                <li><a href="/terms" class="hover:text-white">Terms of Service</a></li>
+                                <li><a href="/privacy" class="hover:text-white">Privacy Policy (POPIA)</a></li>
+                                <li><a href="#" class="hover:text-white">FICA Requirements</a></li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="border-t border-slate-700 pt-8 text-center text-xs text-slate-500">
+                        &copy; ${new Date().getFullYear()} Seabe Digital. All rights reserved.
+                    </div>
+                </footer>
+                ${whatsAppButton}
+            </body>
+            </html>
+        `);
     });
 
     // ==========================================
-    // 2. REGISTRATION PAGE
+    // 2. REGISTRATION PAGE (FICA Level 1)
     // ==========================================
     app.get('/register', (req, res) => {
         res.send(`
             <!DOCTYPE html>
             <html lang="en">
             <head>
-                <meta charset="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Register | Seabe.tech</title>
-                ${tailwindHeader}
+                <title>Register Organization | Seabe</title>
+                ${sharedHead}
             </head>
-            <body class="bg-brand-light min-h-screen flex flex-col items-center justify-center p-4">
+            <body class="bg-seabe-light min-h-screen flex flex-col items-center justify-center p-6">
                 
-                <div class="mb-6 flex items-center gap-2">
-                    <div class="w-8 h-8 bg-brand-teal rounded-lg flex items-center justify-center text-white font-bold text-xl shadow-lg">S</div>
-                    <span class="font-extrabold text-2xl tracking-tight text-brand-navy">Seabe<span class="text-brand-teal">.tech</span></span>
-                </div>
+                <a href="/" class="mb-8 text-2xl font-extrabold text-seabe-navy tracking-tight">Seabe<span class="text-seabe-teal">.</span></a>
 
-                <div class="bg-white p-8 md:p-10 rounded-2xl shadow-xl w-full max-w-lg border border-gray-100">
-                    <h2 class="text-2xl font-extrabold text-brand-navy text-center mb-2">Register Your Organization</h2>
-                    <p class="text-center text-gray-500 text-sm mb-8">Complete KYC to activate automated operations.</p>
+                <div class="bg-white p-8 md:p-10 rounded-2xl shadow-xl w-full max-w-xl border border-gray-100">
+                    <div class="text-center mb-8">
+                        <h2 class="text-2xl font-bold text-seabe-navy">Start Your Digital Journey</h2>
+                        <p class="text-gray-500 text-sm mt-2">Complete this form to create your organization's secure vault.</p>
+                    </div>
                     
-                    <form id="kybRegistrationForm" enctype="multipart/form-data" class="space-y-5">
+                    <form action="/register-church" method="POST" enctype="multipart/form-data" class="space-y-5">
                         
-                        <div>
-                            <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Organization Name</label>
-                            <input type="text" id="churchName" name="churchName" required placeholder="e.g., Thuso Burial Society" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-brand-teal outline-none transition bg-gray-50 focus:bg-white">
+                        <div class="grid md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Organization Name</label>
+                                <input type="text" name="churchName" required placeholder="e.g. St. Marks" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none bg-gray-50">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Org Type</label>
+                                <select name="type" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none bg-gray-50">
+                                    <option value="BURIAL_SOCIETY">Burial Society</option>
+                                    <option value="CHURCH">Church</option>
+                                    <option value="NON_PROFIT">NPO / NGO</option>
+                                </select>
+                            </div>
                         </div>
                         
                         <div>
                             <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Official Email</label>
-                            <input type="email" id="officialEmail" name="officialEmail" required placeholder="admin@society.co.za" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-brand-teal outline-none transition bg-gray-50 focus:bg-white">
+                            <input type="email" name="email" required placeholder="admin@org.co.za" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none bg-gray-50">
                         </div>
 
-                        <div>
-                            <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Organization Type</label>
-                            <select id="orgType" name="type" required class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-brand-teal outline-none transition bg-gray-50 focus:bg-white">
-                                <option value="BURIAL_SOCIETY">Burial Society / Funeral Parlour</option>
-                                <option value="CHURCH">Church</option>
-                                <option value="NON_PROFIT">Non-Profit (NGO)</option>
-                            </select>
-                        </div>
-
-                        <div class="pt-4 border-t border-gray-100">
-                            <h4 class="font-bold text-brand-navy flex items-center gap-2"><span class="text-brand-teal">🛡️</span> Level 1 Verification</h4>
-                            <p class="text-xs text-gray-500 mb-4 mt-1">To comply with SA financial regulations, upload the primary leader's ID and a recent proof of bank account.</p>
-
+                        <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                            <h4 class="font-bold text-seabe-navy flex items-center gap-2 mb-3">
+                                <span class="bg-seabe-gold text-white text-xs px-2 py-1 rounded">MANDATORY</span> 
+                                Level 1 FICA Verification
+                            </h4>
+                            
                             <div class="mb-4">
-                                <label class="block text-xs font-bold text-gray-700 mb-1">Upload Leader ID (Green Book or Smart Card)</label>
-                                <input type="file" id="pastorId" name="pastorId" accept="image/*,.pdf" required class="w-full p-2 border border-dashed border-gray-300 rounded-lg bg-gray-50 text-sm">
+                                <label class="block text-xs font-bold text-gray-600 mb-1">Upload Leader's ID (PDF/Img)</label>
+                                <input type="file" name="idDoc" accept="image/*,.pdf" required class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-seabe-teal/10 file:text-seabe-teal hover:file:bg-seabe-teal/20">
                             </div>
 
-                            <div class="mb-4">
-                                <label class="block text-xs font-bold text-gray-700 mb-1">Proof of Bank Account (Letter or Statement)</label>
-                                <input type="file" id="proofOfBank" name="proofOfBank" accept="image/*,.pdf" required class="w-full p-2 border border-dashed border-gray-300 rounded-lg bg-gray-50 text-sm">
+                            <div>
+                                <label class="block text-xs font-bold text-gray-600 mb-1">Proof of Bank Account</label>
+                                <input type="file" name="bankDoc" accept="image/*,.pdf" required class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-seabe-teal/10 file:text-seabe-teal hover:file:bg-seabe-teal/20">
                             </div>
                         </div>
 
                         <div class="flex items-start gap-3 mt-4">
-                            <input type="checkbox" id="tos" required class="mt-1 w-4 h-4 text-brand-teal rounded border-gray-300 focus:ring-brand-teal"> 
-                            <span class="text-sm text-gray-600">I accept the <a href="/terms" target="_blank" class="text-brand-teal font-semibold hover:underline">Master Service Agreement</a>.</span>
+                            <input type="checkbox" name="tos" required class="mt-1 w-4 h-4 text-seabe-teal rounded border-gray-300"> 
+                            <span class="text-sm text-gray-600">I agree to the <a href="/terms" target="_blank" class="text-seabe-teal font-bold hover:underline">Terms of Service</a> and <a href="/privacy" target="_blank" class="text-seabe-teal font-bold hover:underline">Privacy Policy</a>.</span>
                         </div>
 
-                        <div id="regError" class="hidden bg-red-50 text-red-600 p-3 rounded-lg text-sm font-bold text-center"></div>
-                        <div id="regSuccess" class="hidden bg-green-50 text-green-700 p-3 rounded-lg text-sm font-bold text-center"></div>
-
-                        <button type="submit" id="submitBtn" class="w-full bg-brand-navy text-white font-bold py-4 rounded-lg hover:bg-gray-800 transition shadow-lg mt-4">
-                            Submit FICA & Register
+                        <button type="submit" class="w-full bg-seabe-navy text-white font-bold py-4 rounded-lg hover:bg-slate-800 transition shadow-lg mt-4">
+                            Submit Verification & Register
                         </button>
                     </form>
-                    <p class="text-center mt-6"><a href="/" class="text-gray-400 hover:text-gray-600 text-sm font-semibold transition">← Cancel and return home</a></p>
+                    <p class="text-center mt-6"><a href="/" class="text-gray-400 hover:text-gray-600 text-sm font-semibold">Cancel</a></p>
                 </div>
-
-                <script>
-                document.getElementById('kybRegistrationForm').addEventListener('submit', async (e) => {
-                    e.preventDefault(); 
-                    
-                    const btn = document.getElementById('submitBtn');
-                    const errorBox = document.getElementById('regError');
-                    const successBox = document.getElementById('regSuccess');
-                    
-                    btn.innerText = "⏳ Uploading & Verifying...";
-                    btn.disabled = true;
-                    btn.classList.add('opacity-50', 'cursor-not-allowed');
-                    errorBox.classList.add('hidden');
-                    successBox.classList.add('hidden');
-
-                    const formData = new FormData();
-                    formData.append('churchName', document.getElementById('churchName').value);
-                    formData.append('officialEmail', document.getElementById('officialEmail').value);
-                    formData.append('type', document.getElementById('orgType').value);
-                    formData.append('pastorId', document.getElementById('pastorId').files[0]);
-                    formData.append('proofOfBank', document.getElementById('proofOfBank').files[0]);
-
-                    try {
-                        const response = await fetch('/api/prospect/register-church', {
-                            method: 'POST',
-                            body: formData 
-                        });
-
-                        const data = await response.json();
-
-                        if (!response.ok) throw new Error(data.error || "Failed to process registration.");
-
-                        successBox.innerText = "✅ " + data.message + " (AI Confidence: " + (data.aiExtractedData?.confidenceScore || 'High') + "%)";
-                        successBox.classList.remove('hidden');
-                        document.getElementById('kybRegistrationForm').reset();
-                        btn.innerText = "Registration Complete";
-                        
-                    } catch (error) {
-                        errorBox.innerText = "❌ " + error.message;
-                        errorBox.classList.remove('hidden');
-                        btn.innerText = "Submit FICA & Register";
-                        btn.disabled = false;
-                        btn.classList.remove('opacity-50', 'cursor-not-allowed');
-                    }
-                });
-                </script>
+                ${whatsAppButton}
             </body>
             </html>
         `);
     });
 
-    // FALLBACK REGISTRATION ROUTE 
+    // ==========================================
+    // 3. REGISTRATION HANDLER (Backend Logic)
+    // ==========================================
     app.post('/register-church', upload.fields([{ name: 'idDoc', maxCount: 1 }, { name: 'bankDoc', maxCount: 1 }]), async (req, res) => {
         const { churchName, email, tos, type } = req.body;
-        if (!tos) return res.send("⚠️ You must accept the Master Service Agreement.");
+        if (!tos) return res.send("⚠️ You must accept the Terms.");
 
         try {
-            const attachments = []; const filePathsToDelete = [];
+            // File Handling
+            const attachments = []; 
+            const filePathsToDelete = [];
             const processFile = (fieldName, prefix) => {
                 if (req.files[fieldName]) {
                     const f = req.files[fieldName][0];
@@ -173,182 +277,80 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                     filePathsToDelete.push(f.path);
                 }
             };
-            processFile('idDoc', 'ID'); processFile('bankDoc', 'BANK');
+            processFile('idDoc', 'ID'); 
+            processFile('bankDoc', 'BANK');
 
+            // DB Creation
             const prefix = churchName.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
             const newCode = `${prefix}${Math.floor(100 + Math.random() * 900)}`;
             
             await prisma.church.create({ 
                 data: { 
-                    name: churchName, code: newCode, email: email, subaccountCode: 'PENDING_KYC', 
-                    tosAcceptedAt: new Date(), type: type || 'CHURCH' 
+                    name: churchName, code: newCode, email: email, 
+                    subaccountCode: 'PENDING_KYC', // Will be updated by Netcash Provisioner later
+                    tosAcceptedAt: new Date(), type: type || 'CHURCH',
+                    ficaStatus: 'LEVEL_1_PENDING'
                 } 
             });
 
+            // SendGrid Email
             if (process.env.SENDGRID_KEY) {
-                await sgMail.send({ to: EMAIL_FROM, from: EMAIL_FROM, subject: `📝 NEW APPLICATION: ${churchName}`, html: `<h2>New Application</h2><p>Name: ${churchName}</p><p>Email: ${email}</p>`, attachments: attachments });
+                // To Admin
+                await sgMail.send({ 
+                    to: EMAIL_FROM, from: EMAIL_FROM, 
+                    subject: `📝 NEW FICA UPLOAD: ${churchName}`, 
+                    html: `<h2>New Application</h2><p>Name: ${churchName}</p><p>Type: ${type}</p>`, 
+                    attachments: attachments 
+                });
+                
+                // To User
                 await sgMail.send({
-                    to: email, from: EMAIL_FROM, subject: 'Application Received | Seabe Digital',
-                    html: `
-                        <div style="${emailStyle}">
-                            <div style="${headerStyle}"><h1 style="margin:0;">SEABE.</h1><p>Operating System for Africa</p></div>
-                            <div style="padding: 30px; background: #fff;">
-                                <h2>Registration Received</h2>
-                                <p>Thank you for registering <strong>${churchName}</strong>. Our compliance team is reviewing your documents (24-48 hours).</p>
-                                <p>Once approved, you will receive your unique Admin Code.</p>
-                                <a href="https://seabe.tech/terms" style="${btnStyle}">View Terms</a>
-                            </div>
-                        </div>`
+                    to: email, from: EMAIL_FROM, subject: 'Verification Received | Seabe Digital',
+                    html: `<div style="${emailStyle}"><div style="${headerStyle}"><h1 style="margin:0;">SEABE.</h1></div><div style="padding: 30px; background: #fff;"><h2>Documents Received</h2><p>We have received your FICA documents for <strong>${churchName}</strong>. Our compliance team will review them within 24 hours.</p></div></div>`
                 });
             }
+
+            // Cleanup
             filePathsToDelete.forEach(p => { try { fs.unlinkSync(p); } catch(e){} });
             
-            res.send(`<div style="font-family:sans-serif; text-align:center; padding:50px; color:#1e272e;"><h1>🎉 Application Received</h1><p>Confirmation sent to <strong>${email}</strong>.</p><a href="/" style="color:#00d2d3;">Return Home</a></div>`);
-        } catch (e) { res.send("<h1>Error</h1><p>Please try again.</p>"); }
+            res.send(`
+                <!DOCTYPE html>
+                <html><head>${sharedHead}</head><body class="bg-seabe-light flex items-center justify-center h-screen">
+                <div class="bg-white p-10 rounded-2xl shadow-xl text-center max-w-md">
+                    <div class="text-5xl mb-4">🎉</div>
+                    <h1 class="text-2xl font-bold text-seabe-navy mb-2">Application Received</h1>
+                    <p class="text-gray-500 mb-6">We have securely vaulted your FICA documents. Check your email (<strong>${email}</strong>) for next steps.</p>
+                    <a href="/" class="text-seabe-teal font-bold hover:underline">Return Home</a>
+                </div>
+                </body></html>
+            `);
+
+        } catch (e) { 
+            console.error(e);
+            res.send(`<h1>System Error</h1><p>${e.message}</p>`); 
+        }
     });
 
     // ==========================================
-    // 3. LEVEL 2 FICA UPLOAD PORTAL
-    // ==========================================
-    app.get('/kyb-upload/:code', async (req, res) => {
-        const { code } = req.params;
-
-        try {
-            const church = await prisma.church.findUnique({ where: { code } });
-
-            if (!church) return res.send(`<div style="font-family:sans-serif; text-align:center; padding:50px;"><h2>❌ Invalid Link</h2><p>This organization could not be found.</p></div>`);
-            if (church.ficaStatus === 'LEVEL_2_PENDING' || church.ficaStatus === 'ACTIVE') return res.send(`<div style="font-family:sans-serif; text-align:center; padding:50px; color:#27ae60;"><h2>✅ Documents Under Verification</h2><p>Your corporate documents have been successfully received and are currently being reviewed by our compliance team. <strong>Please wait for feedback via email.</strong></p></div>`);
-            if (church.ficaStatus === 'LEVEL_1_PENDING') return res.send(`<div style="font-family:sans-serif; text-align:center; padding:50px; color:#e67e22;"><h2>⏳ Pending Level 1</h2><p>Your initial registration is still being reviewed. You will receive an email when it's time to upload corporate documents.</p></div>`);
-
-            res.send(`
-                <!DOCTYPE html>
-                <html lang="en">
-                <head>
-                    <meta charset="viewport" content="width=device-width, initial-scale=1.0">
-                    <title>Corporate Docs | Seabe.tech</title>
-                    ${tailwindHeader}
-                </head>
-                <body class="bg-brand-light min-h-screen flex flex-col items-center justify-center p-4">
-                    
-                    <div class="bg-white p-8 md:p-10 rounded-2xl shadow-xl w-full max-w-md border border-gray-100">
-                        <h2 class="text-2xl font-extrabold text-brand-navy text-center mb-2">Corporate Verification</h2>
-                        <div class="bg-teal-50 text-teal-800 text-center py-1.5 px-3 rounded-full text-xs font-bold tracking-wide w-max mx-auto mb-6">
-                            ${church.name} (${church.code})
-                        </div>
-                        <p class="text-center text-gray-500 text-sm mb-8">Please upload your official registration documents to activate your payment collections account.</p>
-                        
-                        <form id="level2UploadForm" enctype="multipart/form-data" class="space-y-5">
-                            
-                            <div>
-                                <label class="block text-sm font-bold text-gray-800 mb-1">1. NPC / NPO Registration Certificate</label>
-                                <p class="text-xs text-gray-500 mb-2">Official certificate showing your non-profit status.</p>
-                                <input type="file" id="npcReg" name="npcReg" accept="image/*,.pdf" required class="w-full p-2 border border-dashed border-gray-300 rounded-lg bg-gray-50 text-sm">
-                            </div>
-
-                            <div>
-                                <label class="block text-sm font-bold text-gray-800 mb-1">2. CIPC Registration Document</label>
-                                <p class="text-xs text-gray-500 mb-2">COR14.3 or equivalent showing enterprise details.</p>
-                                <input type="file" id="cipcDoc" name="cipcDoc" accept="image/*,.pdf" required class="w-full p-2 border border-dashed border-gray-300 rounded-lg bg-gray-50 text-sm">
-                            </div>
-
-                            <div>
-                                <label class="block text-sm font-bold text-gray-800 mb-1">3. Director / Board Member IDs</label>
-                                <p class="text-xs text-gray-500 mb-2">Merge IDs into a single PDF, or upload the primary director's ID.</p>
-                                <input type="file" id="directorIds" name="directorIds" accept="image/*,.pdf" required class="w-full p-2 border border-dashed border-gray-300 rounded-lg bg-gray-50 text-sm">
-                            </div>
-
-                            <div id="uploadError" class="hidden bg-red-50 text-red-600 p-3 rounded-lg text-sm font-bold text-center"></div>
-                            <div id="uploadSuccess" class="hidden bg-green-50 text-green-700 p-4 rounded-lg text-sm text-center"></div>
-
-                            <button type="submit" id="submitDocsBtn" class="w-full bg-brand-navy text-white font-bold py-4 rounded-lg hover:bg-gray-800 transition shadow-lg mt-4">
-                                Securely Upload Documents
-                            </button>
-                        </form>
-                    </div>
-
-                    <script>
-                    document.getElementById('level2UploadForm').addEventListener('submit', async (e) => {
-                        e.preventDefault(); 
-                        
-                        const btn = document.getElementById('submitDocsBtn');
-                        const errorBox = document.getElementById('uploadError');
-                        const successBox = document.getElementById('uploadSuccess');
-                        
-                        btn.innerText = "⏳ Vaulting Documents securely...";
-                        btn.disabled = true;
-                        btn.classList.add('opacity-50');
-                        errorBox.classList.add('hidden');
-
-                        const formData = new FormData();
-                        formData.append('npcReg', document.getElementById('npcReg').files[0]);
-                        formData.append('cipcDoc', document.getElementById('cipcDoc').files[0]);
-                        formData.append('directorIds', document.getElementById('directorIds').files[0]);
-
-                        try {
-                            const response = await fetch(\`/api/prospect/upload-level-2/${church.code}\`, {
-                                method: 'POST',
-                                body: formData 
-                            });
-
-                            const data = await response.json();
-
-                            if (!response.ok) throw new Error(data.error || "Failed to upload documents.");
-
-                            successBox.innerHTML = "✅ <strong>Upload Complete!</strong><br>Your documents have been encrypted and saved. Our team will finalize your account shortly.";
-                            successBox.classList.remove('hidden');
-                            document.getElementById('level2UploadForm').style.display = 'none'; 
-                            
-                        } catch (error) {
-                            errorBox.innerText = "❌ " + error.message;
-                            errorBox.classList.remove('hidden');
-                            btn.innerText = "Securely Upload Documents";
-                            btn.disabled = false;
-                            btn.classList.remove('opacity-50');
-                        }
-                    });
-                    </script>
-                </body>
-                </html>
-            `);
-
-        } catch (error) {
-            res.send("<h2>System Error</h2><p>Could not load the verification portal.</p>");
-        }
-    }); 
-
-    // ==========================================
-    // 4. DEMO PAGE
+    // 4. DEMO REQUEST (HubSpot Integration)
     // ==========================================
     app.get('/demo', (req, res) => {
         res.send(`
             <!DOCTYPE html>
             <html lang="en">
-            <head>
-                <meta charset="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Book Demo | Seabe.tech</title>
-                ${tailwindHeader}
-            </head>
-            <body class="bg-brand-light min-h-screen flex flex-col items-center justify-center p-4">
-                
-                <div class="bg-white p-8 md:p-10 rounded-2xl shadow-xl w-full max-w-md border border-gray-100">
-                    <h2 class="text-3xl font-extrabold text-brand-navy text-center mb-2">Book a Demo</h2>
-                    <p class="text-center text-gray-500 mb-8">See how Seabe can transform your administration.</p>
-                    
+            <head><title>Book Demo | Seabe</title>${sharedHead}</head>
+            <body class="bg-seabe-light min-h-screen flex items-center justify-center p-4">
+                <div class="bg-white p-10 rounded-2xl shadow-xl w-full max-w-lg border border-gray-100">
+                    <h2 class="text-3xl font-extrabold text-seabe-navy text-center mb-2">Book a Demo</h2>
+                    <p class="text-center text-gray-500 mb-8">See how Seabe improves efficiency & productivity.</p>
                     <form action="/request-demo" method="POST" class="space-y-4">
-                        <div>
-                            <input name="firstname" placeholder="Your Name" required class="w-full p-4 border border-gray-200 rounded-lg focus:ring-2 focus:ring-brand-teal outline-none transition bg-gray-50 focus:bg-white">
-                        </div>
-                        <div>
-                            <input name="email" placeholder="Email Address" required type="email" class="w-full p-4 border border-gray-200 rounded-lg focus:ring-2 focus:ring-brand-teal outline-none transition bg-gray-50 focus:bg-white">
-                        </div>
-                        <div>
-                            <input name="phone" placeholder="WhatsApp Number" required class="w-full p-4 border border-gray-200 rounded-lg focus:ring-2 focus:ring-brand-teal outline-none transition bg-gray-50 focus:bg-white">
-                        </div>
-                        <button type="submit" class="w-full bg-brand-teal text-white font-bold text-lg py-4 rounded-lg hover:bg-teal-400 transition shadow-lg shadow-teal-100 mt-2">
-                            Request Demo
-                        </button>
+                        <input name="firstname" placeholder="Your Name" required class="w-full p-4 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none">
+                        <input name="orgName" placeholder="Organization Name" required class="w-full p-4 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none">
+                        <input name="email" placeholder="Email Address" required type="email" class="w-full p-4 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none">
+                        <input name="phone" placeholder="WhatsApp Number" required class="w-full p-4 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none">
+                        <button type="submit" class="w-full bg-seabe-teal text-white font-bold text-lg py-4 rounded-lg hover:bg-teal-500 transition shadow-lg mt-2">Request Demo</button>
                     </form>
-                    <p class="text-center mt-6"><a href="/" class="text-gray-400 hover:text-gray-600 text-sm font-semibold transition">← Back to website</a></p>
+                    <p class="text-center mt-6"><a href="/" class="text-gray-400 hover:text-gray-600 text-sm font-semibold">Back</a></p>
                 </div>
             </body>
             </html>
@@ -356,33 +358,51 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     });
 
     app.post('/request-demo', upload.none(), async (req, res) => {
-        const { firstname, email, phone } = req.body;
-        await syncToHubSpot({ name: firstname, email: email, phone: phone });
+        const { firstname, email, phone, orgName } = req.body;
+        // Sync to HubSpot
+        if (syncToHubSpot) {
+            await syncToHubSpot({ name: firstname, email, phone, company: orgName, lifeCycleStage: 'lead' });
+        }
         
         if (process.env.SENDGRID_KEY) {
-            await sgMail.send({ to: EMAIL_FROM, from: EMAIL_FROM, subject: `🔥 LEAD: ${firstname}`, html: `<p>New Lead: ${firstname} (${email})</p>` });
-            await sgMail.send({
-                to: email, from: EMAIL_FROM, subject: 'Seabe Demo Request',
-                html: `
-                    <div style="${emailStyle}">
-                        <div style="${headerStyle}"><h1 style="margin:0;">SEABE.</h1><p>Premium Stewardship</p></div>
-                        <div style="padding: 30px; background: #fff;">
-                            <h2>Hi ${firstname},</h2>
-                            <p>We received your request. A setup manager will contact you via WhatsApp shortly to coordinate your demo.</p>
-                        </div>
-                    </div>`
-            });
+            await sgMail.send({ to: EMAIL_FROM, from: EMAIL_FROM, subject: `🔥 DEMO REQUEST: ${orgName}`, html: `<p>${firstname} from ${orgName} wants a demo.<br>Phone: ${phone}</p>` });
         }
+        res.redirect('/?demo=success');
+    });
+
+    // ==========================================
+    // 5. PRIVACY POLICY (POPIA Compliant)
+    // ==========================================
+    app.get('/privacy', (req, res) => {
         res.send(`
             <!DOCTYPE html>
             <html lang="en">
-            <head><title>Success</title>${tailwindHeader}</head>
-            <body class="bg-brand-light min-h-screen flex items-center justify-center p-4">
-                <div class="bg-white p-10 rounded-2xl shadow-xl w-full max-w-md text-center">
-                    <div class="text-5xl mb-4">✅</div>
-                    <h1 class="text-2xl font-bold text-brand-navy mb-2">Request Received</h1>
-                    <p class="text-gray-500 mb-6">Check your email for confirmation.</p>
-                    <a href="/" class="bg-brand-navy text-white px-6 py-2 rounded-lg font-bold hover:bg-gray-800 transition">Return Home</a>
+            <head><title>Privacy Policy | Seabe</title>${sharedHead}</head>
+            <body class="bg-white text-gray-800 p-8 md:p-16">
+                <div class="max-w-3xl mx-auto">
+                    <h1 class="text-4xl font-extrabold text-seabe-navy mb-2">Privacy Policy</h1>
+                    <p class="text-sm text-gray-500 mb-10">Effective Date: March 1, 2026</p>
+                    
+                    <div class="prose prose-slate">
+                        <h3 class="font-bold text-xl mb-2">1. Introduction</h3>
+                        <p class="mb-4">Seabe Digital ("we", "us") is committed to protecting your personal information in accordance with the Protection of Personal Information Act (POPIA). This policy outlines how we collect, use, and safeguard your data.</p>
+                        
+                        <h3 class="font-bold text-xl mb-2">2. Information We Collect</h3>
+                        <p class="mb-4">We collect Information required for FICA (Financial Intelligence Centre Act) compliance, including Identity Documents, Proof of Address, and Banking Details. We also collect contact information (Name, Phone, Email) for account management.</p>
+                        
+                        <h3 class="font-bold text-xl mb-2">3. How We Use Your Information</h3>
+                        <p class="mb-4">Your data is used strictly for: <br>a) Facilitating payments via Netcash/Ozow.<br>b) Verifying legal entity status (KYC/KYB).<br>c) Communicating via WhatsApp regarding your account.</p>
+                        
+                        <h3 class="font-bold text-xl mb-2">4. Data Security</h3>
+                        <p class="mb-4">All sensitive documents (IDs, Bank Letters) are encrypted at rest. We utilize bank-grade security protocols provided by our partners (Netcash) to process financial transactions.</p>
+                        
+                        <h3 class="font-bold text-xl mb-2">5. Your Rights</h3>
+                        <p class="mb-4">Under POPIA, you have the right to request access to your data, request corrections, or request deletion (subject to FICA retention laws of 5 years).</p>
+
+                        <h3 class="font-bold text-xl mb-2">6. Contact Information Officer</h3>
+                        <p>For privacy concerns, contact: <a href="mailto:privacy@seabe.tech" class="text-seabe-teal font-bold">privacy@seabe.tech</a></p>
+                    </div>
+                    <div class="mt-12 pt-8 border-t"><a href="/" class="font-bold text-seabe-navy">&larr; Back to Home</a></div>
                 </div>
             </body>
             </html>
@@ -390,237 +410,55 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     });
 
     // ==========================================
-    // 5. TERMS OF SERVICE
+    // 6. TERMS OF SERVICE (Extensive)
     // ==========================================
     app.get('/terms', (req, res) => {
         res.send(`
             <!DOCTYPE html>
             <html lang="en">
-            <head>
-                <meta charset="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Master Service Agreement | Seabe</title>
-                ${tailwindHeader}
-            </head>
-            <body class="bg-white text-gray-800 antialiased p-6 md:p-12">
+            <head><title>Terms of Service | Seabe</title>${sharedHead}</head>
+            <body class="bg-white text-gray-800 p-8 md:p-16">
                 <div class="max-w-3xl mx-auto">
-                    <h1 class="text-4xl font-extrabold text-brand-navy border-b-4 border-brand-teal pb-4 mb-2">Master Service Agreement</h1>
-                    <p class="text-gray-500 text-sm font-bold mb-10">Last Updated: March 2026</p>
-
-                    <div class="space-y-8 text-gray-600 leading-relaxed">
-                        <p>Welcome to Seabe Digital ("Seabe," "we," "us," or "our"). By accessing or using our WhatsApp-based payment and management platform (the "Service"), you agree to be bound by these Terms of Service ("Terms").</p>
-
-                        <div>
-                            <h2 class="text-2xl font-bold text-brand-navy mb-2">1. Description of Service</h2>
-                            <p>Seabe provides a technology platform that facilitates policy collections, quoting, and CRM management for Burial Societies, Funeral Parlours, and non-profit organizations via WhatsApp and web portals. Seabe is not a bank, and we do not hold funds. We act as a technical intermediary.</p>
-                        </div>
-
-                        <div>
-                            <h2 class="text-2xl font-bold text-brand-navy mb-2">2. Payments & Processing</h2>
-                            <p>All financial transactions are processed by <strong>NetCash / Ozow / Paystack</strong>, registered Payment Service Providers. By making a payment, you agree to their terms and conditions. Seabe does not store your full card or banking details.</p>
-                        </div>
-
-                        <div class="bg-gray-50 p-6 rounded-xl border border-gray-200">
-                            <h2 class="text-xl font-bold text-brand-navy mb-3">3. Refund Policy</h2>
-                            <p class="mb-2"><strong>Premiums & Tithes:</strong> These are generally non-refundable. If you made an error in the amount, please contact your Organization Administrator immediately.</p>
-                            <p><strong>Disputes:</strong> If you believe a transaction was fraudulent, please contact us at <a href="mailto:madoda@seabe.co.za" class="text-brand-teal font-bold hover:underline">madoda@seabe.co.za</a>.</p>
-                        </div>
-
-                        <div>
-                            <h2 class="text-2xl font-bold text-brand-navy mb-2">4. User Account Security</h2>
-                            <p>You are responsible for maintaining the security of your WhatsApp account. Seabe is not liable for any loss or damage arising from unauthorized access to your WhatsApp account or phone.</p>
-                        </div>
+                    <h1 class="text-4xl font-extrabold text-seabe-navy mb-2">Master Service Agreement</h1>
+                    <p class="text-sm text-gray-500 mb-10">Last Updated: March 2026</p>
+                    
+                    <div class="space-y-6 text-gray-600">
+                        <p><strong>1. Acceptance of Terms:</strong> By registering, you agree to these terms. Seabe Digital provides administrative software; we are not a bank.</p>
+                        <p><strong>2. Payment Processing:</strong> All funds are processed by registered PSPs (Netcash/Ozow). Seabe does not hold funds. Settlement occurs directly to your provided bank account.</p>
+                        <p><strong>3. FICA Compliance:</strong> You warrant that all documents uploaded are authentic. Providing false documents constitutes fraud.</p>
+                        <p><strong>4. Subscription Fees:</strong> Seabe charges a platform fee per transaction as agreed upon in your pricing schedule. This is deducted automatically before settlement.</p>
+                        <p><strong>5. Limitation of Liability:</strong> Seabe is not liable for lost funds due to incorrect banking details provided by the user.</p>
+                        <p><strong>6. Termination:</strong> We reserve the right to suspend accounts suspected of money laundering or fraud immediately.</p>
                     </div>
-
-                    <div class="mt-12 pt-8 border-t border-gray-200 text-center">
-                        <p class="text-sm text-gray-400 mb-4">&copy; 2026 Seabe Technologies. All rights reserved.</p>
-                        <a href="/" class="text-brand-teal font-bold hover:underline">&larr; Return to Home</a>
-                    </div>
+                    <div class="mt-12 pt-8 border-t"><a href="/" class="font-bold text-seabe-navy">&larr; Back to Home</a></div>
                 </div>
             </body>
             </html>
         `);
     });
 
-    app.post('/payment-success', (req, res) => res.send("<h1>Payment Successful! 🎉</h1>"));
-	
-	// ==========================================
-    // 💳 API: PAYMENT WEBHOOK (LMS UNLOCK)
     // ==========================================
-    app.post('/api/webhooks/payment-success', express.json(), async (req, res) => {
-        // Ozow/Netcash will send the enrollmentId back to you in this payload
-        const { enrollmentId, status } = req.body; 
-
-        if (status === 'SUCCESS') {
-            try {
-                // 1. Mark Enrollment as Active
-                const enrollment = await prisma.enrollment.update({
-                    where: { id: parseInt(enrollmentId) },
-                    data: { status: 'ACTIVE', progress: 1 },
-                    include: { member: true, course: { include: { modules: true } } }
-                });
-
-                // 2. Find the Foundation Module (Order = 1)
-                const foundationModule = enrollment.course.modules.find(m => m.order === 1);
-
-                // 3. Blast the WhatsApp Unlock Message
-                if (process.env.TWILIO_SID && foundationModule) {
-                    const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
-                    const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
-                    
-                    const msg = `🎉 *Payment Confirmed!*\n\nWelcome to *${enrollment.course.title}*. Your subscription is active.\n\nHere is your *Foundation Module:*\n📘 *${foundationModule.title}*\n\nAccess the material here:\n👉 ${foundationModule.contentUrl}\n\nReply *Next* when you have completed this module to unlock Module 2!`;
-
-                    await twilioClient.messages.create({
-                        from: `whatsapp:${cleanTwilioNumber}`,
-                        to: `whatsapp:${enrollment.member.phone}`,
-                        body: msg
-                    });
-                }
-
-                res.status(200).send('Webhook Processed');
-            } catch (error) {
-                console.error("Webhook Error:", error);
-                res.status(500).send('Error');
-            }
-        } else {
-            res.status(400).send('Payment not successful');
-        }
-    });
-
-    // GET: Ozow Sandbox Preview Page
-    app.get('/ozow-sandbox-preview', (req, res) => {
-        const html = `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Seabe Digital | Ozow Integration Preview</title>
-            <style>
-                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f7f6; color: #2d3748; line-height: 1.6; margin: 0; padding: 20px; }
-                .container { max-width: 700px; margin: 40px auto; padding: 40px; background: #ffffff; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
-                .header { text-align: center; margin-bottom: 30px; }
-                .badge { display: inline-block; background-color: #e6fffa; color: #319795; padding: 6px 12px; border-radius: 20px; font-size: 0.85em; font-weight: 700; margin-bottom: 15px; }
-                .message-box { background-color: #ebf8ff; border-left: 4px solid #3182ce; padding: 20px 25px; border-radius: 0 8px 8px 0; margin-bottom: 35px; }
-                .message-box p { margin: 0; font-size: 1.1em; color: #2b6cb0; font-weight: 500; }
-                .specs-box { border: 1px solid #e2e8f0; border-radius: 8px; padding: 30px; background: #f8fafc; }
-                .specs-title { font-size: 1.25em; font-weight: 700; margin-top: 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 20px; color: #1a202c; }
-                ul { list-style-type: none; padding: 0; margin: 0; }
-                li { margin-bottom: 16px; font-size: 0.95em; }
-                .bullet-list { padding-left: 20px; margin-top: 10px; list-style-type: disc; color: #718096; }
-                .bullet-list li { margin-bottom: 8px; }
-                strong { color: #2d3748; font-weight: 600; }
-                code { background: #edf2f7; padding: 3px 6px; border-radius: 4px; font-family: monospace; color: #e53e3e; font-size: 0.9em; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <span class="badge">SANDBOX ENVIRONMENT</span>
-                    <h1 style="margin: 0; font-size: 1.8em; color: #1a202c;">Ozow Payment Gateway</h1>
-                    <p style="color: #718096; margin-top: 5px;">Seabe Digital Interceptor</p>
-                </div>
-                <div class="message-box">
-                    <p>Seabe Digital is currently moving into the Ozow Production Environment. This link represents the point where our API will trigger your secure Ozow PIN/Capitec Pay interface.</p>
-                </div>
-                <div class="specs-box">
-                    <h2 class="specs-title">Technical Integration Specs (Draft v1.1)</h2>
-                    <p style="margin-bottom: 20px; color: #4a5568;">Seabe Digital is prepared to consume the Ozow REST API with the following implementation logic:</p>
-                    <ul>
-                        <li><strong>Endpoint Target:</strong> <code>POST /post-payment/</code></li>
-                        <li><strong>Authentication:</strong> Hmac256 Signature using <code>ApiKey</code>, <code>PrivateKey</code>, and <code>MerchantGuid</code>.</li>
-                        <li><strong>Payload Logic:</strong>
-                            <ul class="bullet-list">
-                                <li><strong>CountryCode:</strong> ZA</li>
-                                <li><strong>CurrencyCode:</strong> ZAR</li>
-                                <li><strong>TransactionReference:</strong> Unique <code>SB-</code> ID generated by the Seabe Ledger.</li>
-                            </ul>
-                        </li>
-                        <li><strong>UX Handler:</strong> Seabe utilizes the <code>SuccessUrl</code> to trigger automated WhatsApp Webhook responses.</li>
-                    </ul>
-                </div>
-            </div>
-        </body>
-        </html>
-        `;
-        res.send(html);
-    });
-
-    // GET: NetCash Sandbox Preview Page
-    app.get('/netcash-sandbox-preview', (req, res) => {
-        const html = `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Seabe Digital | NetCash Integration Preview</title>
-            <style>
-                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f7f6; color: #2d3748; line-height: 1.6; margin: 0; padding: 20px; }
-                .container { max-width: 700px; margin: 40px auto; padding: 40px; background: #ffffff; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
-                .header { text-align: center; margin-bottom: 30px; }
-                .badge { display: inline-block; background-color: #ebf8ff; color: #2b6cb0; padding: 6px 12px; border-radius: 20px; font-size: 0.85em; font-weight: 700; margin-bottom: 15px; }
-                .message-box { background-color: #e6fffa; border-left: 4px solid #319795; padding: 20px 25px; border-radius: 0 8px 8px 0; margin-bottom: 35px; }
-                .message-box p { margin: 0; font-size: 1.1em; color: #285e61; font-weight: 500; }
-                .specs-box { border: 1px solid #e2e8f0; border-radius: 8px; padding: 30px; background: #f8fafc; }
-                .specs-title { font-size: 1.25em; font-weight: 700; margin-top: 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 20px; color: #1a202c; }
-                ul { list-style-type: none; padding: 0; margin: 0; }
-                li { margin-bottom: 16px; font-size: 0.95em; }
-                .bullet-list { padding-left: 20px; margin-top: 10px; list-style-type: disc; color: #718096; }
-                .bullet-list li { margin-bottom: 8px; }
-                strong { color: #2d3748; font-weight: 600; }
-                code { background: #edf2f7; padding: 3px 6px; border-radius: 4px; font-family: monospace; color: #d69e2e; font-size: 0.9em; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <span class="badge">SANDBOX ENVIRONMENT</span>
-                    <h1 style="margin: 0; font-size: 1.8em; color: #1a202c;">NetCash Payment Gateway</h1>
-                    <p style="color: #718096; margin-top: 5px;">Seabe Digital Interceptor</p>
-                </div>
-                <div class="message-box">
-                    <p>Seabe Digital is currently moving into the NetCash Production Environment. This link represents the point where our API will trigger your secure NetCash Pay Now interface or authorize a recurring Debit Order mandate.</p>
-                </div>
-                <div class="specs-box">
-                    <h2 class="specs-title">Technical Integration Specs (Draft v1.1)</h2>
-                    <p style="margin-bottom: 20px; color: #4a5568;">Seabe Digital is prepared to consume the NetCash API with the following implementation logic:</p>
-                    <ul>
-                        <li><strong>Endpoint Target:</strong> <code>POST https://paynow.netcash.co.za/site/paynow.aspx</code></li>
-                        <li><strong>Authentication:</strong> Dedicated <code>Pay Now Service Key</code> mapped to individual Church/Society Sub-accounts.</li>
-                        <li><strong>Payload Logic:</strong>
-                            <ul class="bullet-list">
-                                <li><strong>p2 (Transaction Reference):</strong> Unique <code>SB-</code> ID.</li>
-                                <li><strong>p4 (Amount):</strong> Sanitized ZAR decimal amount.</li>
-                            </ul>
-                        </li>
-                        <li><strong>UX Handler:</strong> Seabe consumes NetCash Postback Webhooks to automatically verify transaction finality.</li>
-                    </ul>
-                </div>
-            </div>
-        </body>
-        </html>
-        `;
-        res.send(html);
-    });
-	
-	// ==========================================
-    // 📄 API: SEND QUOTE PDF TO WHATSAPP (BULLETPROOF)
+    // 7. TOOLS & PREVIEWS (Keep Existing)
     // ==========================================
     
-    // Ensure the uploads directory exists
+    // Ensure uploads directory exists
     const uploadsDir = path.join(__dirname, '../uploads');
     if (!fs.existsSync(uploadsDir)) {
         fs.mkdirSync(uploadsDir, { recursive: true });
     }
 
-    // 1. Explicit Route to Serve the PDF to Twilio
+    // Explicit Route to Serve the PDF to Twilio
     app.get('/api/public/quote-file/:filename', (req, res) => {
         const filePath = path.join(uploadsDir, req.params.filename);
-        res.setHeader('Content-Type', 'application/pdf');
-        res.sendFile(filePath);
+        if (fs.existsSync(filePath)) {
+            res.setHeader('Content-Type', 'application/pdf');
+            res.sendFile(filePath);
+        } else {
+            res.status(404).send('File not found');
+        }
     });
 
-    // 2. The PDF Receiver and Sender
+    // The PDF Receiver and Sender
     app.post('/api/public/send-quote', express.json({ limit: '10mb' }), async (req, res) => {
         const { phone, pdfBase64, orgName } = req.body;
         
@@ -656,5 +494,101 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             res.status(500).json({ success: false });
         }
     });
-	
+
+    // Payment Webhook
+    app.post('/api/webhooks/payment-success', express.json(), async (req, res) => {
+        const { enrollmentId, status } = req.body; 
+
+        if (status === 'SUCCESS') {
+            try {
+                const enrollment = await prisma.enrollment.update({
+                    where: { id: parseInt(enrollmentId) },
+                    data: { status: 'ACTIVE', progress: 1 },
+                    include: { member: true, course: { include: { modules: true } } }
+                });
+
+                const foundationModule = enrollment.course.modules.find(m => m.order === 1);
+
+                if (process.env.TWILIO_SID && foundationModule) {
+                    const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+                    const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+                    
+                    const msg = `🎉 *Payment Confirmed!*\n\nWelcome to *${enrollment.course.title}*. Your subscription is active.\n\nHere is your *Foundation Module:*\n📘 *${foundationModule.title}*\n\nAccess the material here:\n👉 ${foundationModule.contentUrl}\n\nReply *Next* when you have completed this module to unlock Module 2!`;
+
+                    await twilioClient.messages.create({
+                        from: `whatsapp:${cleanTwilioNumber}`,
+                        to: `whatsapp:${enrollment.member.phone}`,
+                        body: msg
+                    });
+                }
+
+                res.status(200).send('Webhook Processed');
+            } catch (error) {
+                console.error("Webhook Error:", error);
+                res.status(500).send('Error');
+            }
+        } else {
+            res.status(400).send('Payment not successful');
+        }
+    });
+
+    // Ozow Sandbox Preview
+    app.get('/ozow-sandbox-preview', (req, res) => {
+        res.send(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <title>Seabe Digital | Ozow Integration Preview</title>
+                ${sharedHead}
+                <style>
+                    .container { max-width: 700px; margin: 40px auto; padding: 40px; background: #ffffff; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
+                    .badge { display: inline-block; background-color: #e6fffa; color: #319795; padding: 6px 12px; border-radius: 20px; font-size: 0.85em; font-weight: 700; margin-bottom: 15px; }
+                </style>
+            </head>
+            <body class="bg-seabe-light">
+                <div class="container">
+                    <div class="text-center mb-8">
+                        <span class="badge">SANDBOX ENVIRONMENT</span>
+                        <h1 class="text-2xl font-bold text-seabe-navy">Ozow Payment Gateway</h1>
+                        <p class="text-gray-500">Seabe Digital Interceptor</p>
+                    </div>
+                    <div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-8">
+                        <p class="text-blue-700 font-medium">Seabe Digital is currently moving into the Ozow Production Environment.</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+        `);
+    });
+
+    // Netcash Sandbox Preview
+    app.get('/netcash-sandbox-preview', (req, res) => {
+        res.send(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <title>Seabe Digital | NetCash Integration Preview</title>
+                ${sharedHead}
+                <style>
+                    .container { max-width: 700px; margin: 40px auto; padding: 40px; background: #ffffff; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
+                    .badge { display: inline-block; background-color: #ebf8ff; color: #2b6cb0; padding: 6px 12px; border-radius: 20px; font-size: 0.85em; font-weight: 700; margin-bottom: 15px; }
+                </style>
+            </head>
+            <body class="bg-seabe-light">
+                <div class="container">
+                    <div class="text-center mb-8">
+                        <span class="badge">SANDBOX ENVIRONMENT</span>
+                        <h1 class="text-2xl font-bold text-seabe-navy">NetCash Payment Gateway</h1>
+                        <p class="text-gray-500">Seabe Digital Interceptor</p>
+                    </div>
+                    <div class="bg-teal-50 border-l-4 border-teal-500 p-4 mb-8">
+                        <p class="text-teal-700 font-medium">Seabe Digital is currently moving into the NetCash Production Environment.</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+        `);
+    });
 };
