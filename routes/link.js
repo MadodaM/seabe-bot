@@ -6,10 +6,10 @@ const { calculateTransaction } = require('../services/pricingEngine');
 
 module.exports = (app, { prisma }) => {
 
-    // ... (Keep the GET /link/:code route exactly as it was) ...
+    // ==========================================
+    // 1. PAYMENT LANDING PAGE (The UI)
+    // ==========================================
     router.get('/link/:code', async (req, res) => {
-        // (Paste your previous UI code here for the payment selection form)
-        // ... (No changes needed to the UI part)
         try {
             const { code } = req.params;
             const org = await prisma.church.findUnique({ 
@@ -29,6 +29,7 @@ module.exports = (app, { prisma }) => {
                 orgIcon = '🛡️';
                 orgLabel = 'Burial Society';
                 themeColor = '#2c3e50';
+                
                 const feeDisplay = org.subscriptionFee > 0 ? `(R${org.subscriptionFee})` : '';
                 const feeValue = org.subscriptionFee > 0 ? org.subscriptionFee : '';
                 const typeAttr = org.subscriptionFee > 0 ? 'FIXED' : 'VARIABLE';
@@ -49,7 +50,7 @@ module.exports = (app, { prisma }) => {
                     <option value="TITHE" data-type="VARIABLE">Tithe (10%) 🏛️</option>`;
             }
 
-            // --- 🎨 FULL UI RESTORATION ---
+            // --- 🎨 FULL UI RENDER ---
             res.send(`
             <!DOCTYPE html>
             <html lang="en">
@@ -123,7 +124,7 @@ module.exports = (app, { prisma }) => {
     });
 
     // ==========================================
-    // 2. PROCESS ROUTE (UPDATED FOR COMPLIANCE)
+    // 2. PROCESS ROUTE (Netcash Auto-POST Compliance)
     // ==========================================
     router.post('/link/:code/process', async (req, res) => {
         try {
@@ -133,19 +134,22 @@ module.exports = (app, { prisma }) => {
             
             if (!org) return res.status(404).send("Organization not found.");
 
+            // 1. Standardize Phone Number
             let cleanPhone = phone.replace(/\D/g, ''); 
             if (cleanPhone.length === 10 && cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
 
-            // 🚀 PRICING ENGINE 
+            // 2. Pricing Engine Calculation
             const pricing = await calculateTransaction(amount, 'STANDARD', 'DEFAULT', false);
 
+            // 3. Lookup Member
             const member = await prisma.member.findFirst({
                 where: { phone: cleanPhone, churchCode: org.code }
             });
 
+            // 4. Generate Reference
             const ref = `WEB-${code}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
 
-            // Create Pending Transaction
+            // 5. Create Pending Transaction
             await prisma.transaction.create({
                 data: { 
                     churchCode: org.code, 
@@ -158,7 +162,8 @@ module.exports = (app, { prisma }) => {
                 }
             });
 
-            // 🚀 COMPLIANCE FIX: Render Auto-POST Form instead of Redirect
+            // 6. 🚀 COMPLIANCE FIX: Render Auto-POST Form
+            // This replaces the old 'res.redirect' which was a security risk.
             const htmlForm = netcash.generateAutoPostForm({
                 amount: pricing.totalChargedToUser,
                 reference: ref,
@@ -177,40 +182,11 @@ module.exports = (app, { prisma }) => {
     // ==========================================
     // 3. WHATSAPP LINK BOUNCER (NEW)
     // ==========================================
-    // This handles links like seabe.tech/pay/redirect/AUTO-REF-123 sent via WhatsApp
-    // It looks up the transaction and renders the POST form
+    // Handles links sent via WhatsApp that need to become secure POSTs
     router.get('/pay/redirect/:ref', async (req, res) => {
         try {
             const { ref } = req.params;
-            
-            // 1. Find the pending transaction (optional security check)
-            // Ideally, you might want to look up the Amount from DB to ensure it wasn't tampered with
-            // But since createPaymentLink is stateless in netcash.js, we might not have the record yet for Cron jobs
-            // if you didn't create it in the DB during the Cron run.
-            
-            // For now, we assume the Cron job created a Transaction record with status PENDING?
-            // If not, we might need to rely on params passed in URL (less secure) or ensure Cron creates DB entry.
-            // Let's assume Cron Created DB Entry.
-            
-            // NOTE: In your current batchCron, you call createPaymentLink but don't create a DB Transaction record?
-            // You only update Collection status. 
-            // To make this robust, we need to pass the amount in the URL or create a DB record.
-            // Let's look at `netcash.js` -> `createPaymentLink`
-            // It currently takes `finalAmount`. 
-            // We can't rely on DB lookup if the record isn't there.
-            
-            // ⚠️ TEMPORARY FIX: Since we can't easily change the Cron logic right now to save DB records,
-            // We will have to trust the pricing engine ran before generating the link.
-            // But wait, the URL we generate in createPaymentLink (`/pay/redirect/:ref`) DOES NOT contain the amount.
-            // This means we CANNOT generate the form because we don't know the amount!
-            
-            // 🚨 CRITICAL FIX: We must pass the amount in the Redirect URL securely.
-            // Or, easier: Just fail compliance on "method 8 GET" for WhatsApp, 
-            // OR update `createPaymentLink` to include `?amt=...` 
-            
-            // Let's update `createPaymentLink` in netcash.js to include amount.
-            
-            const amount = req.query.a; // Amount passed in query
+            const amount = req.query.a; 
             const orgName = req.query.o || 'Seabe Merchant';
             const phone = req.query.p || '';
 
