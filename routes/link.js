@@ -11,7 +11,7 @@ module.exports = (app, { prisma }) => {
     router.get('/link/:code', async (req, res) => {
         try {
             const { code } = req.params;
-            const org = await prisma.church.findUnique({
+            const org = await prisma.church.findUnique({ 
                 where: { code: code.toUpperCase() },
                 include: { events: { where: { status: 'ACTIVE' } } }
             });
@@ -28,11 +28,17 @@ module.exports = (app, { prisma }) => {
                 orgIcon = '🛡️';
                 orgLabel = 'Burial Society';
                 themeColor = '#2c3e50';
-                const fee = org.subscriptionFee || 150;
+                
+                // If fee is null/0, don't show a price, just "Monthly Premium"
+                const feeDisplay = org.subscriptionFee > 0 ? `(R${org.subscriptionFee})` : '';
+                const feeValue = org.subscriptionFee > 0 ? org.subscriptionFee : '';
+                const typeAttr = org.subscriptionFee > 0 ? 'FIXED' : 'VARIABLE';
+
                 optionsHtml = `
-                    <option value="PREM" data-type="FIXED" data-price="${fee}">Monthly Premium (R${fee}) 🛡️</option>
+                    <option value="PREM" data-type="${typeAttr}" data-price="${feeValue}">Monthly Premium ${feeDisplay} 🛡️</option>
                     <option value="JOIN_FEE" data-type="VARIABLE">Joining Fee 📝</option>
                     <option value="DONATION" data-type="VARIABLE">General Donation 🤝</option>`;
+            
             } else if (org.type === 'NON_PROFIT') {
                 orgIcon = '🤝';
                 orgLabel = 'Non-Profit';
@@ -132,9 +138,10 @@ module.exports = (app, { prisma }) => {
             let cleanPhone = phone.replace(/\D/g, ''); 
             if (cleanPhone.length === 10 && cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
 
-            // 🚀 2. PRICING ENGINE CALCULATION
-            // passFeesToUser = false (Merchant absorbs the gateway fee out of their settlement)
-            const pricing = calculateTransaction(amount, 'STANDARD', 'DEFAULT', false);
+            // 🚀 2. PRICING ENGINE CALCULATION (Async + Dynamic)
+            // We use 'DEFAULT' here as Pay Now links support Cards/ScanToPay/EFT (Netcash Aggregated)
+            // Note: passFeesToUser = false (Merchant usually absorbs donation fees)
+            const pricing = await calculateTransaction(amount, 'STANDARD', 'DEFAULT', false);
 
             // 3. Look up the Member ID so their payment history syncs perfectly
             const member = await prisma.member.findFirst({
@@ -143,7 +150,7 @@ module.exports = (app, { prisma }) => {
 
             const ref = `WEB-${code}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
 
-            // 4. Create Netcash Link using the total amount (which equals the base amount here)
+            // 4. Create Netcash Link using the total amount
             const link = await netcash.createPaymentLink(pricing.totalChargedToUser, ref, cleanPhone, org.name);
 
             if (link) {
