@@ -524,6 +524,51 @@ router.post('/', (req, res) => {
                 return;
             }
 
+			// ================================================
+            // 🎓 LMS Phase C: ON-DEMAND LESSONS (Resume/Replay)
+            // ================================================
+            const lessonKeywords = ['resume', 'learn', 'replay', 'lesson'];
+            if (lessonKeywords.includes(incomingMsg)) {
+                // 1. Find active enrollment
+                const enrollment = await prisma.enrollment.findFirst({
+                    where: { memberId: member.id, status: 'ACTIVE' },
+                    include: { course: { include: { modules: true } } }
+                });
+
+                if (!enrollment) {
+                    await sendWhatsApp(cleanPhone, "❌ You are not enrolled in any active courses.\n\nReply *Courses* to browse our catalogue.");
+                    return;
+                }
+
+                // 2. Determine Day (Handle 0 progress as Day 1)
+                const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress;
+                
+                // 3. Find Module (Support 'day' or 'dayNumber' column)
+                const module = enrollment.course.modules.find(m => m.day === targetDay || m.dayNumber === targetDay);
+
+                if (module) {
+                    let msg = `🎓 *${incomingMsg === 'replay' ? 'REPLAY' : 'RESUMING'}: ${enrollment.course.title}* (Day ${targetDay})\n\n`;
+                    msg += `*${module.title}*\n\n`;
+                    msg += `${module.content}\n\n`;
+                    
+                    if (module.quiz) {
+                        msg += `🧠 *Quiz:* ${module.quiz}\n_Reply with your answer to get instant feedback!_`;
+                        
+                        // Update state so the AI Evaluator knows to listen for an answer
+                        await prisma.enrollment.update({
+                            where: { id: enrollment.id },
+                            data: { quizState: 'AWAITING_QUIZ' }
+                        });
+                    }
+                    
+                    await sendWhatsApp(cleanPhone, msg);
+                } else {
+                    await sendWhatsApp(cleanPhone, `✅ You are all caught up for Day ${targetDay}! The next lesson will arrive tomorrow morning.`);
+                }
+                return;
+            }
+
+
             if (!member.church) {
                 await sendWhatsApp(cleanPhone, "⚠️ You are not currently linked to any organization. Please reply *Join* to search for yours.");
                 return;
