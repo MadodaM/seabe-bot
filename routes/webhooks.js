@@ -57,9 +57,24 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
             if (isSuccessful) {
                 await prisma.member.update({
                     where: { id: member.id },
-                    data: { status: 'ACTIVE_DEBIT_ORDER' }
+                    data: { 
+                        status: 'ACTIVE_DEBIT_ORDER',
+                        consecutiveFailures: 0 // Reset strikes on new mandate
+                    }
                 });
-                await sendWhatsApp(cleanPhone, `🎉 *Mandate Authorized!*\n\nYour DebiCheck debit order has been successfully activated. Your membership is now fully secured on autopilot!`);
+                
+                // 🛡️ CLAUSE 5.5 COMPLIANCE NOTIFICATION
+                const date = new Date();
+                const confirmMsg = `✅ *Mandate Confirmation*\n\n` +
+                                   `This confirms your electronic mandate setup:\n` +
+                                   `👤 Payer: ${member.firstName} ${member.lastName}\n` +
+                                   `🏢 Beneficiary: ${orgCode} (Seabe)\n` + // Use specific Abbreviated Name
+                                   `📅 Action Date: 1st of the Month\n` +
+                                   `💰 Amount: Variable (Based on Premium)\n` +
+                                   `📞 Contact: 010 000 0000\n\n` + 
+                                   `Your membership is now secured.`;
+                                   
+                await sendWhatsApp(cleanPhone, confirmMsg);
             } else {
                 await prisma.member.update({
                     where: { id: member.id },
@@ -74,7 +89,7 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
         // 💰 SCENARIO B: MASTER LEDGER PROCESSING (Upgraded)
         // =========================================================
         
-        // Find the record in the NEW Transaction Table (Matches Schema: Transaction, not TransactionLedger)
+        // Find the record in the NEW Transaction Table
         const ledgerEntry = await prisma.transaction.findFirst({
             where: { reference: reference },
             include: { church: true, member: true } 
@@ -91,8 +106,6 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
         if (isSuccessful) {
             
             // 🚀 DYNAMIC PROFIT CALCULATION (No Hardcoding)
-            // We fetch the current RETAIL fee configuration to determine revenue.
-            // Defaulting to Capitec Pay rates as it's the primary method.
             const pct = await getPrice('TX_CAPITEC_RT_PCT');
             const flat = await getPrice('TX_CAPITEC_RT_FLAT');
             
@@ -104,7 +117,7 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
                 data: { 
                     status: 'SUCCESS',
                     platformFee: calculatedSeabeFee, // 💰 SAVING THE PROFIT HERE
-                    date: new Date() // Updates timestamp to settlement time
+                    date: new Date() 
                 }
             });
 
@@ -142,18 +155,73 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
             }
 
         } else {
-            // Transaction Failed
+            // ====================================================
+            // 🛑 COMPLIANCE HANDLER (Clauses 8, 11, 12)
+            // ====================================================
+            
+            // 1. Identify the specific Netcash Failure Code
+            // Payload often has 'ReasonCode' or we parse 'Reason' text
+            const code = payload.ReasonCode || '00'; 
+            
+            // 🛑 IMMEDIATE STOP CODES (Clause 12.1 / 11.3)
+            // 04: Stop Payment, 12: Account Closed, 16: Transferred, 06: Frozen, 18: Deceased
+            const stopCodes = ['04', '12', '16', '06', '18', '26', '30', '32', '34'];
+            
+            if (stopCodes.includes(code)) {
+                if (ledgerEntry.memberId) {
+                    await prisma.member.update({
+                        where: { id: ledgerEntry.memberId },
+                        data: { 
+                            status: 'SUSPENDED_MANDATE', // Stop future debits immediately
+                            consecutiveFailures: { increment: 1 } 
+                        }
+                    });
+                    console.log(`🛑 MANDATE CANCELLED (Compliance): Reason Code ${code}`);
+                }
+            } 
+            // ⚠️ INSUFFICIENT FUNDS (Clause 8.2 - Two Strike Rule)
+            else if (code === '02' || code === 'Not provided for') {
+                if (ledgerEntry.memberId) {
+                    const member = await prisma.member.findUnique({ where: { id: ledgerEntry.memberId } });
+                    
+                    // Increment Failure Count
+                    const newCount = (member.consecutiveFailures || 0) + 1;
+                    
+                    let newStatus = 'ACTIVE_DEBIT_ORDER';
+                    if (newCount >= 2) {
+                        newStatus = 'SUSPENDED_MANDATE'; // 🛑 STRIKE TWO: YOU'RE OUT
+                    }
+
+                    await prisma.member.update({
+                        where: { id: ledgerEntry.memberId },
+                        data: { 
+                            consecutiveFailures: newCount,
+                            status: newStatus
+                        }
+                    });
+                    
+                    if (newStatus === 'SUSPENDED_MANDATE') {
+                        console.log(`🛑 MANDATE SUSPENDED: 2 Consecutive "Not Provided For"`);
+                        // Send warning to user
+                        await sendWhatsApp(ledgerEntry.phone, `⚠️ *Debit Order Suspended*\n\nWe have received a second "Insufficient Funds" response. To prevent bank penalties, your debit order has been paused.\n\nPlease reply *Menu* > *Pay* to make a manual arrangement.`);
+                        return; // Exit, don't send standard fail message
+                    }
+                }
+            }
+
+            // Standard Failure Log
             await prisma.transaction.update({
                 where: { id: ledgerEntry.id },
                 data: { status: 'FAILED' }
             });
 
+            // Standard User Notification
             const userPhone = ledgerEntry.phone || 'UNKNOWN'; 
             if (userPhone !== 'UNKNOWN') {
                 let cleanPhone = userPhone.replace(/\D/g, '');
                 if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
                 
-                const failMsg = `⚠️ *Payment Failed*\n\nYour attempted payment of R${amountPaid.toFixed(2)} could not be processed.\nReason: ${failureReason}\n\nReply *Menu* to try again.`;
+                const failMsg = `⚠️ *Payment Failed*\n\nYour attempted payment of R${amountPaid.toFixed(2)} was returned.\nReason: ${failureReason}\n\nReply *Menu* to rectify this.`;
                 await sendWhatsApp(cleanPhone, failMsg);
             }
         }
