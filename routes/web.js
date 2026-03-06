@@ -1,15 +1,39 @@
 // routes/web.js
-// PURPOSE: Public Website (Home, Register, Demo, Terms, Privacy)
+// PURPOSE: Public Website (Home, Register, Demo, Terms, Privacy) + Cloudinary FICA + Netcash Redirect
 // DESIGN SYSTEM: Deep Navy (#0f172a), Warm Teal (#14b8a6), Gold (#f59e0b)
 
 const express = require('express');
 const sgMail = require('@sendgrid/mail');
 const fs = require('fs');
 const path = require('path');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const multer = require('multer');
+const netcash = require('../services/netcash'); // Required for Payment Redirect
 require('dotenv').config();
 
 const EMAIL_FROM = process.env.EMAIL_FROM;
 if (process.env.SENDGRID_KEY) sgMail.setApiKey(process.env.SENDGRID_KEY);
+
+// --- 1. CLOUDINARY CONFIGURATION ---
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// --- 2. STORAGE ENGINE ---
+const storage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'seabe-fica-vault',
+        allowed_formats: ['jpg', 'png', 'pdf', 'jpeg'],
+        resource_type: 'auto',
+        public_id: (req, file) => `FICA_${Date.now()}_${file.originalname.replace(/\s+/g, '_')}`
+    },
+});
+
+const uploadCloud = multer({ storage: storage });
 
 module.exports = function(app, upload, { prisma, syncToHubSpot }) {
 
@@ -17,7 +41,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     const emailStyle = "font-family: 'Inter', sans-serif; color: #333; line-height: 1.6;";
     const headerStyle = "background-color: #0f172a; color: #ffffff; padding: 30px; text-align: center; border-bottom: 4px solid #f59e0b;";
 
-    // --- SHARED HEAD (Tailwind + Fonts + Floating WhatsApp) ---
+    // --- SHARED HEAD ---
     const sharedHead = `
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -50,7 +74,26 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     `;
 
     // ==========================================
-    // 1. HOME LANDING PAGE (New Design)
+    // 0. SEO & BOT CONTROLS
+    // ==========================================
+    app.get('/robots.txt', (req, res) => {
+        res.type('text/plain');
+        res.send(`User-agent: *\nAllow: /\nAllow: /terms\nAllow: /privacy\nAllow: /register\nDisallow: /admin/\nDisallow: /dashboard\nDisallow: /api/`);
+    });
+
+    // ==========================================
+    // 0.1 PAYMENT REDIRECT (Live Logic)
+    // ==========================================
+    app.get('/pay/redirect/:ref', (req, res) => {
+        const { ref } = req.params;
+        const { a, p, o, e } = req.query; 
+        if (!a || !ref) return res.send("❌ Invalid Payment Link.");
+        const htmlForm = netcash.generateAutoPostForm({ amount: a, reference: ref, description: o || 'Seabe Payment', phone: p, email: e });
+        res.send(htmlForm);
+    });
+
+    // ==========================================
+    // 1. HOME LANDING PAGE
     // ==========================================
     app.get('/', (req, res) => {
         res.send(`
@@ -110,7 +153,6 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                                 <li class="flex gap-2">✅ Real-time Financial Reporting</li>
                             </ul>
                         </div>
-
                         <div class="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 hover:shadow-xl transition hover:border-seabe-gold/30 group">
                             <div class="w-12 h-12 bg-amber-50 text-amber-600 rounded-lg flex items-center justify-center text-2xl mb-6 group-hover:bg-seabe-gold group-hover:text-seabe-navy transition">🛡️</div>
                             <h3 class="text-xl font-bold text-seabe-navy mb-3">Burial Societies</h3>
@@ -121,7 +163,6 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                                 <li class="flex gap-2">✅ Automated Receipts</li>
                             </ul>
                         </div>
-
                         <div class="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 hover:shadow-xl transition hover:border-seabe-teal/30 group">
                             <div class="w-12 h-12 bg-teal-50 text-seabe-teal rounded-lg flex items-center justify-center text-2xl mb-6 group-hover:bg-seabe-teal group-hover:text-white transition">🤝</div>
                             <h3 class="text-xl font-bold text-seabe-navy mb-3">NPO Administrators</h3>
@@ -183,7 +224,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     });
 
     // ==========================================
-    // 2. REGISTRATION PAGE (FICA Level 1)
+    // 2. REGISTRATION PAGE
     // ==========================================
     app.get('/register', (req, res) => {
         res.send(`
@@ -260,58 +301,41 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     });
 
     // ==========================================
-    // 3. REGISTRATION HANDLER (Backend Logic)
+    // 3. REGISTRATION HANDLER
     // ==========================================
-    app.post('/register-church', upload.fields([{ name: 'idDoc', maxCount: 1 }, { name: 'bankDoc', maxCount: 1 }]), async (req, res) => {
+    app.post('/register-church', uploadCloud.fields([{ name: 'idDoc', maxCount: 1 }, { name: 'bankDoc', maxCount: 1 }]), async (req, res) => {
         const { churchName, email, tos, type } = req.body;
         if (!tos) return res.send("⚠️ You must accept the Terms.");
 
         try {
-            // File Handling
-            const attachments = []; 
-            const filePathsToDelete = [];
-            const processFile = (fieldName, prefix) => {
-                if (req.files[fieldName]) {
-                    const f = req.files[fieldName][0];
-                    attachments.push({ content: fs.readFileSync(f.path).toString('base64'), filename: `${prefix}_${churchName.replace(/[^a-zA-Z0-9]/g,'_')}_${f.originalname}`, type: f.mimetype, disposition: 'attachment' });
-                    filePathsToDelete.push(f.path);
-                }
-            };
-            processFile('idDoc', 'ID'); 
-            processFile('bankDoc', 'BANK');
+            const idDocUrl = req.files['idDoc'] ? req.files['idDoc'][0].path : null;
+            const bankDocUrl = req.files['bankDoc'] ? req.files['bankDoc'][0].path : null;
 
-            // DB Creation
+            if (!idDocUrl || !bankDocUrl) return res.send("❌ Error: Documents failed to upload.");
+
             const prefix = churchName.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
             const newCode = `${prefix}${Math.floor(100 + Math.random() * 900)}`;
             
             await prisma.church.create({ 
                 data: { 
                     name: churchName, code: newCode, email: email, 
-                    subaccountCode: 'PENDING_KYC', // Will be updated by Netcash Provisioner later
+                    subaccountCode: 'PENDING_KYC', 
                     tosAcceptedAt: new Date(), type: type || 'CHURCH',
                     ficaStatus: 'LEVEL_1_PENDING'
                 } 
             });
 
-            // SendGrid Email
             if (process.env.SENDGRID_KEY) {
-                // To Admin
                 await sgMail.send({ 
                     to: EMAIL_FROM, from: EMAIL_FROM, 
                     subject: `📝 NEW FICA UPLOAD: ${churchName}`, 
-                    html: `<h2>New Application</h2><p>Name: ${churchName}</p><p>Type: ${type}</p>`, 
-                    attachments: attachments 
+                    html: `<h2>New Application</h2><p><strong>Name:</strong> ${churchName}</p><p><strong>Type:</strong> ${type}</p><hr><h3>🛡️ Secure FICA Vault</h3><ul><li><a href="${idDocUrl}">📄 View Leader ID</a></li><li><a href="${bankDocUrl}">🏦 View Bank Proof</a></li></ul>` 
                 });
-                
-                // To User
                 await sgMail.send({
                     to: email, from: EMAIL_FROM, subject: 'Verification Received | Seabe Digital',
-                    html: `<div style="${emailStyle}"><div style="${headerStyle}"><h1 style="margin:0;">SEABE.</h1></div><div style="padding: 30px; background: #fff;"><h2>Documents Received</h2><p>We have received your FICA documents for <strong>${churchName}</strong>. Our compliance team will review them within 24 hours.</p></div></div>`
+                    html: `<div style="${emailStyle}"><div style="${headerStyle}"><h1 style="margin:0;">SEABE.</h1></div><div style="padding: 30px; background: #fff;"><h2>Documents Received</h2><p>We have securely vaulted your FICA documents for <strong>${churchName}</strong>. Our compliance team will review them within 24 hours.</p></div></div>`
                 });
             }
-
-            // Cleanup
-            filePathsToDelete.forEach(p => { try { fs.unlinkSync(p); } catch(e){} });
             
             res.send(`
                 <!DOCTYPE html>
@@ -332,7 +356,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     });
 
     // ==========================================
-    // 4. DEMO REQUEST (HubSpot Integration)
+    // 4. DEMO REQUEST
     // ==========================================
     app.get('/demo', (req, res) => {
         res.send(`
@@ -359,11 +383,9 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
 
     app.post('/request-demo', upload.none(), async (req, res) => {
         const { firstname, email, phone, orgName } = req.body;
-        // Sync to HubSpot
         if (syncToHubSpot) {
             await syncToHubSpot({ name: firstname, email, phone, company: orgName, lifeCycleStage: 'lead' });
         }
-        
         if (process.env.SENDGRID_KEY) {
             await sgMail.send({ to: EMAIL_FROM, from: EMAIL_FROM, subject: `🔥 DEMO REQUEST: ${orgName}`, html: `<p>${firstname} from ${orgName} wants a demo.<br>Phone: ${phone}</p>` });
         }
@@ -371,7 +393,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     });
 
     // ==========================================
-    // 5. PRIVACY POLICY (POPIA Compliant)
+    // 5. PRIVACY POLICY
     // ==========================================
     app.get('/privacy', (req, res) => {
         res.send(`
@@ -382,23 +404,17 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 <div class="max-w-3xl mx-auto">
                     <h1 class="text-4xl font-extrabold text-seabe-navy mb-2">Privacy Policy</h1>
                     <p class="text-sm text-gray-500 mb-10">Effective Date: March 1, 2026</p>
-                    
                     <div class="prose prose-slate">
                         <h3 class="font-bold text-xl mb-2">1. Introduction</h3>
-                        <p class="mb-4">Seabe Digital ("we", "us") is committed to protecting your personal information in accordance with the Protection of Personal Information Act (POPIA). This policy outlines how we collect, use, and safeguard your data.</p>
-                        
+                        <p class="mb-4">Seabe Digital ("we", "us") is committed to protecting your personal information in accordance with POPIA.</p>
                         <h3 class="font-bold text-xl mb-2">2. Information We Collect</h3>
-                        <p class="mb-4">We collect Information required for FICA (Financial Intelligence Centre Act) compliance, including Identity Documents, Proof of Address, and Banking Details. We also collect contact information (Name, Phone, Email) for account management.</p>
-                        
+                        <p class="mb-4">We collect Information required for FICA compliance, including Identity Documents and Banking Details.</p>
                         <h3 class="font-bold text-xl mb-2">3. How We Use Your Information</h3>
-                        <p class="mb-4">Your data is used strictly for: <br>a) Facilitating payments via Netcash/Ozow.<br>b) Verifying legal entity status (KYC/KYB).<br>c) Communicating via WhatsApp regarding your account.</p>
-                        
+                        <p class="mb-4">Your data is used strictly for facilitating payments via Netcash/Ozow and verifying legal entity status.</p>
                         <h3 class="font-bold text-xl mb-2">4. Data Security</h3>
-                        <p class="mb-4">All sensitive documents (IDs, Bank Letters) are encrypted at rest. We utilize bank-grade security protocols provided by our partners (Netcash) to process financial transactions.</p>
-                        
+                        <p class="mb-4">All sensitive documents (IDs, Bank Letters) are encrypted at rest.</p>
                         <h3 class="font-bold text-xl mb-2">5. Your Rights</h3>
-                        <p class="mb-4">Under POPIA, you have the right to request access to your data, request corrections, or request deletion (subject to FICA retention laws of 5 years).</p>
-
+                        <p class="mb-4">Under POPIA, you have the right to request access to your data or request deletion.</p>
                         <h3 class="font-bold text-xl mb-2">6. Contact Information Officer</h3>
                         <p>For privacy concerns, contact: <a href="mailto:privacy@seabe.tech" class="text-seabe-teal font-bold">privacy@seabe.tech</a></p>
                     </div>
@@ -410,7 +426,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     });
 
     // ==========================================
-    // 6. TERMS OF SERVICE (Extensive)
+    // 6. TERMS OF SERVICE
     // ==========================================
     app.get('/terms', (req, res) => {
         res.send(`
@@ -421,14 +437,12 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 <div class="max-w-3xl mx-auto">
                     <h1 class="text-4xl font-extrabold text-seabe-navy mb-2">Master Service Agreement</h1>
                     <p class="text-sm text-gray-500 mb-10">Last Updated: March 2026</p>
-                    
                     <div class="space-y-6 text-gray-600">
                         <p><strong>1. Acceptance of Terms:</strong> By registering, you agree to these terms. Seabe Digital provides administrative software; we are not a bank.</p>
-                        <p><strong>2. Payment Processing:</strong> All funds are processed by registered PSPs (Netcash/Ozow). Seabe does not hold funds. Settlement occurs directly to your provided bank account.</p>
-                        <p><strong>3. FICA Compliance:</strong> You warrant that all documents uploaded are authentic. Providing false documents constitutes fraud.</p>
-                        <p><strong>4. Subscription Fees:</strong> Seabe charges a platform fee per transaction as agreed upon in your pricing schedule. This is deducted automatically before settlement.</p>
+                        <p><strong>2. Payment Processing:</strong> All funds are processed by registered PSPs (Netcash/Ozow).</p>
+                        <p><strong>3. FICA Compliance:</strong> You warrant that all documents uploaded are authentic.</p>
+                        <p><strong>4. Subscription Fees:</strong> Seabe charges a platform fee per transaction as agreed upon in your pricing schedule.</p>
                         <p><strong>5. Limitation of Liability:</strong> Seabe is not liable for lost funds due to incorrect banking details provided by the user.</p>
-                        <p><strong>6. Termination:</strong> We reserve the right to suspend accounts suspected of money laundering or fraud immediately.</p>
                     </div>
                     <div class="mt-12 pt-8 border-t"><a href="/" class="font-bold text-seabe-navy">&larr; Back to Home</a></div>
                 </div>
@@ -438,10 +452,10 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     });
 
     // ==========================================
-    // 7. TOOLS & PREVIEWS (Keep Existing)
+    // 7. TOOLS & PREVIEWS (PDF & Webhooks)
     // ==========================================
     
-    // Ensure uploads directory exists
+    // Ensure uploads directory exists (Legacy Support for PDF generation)
     const uploadsDir = path.join(__dirname, '../uploads');
     if (!fs.existsSync(uploadsDir)) {
         fs.mkdirSync(uploadsDir, { recursive: true });
@@ -463,19 +477,14 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
         const { phone, pdfBase64, orgName } = req.body;
         
         try {
-            // Strip the base64 prefix
             const base64Data = pdfBase64.replace(/^data:application\/pdf;base64,/, "");
             const fileName = `Quote_${Date.now()}.pdf`;
             const filePath = path.join(uploadsDir, fileName);
-            
-            // Save locally
             fs.writeFileSync(filePath, base64Data, 'base64');
 
-            // Generate the explicit URL
             const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
             const fileUrl = `${host}/api/public/quote-file/${fileName}`;
 
-            // Send via Twilio
             if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
                 const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
                 const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
@@ -512,7 +521,6 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 if (process.env.TWILIO_SID && foundationModule) {
                     const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
                     const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
-                    
                     const msg = `🎉 *Payment Confirmed!*\n\nWelcome to *${enrollment.course.title}*. Your subscription is active.\n\nHere is your *Foundation Module:*\n📘 *${foundationModule.title}*\n\nAccess the material here:\n👉 ${foundationModule.contentUrl}\n\nReply *Next* when you have completed this module to unlock Module 2!`;
 
                     await twilioClient.messages.create({
@@ -530,65 +538,5 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
         } else {
             res.status(400).send('Payment not successful');
         }
-    });
-
-    // Ozow Sandbox Preview
-    app.get('/ozow-sandbox-preview', (req, res) => {
-        res.send(`
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <title>Seabe Digital | Ozow Integration Preview</title>
-                ${sharedHead}
-                <style>
-                    .container { max-width: 700px; margin: 40px auto; padding: 40px; background: #ffffff; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
-                    .badge { display: inline-block; background-color: #e6fffa; color: #319795; padding: 6px 12px; border-radius: 20px; font-size: 0.85em; font-weight: 700; margin-bottom: 15px; }
-                </style>
-            </head>
-            <body class="bg-seabe-light">
-                <div class="container">
-                    <div class="text-center mb-8">
-                        <span class="badge">SANDBOX ENVIRONMENT</span>
-                        <h1 class="text-2xl font-bold text-seabe-navy">Ozow Payment Gateway</h1>
-                        <p class="text-gray-500">Seabe Digital Interceptor</p>
-                    </div>
-                    <div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-8">
-                        <p class="text-blue-700 font-medium">Seabe Digital is currently moving into the Ozow Production Environment.</p>
-                    </div>
-                </div>
-            </body>
-            </html>
-        `);
-    });
-
-    // Netcash Sandbox Preview
-    app.get('/netcash-sandbox-preview', (req, res) => {
-        res.send(`
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <title>Seabe Digital | NetCash Integration Preview</title>
-                ${sharedHead}
-                <style>
-                    .container { max-width: 700px; margin: 40px auto; padding: 40px; background: #ffffff; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
-                    .badge { display: inline-block; background-color: #ebf8ff; color: #2b6cb0; padding: 6px 12px; border-radius: 20px; font-size: 0.85em; font-weight: 700; margin-bottom: 15px; }
-                </style>
-            </head>
-            <body class="bg-seabe-light">
-                <div class="container">
-                    <div class="text-center mb-8">
-                        <span class="badge">SANDBOX ENVIRONMENT</span>
-                        <h1 class="text-2xl font-bold text-seabe-navy">NetCash Payment Gateway</h1>
-                        <p class="text-gray-500">Seabe Digital Interceptor</p>
-                    </div>
-                    <div class="bg-teal-50 border-l-4 border-teal-500 p-4 mb-8">
-                        <p class="text-teal-700 font-medium">Seabe Digital is currently moving into the NetCash Production Environment.</p>
-                    </div>
-                </div>
-            </body>
-            </html>
-        `);
     });
 };
