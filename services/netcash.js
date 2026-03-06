@@ -1,5 +1,5 @@
 // services/netcash.js
-// VERSION: 10.1 (Strict Compliance Fix - Mandatory Submit Field)
+// VERSION: 10.3 (Production Stable - Manual Fallback + Sanitization)
 const axios = require('axios');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -11,6 +11,9 @@ const { calculateTransaction } = require('./pricingEngine');
 // 🔑 NETCASH CONFIGURATION
 const PAYNOW_SERVICE_KEY = process.env.NETCASH_PAYNOW_SERVICE_KEY;
 const PAYNOW_URL = "https://paynow.netcash.co.za/site/paynow.aspx";
+
+// 🚀 VENDOR KEY (Optional)
+// Only load this if you have been issued an ISV Key by Netcash.
 const VENDOR_KEY = process.env.NETCASH_VENDOR_KEY; 
 
 // ==========================================
@@ -24,15 +27,15 @@ function sanitizeMoney(amount) {
 }
 
 // ==========================================
-// 1. GENERATE COMPLIANT POST FORM (Auto-Submit)
+// 1. GENERATE COMPLIANT POST FORM (Auto-Submit + Manual Backup)
 // ==========================================
 function generateAutoPostForm(txData) {
     const amount = sanitizeMoney(txData.amount);
     
+    // SAFETY FIX: Remove double quotes to prevent HTML breaking
     // STRICT RULE: Description (p3) max 50 chars
-    // Netcash will reject the transaction if this is too long
     const rawDesc = txData.description || 'Seabe Payment';
-    const cleanDesc = rawDesc.substring(0, 50);
+    const cleanDesc = rawDesc.replace(/"/g, '').substring(0, 50);
 
     // Conditional Vendor Key Logic
     const vendorInput = VENDOR_KEY 
@@ -43,14 +46,22 @@ function generateAutoPostForm(txData) {
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Securing Payment...</title>
+        <title>Pay via Netcash</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>body{display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;background:#f4f7f6;font-family:sans-serif;color:#2c3e50}.loader{border:4px solid #e0e0e0;border-top:4px solid #14b8a6;border-radius:50%;width:40px;height:40px;animation:spin 0.8s linear infinite;margin-bottom:20px}@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}</style>
+        <style>
+            body { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; background: #f4f7f6; font-family: sans-serif; color: #2c3e50; text-align: center; }
+            .loader { border: 4px solid #e0e0e0; border-top: 4px solid #14b8a6; border-radius: 50%; width: 40px; height: 40px; animation: spin 0.8s linear infinite; margin-bottom: 20px; }
+            .btn { background-color: #14b8a6; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold; border: none; cursor: pointer; margin-top: 20px; font-size: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: background 0.2s; }
+            .btn:hover { background-color: #0d9488; }
+            p { margin: 5px 0; }
+            @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        </style>
     </head>
-    <body onload="document.forms['netcash_pay'].submit()">
+    <body onload="setTimeout(function() { document.forms['netcash_pay'].submit(); }, 1500)">
+        
         <div class="loader"></div>
         <p><strong>Connecting to Netcash...</strong></p>
-        <p style="font-size:12px; opacity:0.7;">Please do not close this window.</p>
+        <p style="font-size:12px; opacity:0.7;">If you are not redirected automatically, click the button below.</p>
         
         <form name="netcash_pay" action="${PAYNOW_URL}" method="POST" target="_top">
             <input type="hidden" name="M1" value="${PAYNOW_SERVICE_KEY}">
@@ -66,6 +77,8 @@ function generateAutoPostForm(txData) {
             <input type="hidden" name="p11" value="${txData.phone || ''}">
 
             <input type="hidden" name="submit" value="PAY">
+
+            <button type="submit" class="btn">Click here to Pay R${amount}</button>
         </form>
     </body>
     </html>
@@ -105,6 +118,7 @@ async function createPaymentLink(finalAmount, ref, userPhone, orgName, email = '
 // ==========================================
 async function verifyPayment(reference) {
     // We rely on Webhooks now
+    console.log(`ℹ️ Payment verification for ${reference} deferred to Webhook.`);
     return null; 
 }
 
