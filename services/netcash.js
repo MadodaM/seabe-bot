@@ -1,5 +1,5 @@
 // services/netcash.js
-// VERSION: 9.6 (Full Compliance + Email Invoicing)
+// VERSION: 10.1 (Strict Compliance Fix - Mandatory Submit Field)
 const axios = require('axios');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -9,12 +9,8 @@ require('dotenv').config();
 const { calculateTransaction } = require('./pricingEngine');
 
 // 🔑 NETCASH CONFIGURATION
-const PAYNOW_SERVICE_KEY = process.env.NETCASH_PAYNOW_KEY;
-const DEBIT_ORDER_KEY = process.env.NETCASH_DEBIT_ORDER_KEY;
+const PAYNOW_SERVICE_KEY = process.env.NETCASH_PAYNOW_SERVICE_KEY;
 const PAYNOW_URL = "https://paynow.netcash.co.za/site/paynow.aspx";
-
-// 🚀 VENDOR KEY (Optional)
-// Only load this if you have been issued an ISV Key by Netcash.
 const VENDOR_KEY = process.env.NETCASH_VENDOR_KEY; 
 
 // ==========================================
@@ -33,6 +29,11 @@ function sanitizeMoney(amount) {
 function generateAutoPostForm(txData) {
     const amount = sanitizeMoney(txData.amount);
     
+    // STRICT RULE: Description (p3) max 50 chars
+    // Netcash will reject the transaction if this is too long
+    const rawDesc = txData.description || 'Seabe Payment';
+    const cleanDesc = rawDesc.substring(0, 50);
+
     // Conditional Vendor Key Logic
     const vendorInput = VENDOR_KEY 
         ? `<input type="hidden" name="M2" value="${VENDOR_KEY}">` 
@@ -42,26 +43,29 @@ function generateAutoPostForm(txData) {
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Secure Payment Redirect</title>
+        <title>Securing Payment...</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>body{display:flex;justify-content:center;align-items:center;height:100vh;background:#f4f7f6;font-family:sans-serif;}.loader{border:4px solid #f3f3f3;border-top:4px solid #3498db;border-radius:50%;width:30px;height:30px;animation:spin 1s linear infinite;}@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}</style>
+        <style>body{display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;background:#f4f7f6;font-family:sans-serif;color:#2c3e50}.loader{border:4px solid #e0e0e0;border-top:4px solid #14b8a6;border-radius:50%;width:40px;height:40px;animation:spin 0.8s linear infinite;margin-bottom:20px}@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}</style>
     </head>
     <body onload="document.forms['netcash_pay'].submit()">
-        <div style="text-align:center;">
-            <div class="loader" style="margin:0 auto 15px auto;"></div>
-            <p><strong>Securing connection to Netcash...</strong></p>
-            <p style="font-size:12px; color:#7f8c8d;">Please do not close this window.</p>
-        </div>
+        <div class="loader"></div>
+        <p><strong>Connecting to Netcash...</strong></p>
+        <p style="font-size:12px; opacity:0.7;">Please do not close this window.</p>
         
         <form name="netcash_pay" action="${PAYNOW_URL}" method="POST" target="_top">
             <input type="hidden" name="M1" value="${PAYNOW_SERVICE_KEY}">
-            ${vendorInput} 
-            <input type="hidden" name="p2" value="${txData.reference}">
-            <input type="hidden" name="p3" value="${txData.description}">
-            <input type="hidden" name="p4" value="${amount}">
-            <input type="hidden" name="Budget" value="Y"> <input type="hidden" name="p10" value="${txData.email || ''}"> 
+            ${vendorInput}
             
-            <input type="hidden" name="p11" value="${txData.phone}">
+            <input type="hidden" name="p2" value="${txData.reference}">
+            <input type="hidden" name="p3" value="${cleanDesc}">
+            <input type="hidden" name="p4" value="${amount}">
+            
+            <input type="hidden" name="Budget" value="Y">
+            
+            <input type="hidden" name="p10" value="${txData.email || ''}"> 
+            <input type="hidden" name="p11" value="${txData.phone || ''}">
+
+            <input type="hidden" name="submit" value="PAY">
         </form>
     </body>
     </html>
@@ -81,12 +85,13 @@ async function createPaymentLink(finalAmount, ref, userPhone, orgName, email = '
             return null;
         }
 
-        const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+        const host = process.env.HOST_URL || 'https://seabe.tech';
         
         // Encode parameters securely
         const encodedOrg = encodeURIComponent(orgName);
-        const encodedEmail = encodeURIComponent(email); // 🚀 Add Email to URL
+        const encodedEmail = encodeURIComponent(email);
         
+        // Create the internal redirect link that triggers generateAutoPostForm
         return `${host}/pay/redirect/${ref}?a=${cleanAmount}&p=${userPhone}&o=${encodedOrg}&e=${encodedEmail}`;
 
     } catch (error) {
@@ -99,13 +104,8 @@ async function createPaymentLink(finalAmount, ref, userPhone, orgName, email = '
 // 3. VERIFY PAYMENT (Deprecated/Polling)
 // ==========================================
 async function verifyPayment(reference) {
-    try {
-        console.log(`ℹ️ Payment verification for ${reference} deferred to Webhook.`);
-        return null; 
-    } catch (error) {
-        console.error("❌ NetCash Verification Error:", error.message);
-        return null;
-    }
+    // We rely on Webhooks now
+    return null; 
 }
 
 // ==========================================
@@ -138,13 +138,10 @@ async function getTransactionHistory(memberId) {
 // ==========================================
 async function setupDebitOrderMandate(baseAmount, userPhone, orgName, ref) {
     try {
-        // 🚀 PRICING ENGINE INTERCEPTION (ASYNC UPDATE)
         const pricing = await calculateTransaction(baseAmount, 'STANDARD', 'DEBIT_ORDER', true);
+        console.log(`💳 Generating Netcash Mandate for ${userPhone}. Total: R${pricing.totalChargedToUser}`);
 
-        console.log(`💳 Generating Netcash Mandate for ${userPhone}. Base: R${baseAmount} -> Monthly Total: R${pricing.totalChargedToUser}`);
-
-        // Netcash Debit Order API integration goes here.
-        const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+        const host = process.env.HOST_URL || 'https://seabe.tech';
         const mandateUrl = `${host}/mandate/sign?ref=${ref}&amount=${pricing.totalChargedToUser}&phone=${userPhone}&org=${encodeURIComponent(orgName)}`;
         
         return {
