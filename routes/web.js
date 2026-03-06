@@ -82,14 +82,42 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     });
 
     // ==========================================
-    // 0.1 PAYMENT REDIRECT (Live Logic)
+    // 0.1 PAYMENT REDIRECT (Short Link Decoder)
     // ==========================================
-    app.get('/pay/redirect/:ref', (req, res) => {
-        const { ref } = req.params;
-        const { a, p, o, e } = req.query; 
-        if (!a || !ref) return res.send("❌ Invalid Payment Link.");
-        const htmlForm = netcash.generateAutoPostForm({ amount: a, reference: ref, description: o || 'Seabe Payment', phone: p, email: e });
-        res.send(htmlForm);
+    app.get('/pay/:token', (req, res) => {
+        const { token } = req.params;
+
+        try {
+            // 1. Decode the Token (Reverse the Base64 logic)
+            // Restore padding and standard chars
+            let base64 = token.replace(/-/g, '+').replace(/_/g, '/');
+            while (base64.length % 4) { base64 += '='; }
+
+            // 2. Parse JSON
+            const jsonString = Buffer.from(base64, 'base64').toString('utf-8');
+            const data = JSON.parse(jsonString);
+
+            // 3. Generate Form (Using the decoded data)
+            // Map the short keys back to full names
+            const htmlForm = netcash.generateAutoPostForm({
+                amount: data.a,
+                reference: data.r,
+                description: data.o || 'Seabe Payment',
+                phone: data.p,
+                email: data.e
+            });
+            
+            res.send(htmlForm);
+
+        } catch (error) {
+            console.error("Link Decode Error:", error);
+            res.status(400).send(`
+                <div style="text-align:center; padding:50px; font-family:sans-serif;">
+                    <h1>❌ Invalid Link</h1>
+                    <p>This payment link is broken or incomplete.</p>
+                </div>
+            `);
+        }
     });
 
     // ==========================================

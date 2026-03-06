@@ -1,5 +1,5 @@
 // services/netcash.js
-// VERSION: 10.3 (Production Stable - Manual Fallback + Sanitization)
+// VERSION: 11.0 (Short Links + Manual Fallback + Full History)
 const axios = require('axios');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -12,8 +12,7 @@ const { calculateTransaction } = require('./pricingEngine');
 const PAYNOW_SERVICE_KEY = process.env.NETCASH_PAYNOW_SERVICE_KEY;
 const PAYNOW_URL = "https://paynow.netcash.co.za/site/paynow.aspx";
 
-// 🚀 VENDOR KEY (Optional)
-// Only load this if you have been issued an ISV Key by Netcash.
+// 🚀 VENDOR KEY (Optional - ISV Only)
 const VENDOR_KEY = process.env.NETCASH_VENDOR_KEY; 
 
 // ==========================================
@@ -86,7 +85,7 @@ function generateAutoPostForm(txData) {
 }
 
 // ==========================================
-// 2. STANDARD PAYMENT LINK (Wrapper)
+// 2. SHORT LINK GENERATOR (Base64)
 // ==========================================
 async function createPaymentLink(finalAmount, ref, userPhone, orgName, email = '') {
     try {
@@ -100,12 +99,27 @@ async function createPaymentLink(finalAmount, ref, userPhone, orgName, email = '
 
         const host = process.env.HOST_URL || 'https://seabe.tech';
         
-        // Encode parameters securely
-        const encodedOrg = encodeURIComponent(orgName);
-        const encodedEmail = encodeURIComponent(email);
-        
-        // Create the internal redirect link that triggers generateAutoPostForm
-        return `${host}/pay/redirect/${ref}?a=${cleanAmount}&p=${userPhone}&o=${encodedOrg}&e=${encodedEmail}`;
+        // 🚀 CREATE SHORT TOKEN
+        // We pack the data into a JSON object and encode it to Base64
+        const payload = JSON.stringify({
+            r: ref,           // Reference
+            a: cleanAmount,   // Amount
+            p: userPhone,     // Phone
+            o: orgName,       // Org Name
+            e: email          // Email
+        });
+
+        // Encode to URL-safe Base64
+        // 1. Buffer -> Base64
+        // 2. Replace + with - and / with _ (URL Safe)
+        // 3. Remove padding =
+        const token = Buffer.from(payload).toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+
+        // Return the clean, short link
+        return `${host}/pay/${token}`;
 
     } catch (error) {
         console.error("❌ NetCash Link Error:", error.message);
@@ -152,6 +166,7 @@ async function getTransactionHistory(memberId) {
 // ==========================================
 async function setupDebitOrderMandate(baseAmount, userPhone, orgName, ref) {
     try {
+        // 🚀 PRICING ENGINE INTERCEPTION
         const pricing = await calculateTransaction(baseAmount, 'STANDARD', 'DEBIT_ORDER', true);
         console.log(`💳 Generating Netcash Mandate for ${userPhone}. Total: R${pricing.totalChargedToUser}`);
 
