@@ -558,50 +558,204 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-    // 2. EDIT COURSE
+	// ==========================================
+    // 🚀 NEW: MODULE EDITOR LOGIC
+    // ==========================================
+
+    // 2. VIEW & EDIT COURSE (Updated with Module Edit Buttons)
     app.get('/admin/course-builder/edit/:id', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
+        
         try {
             const course = await prisma.course.findUnique({
                 where: { id: parseInt(req.params.id) },
-                include: { modules: { orderBy: { order: 'asc' } } }
+                include: { 
+                    church: true, 
+                    modules: { orderBy: { order: 'asc' } }
+                }
             });
+
             if (!course) throw new Error("Course not found");
 
+            // 🚀 UPDATED: Module List now has an "Edit" button
             const moduleList = course.modules.map(m => `
-                <div style="background:#f8f9fa; padding:10px; margin-bottom:5px; border-left:3px solid #00d2d3; display:flex; justify-content:space-between;">
-                    <span style="font-weight:bold;">DAY ${m.order}: ${m.title}</span>
-                    <span style="font-size:11px; background:#eee; padding:2px 6px;">${m.type}</span>
+                <div style="background:#f8f9fa; padding:10px; margin-bottom:5px; border-left:3px solid #00d2d3; display:flex; justify-content:space-between; align-items:center;">
+                    <div style="flex:1;">
+                        <span style="font-weight:bold; font-size:12px; color:#95a5a6; display:block;">DAY ${m.order}</span>
+                        <span style="font-weight:bold;">${m.title}</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <span style="font-size:11px; background:#eee; padding:2px 6px; border-radius:4px;">${m.type}</span>
+                        <a href="/admin/course-builder/module/edit/${m.id}" class="btn btn-edit" style="font-size:11px; padding:4px 8px;">Edit Content</a>
+                    </div>
                 </div>
             `).join('');
 
             const content = `
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:30px;">
                     <div class="card-form" style="max-width:100%;">
-                        <h3>✏️ Details</h3>
+                        <h3>✏️ Edit Course Details</h3>
                         <form action="/admin/course-builder/update" method="POST">
                             <input type="hidden" name="id" value="${course.id}">
-                            <div class="form-group"><label>Title</label><input name="title" value="${course.title}" required></div>
-                            <div class="form-group"><label>Description</label><textarea name="description">${course.description||''}</textarea></div>
-                            <div class="form-group"><label>Price</label><input type="number" name="price" value="${course.price}" required></div>
-                            <div class="form-group"><label>Status</label>
-                                <select name="status">
-                                    <option value="DRAFT" ${course.status==='DRAFT'?'selected':''}>Draft</option>
-                                    <option value="LIVE" ${course.status==='LIVE'?'selected':''}>Live</option>
-                                    <option value="ARCHIVED" ${course.status==='ARCHIVED'?'selected':''}>Archived</option>
-                                </select>
+                            
+                            <div class="form-group">
+                                <label>Course Title</label>
+                                <input name="title" value="${course.title}" required>
                             </div>
-                            <button class="btn btn-save" style="width:100%;">Save Changes</button>
+                            
+                            <div class="form-group">
+                                <label>Description</label>
+                                <textarea name="description" rows="4">${course.description || ''}</textarea>
+                            </div>
+
+                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px;">
+                                <div class="form-group">
+                                    <label>Price (ZAR)</label>
+                                    <input type="number" name="price" value="${course.price}" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Status</label>
+                                    <select name="status">
+                                        <option value="DRAFT" ${course.status === 'DRAFT' ? 'selected' : ''}>Draft (Hidden)</option>
+                                        <option value="LIVE" ${course.status === 'LIVE' ? 'selected' : ''}>Live (Visible)</option>
+                                        <option value="ARCHIVED" ${course.status === 'ARCHIVED' ? 'selected' : ''}>Archived</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <button class="btn btn-save" style="width:100%; padding:12px;">Save Changes</button>
+                            <a href="/admin/course-builder" class="btn" style="background:#ecf0f1; color:#333; width:100%; text-align:center; box-sizing:border-box; margin-top:10px;">Cancel</a>
                         </form>
                     </div>
+
                     <div class="card-form" style="max-width:100%;">
-                        <h3>📦 Modules</h3>
-                        <div style="max-height:400px; overflow-y:auto;">${moduleList}</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                            <h3 style="margin:0;">📦 Modules (${course.modules.length})</h3>
+                            <button class="btn btn-primary" style="font-size:11px; opacity:0.5; cursor:not-allowed;">+ Add Module (Coming Soon)</button>
+                        </div>
+                        <div style="max-height: 500px; overflow-y: auto;">
+                            ${moduleList || '<p style="color:#999; text-align:center;">No modules found.</p>'}
+                        </div>
                     </div>
                 </div>
             `;
+
             res.send(renderAdminPage(`Edit: ${course.title}`, content));
-        } catch (e) { res.send(renderAdminPage('Error', '', e.message)); }
+        } catch (e) {
+            res.send(renderAdminPage('Error', '', e.message));
+        }
+    });
+
+    // 🚀 NEW ROUTE: MODULE EDITOR FORM
+    app.get('/admin/course-builder/module/edit/:moduleId', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        try {
+            const m = await prisma.module.findUnique({ where: { id: parseInt(req.params.moduleId) } });
+            if (!m) throw new Error("Module not found");
+
+            const content = `
+                <div class="card-form" style="max-width:700px; margin:0 auto;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; border-bottom:1px solid #eee; padding-bottom:15px;">
+                        <h3 style="margin:0;">📝 Edit Module: Day ${m.order}</h3>
+                        <a href="/admin/course-builder/edit/${m.courseId}" style="color:#7f8c8d; text-decoration:none; font-size:13px; font-weight:bold;">&larr; Back to Course</a>
+                    </div>
+
+                    <form action="/admin/course-builder/module/update" method="POST">
+                        <input type="hidden" name="id" value="${m.id}">
+                        <input type="hidden" name="courseId" value="${m.courseId}">
+                        
+                        <div style="display:grid; grid-template-columns: 100px 1fr; gap:15px;">
+                            <div class="form-group">
+                                <label>Day #</label>
+                                <input type="number" name="order" value="${m.order}" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Module Title</label>
+                                <input name="title" value="${m.title}" required>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>WhatsApp Message Body</label>
+                            <p style="font-size:11px; color:#999; margin-top:-5px;">This is the actual text sent to the user on WhatsApp.</p>
+                            <textarea name="content" rows="12" style="font-family:monospace; font-size:13px; line-height:1.5; background:#fafafa;">${m.content || ''}</textarea>
+                        </div>
+
+                        <div class="form-group" style="background:#f0f9ff; padding:15px; border-radius:6px; border:1px solid #bae6fd;">
+                            <label style="color:#0284c7;">📎 Media Attachment (Optional)</label>
+                            <div style="display:grid; grid-template-columns: 1fr 2fr; gap:15px; margin-top:10px;">
+                                <div>
+                                    <label style="font-size:10px;">Type</label>
+                                    <select name="type">
+                                        <option value="TEXT" ${m.type === 'TEXT' ? 'selected' : ''}>Text Only (No Media)</option>
+                                        <option value="PDF" ${m.type === 'PDF' ? 'selected' : ''}>PDF Document</option>
+                                        <option value="VIDEO" ${m.type === 'VIDEO' ? 'selected' : ''}>Video Link</option>
+                                        <option value="IMAGE" ${m.type === 'IMAGE' ? 'selected' : ''}>Image</option>
+                                        <option value="AUDIO" ${m.type === 'AUDIO' ? 'selected' : ''}>Audio Note</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style="font-size:10px;">URL (Cloudinary / Public Link)</label>
+                                    <input name="contentUrl" value="${m.contentUrl || ''}" placeholder="https://...">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="display:flex; gap:10px; margin-top:30px;">
+                            <button class="btn btn-save" style="flex:1; padding:12px;">Save Changes</button>
+                            <button type="button" onclick="deleteModule()" class="btn btn-danger" style="padding:12px;">Delete Module</button>
+                        </div>
+                    </form>
+
+                    <form id="delForm" action="/admin/course-builder/module/delete" method="POST" style="display:none;">
+                        <input type="hidden" name="id" value="${m.id}">
+                        <input type="hidden" name="courseId" value="${m.courseId}">
+                    </form>
+
+                    <script>
+                        function deleteModule() {
+                            if(confirm('⚠️ Are you sure? This will delete this specific day/module from the course.')) {
+                                document.getElementById('delForm').submit();
+                            }
+                        }
+                    </script>
+                </div>
+            `;
+            res.send(renderAdminPage(`Edit Module`, content));
+        } catch (e) {
+            res.send(renderAdminPage('Error', '', e.message));
+        }
+    });
+
+    // 🚀 NEW ROUTE: UPDATE MODULE DB
+    app.post('/admin/course-builder/module/update', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        try {
+            await prisma.module.update({
+                where: { id: parseInt(req.body.id) },
+                data: {
+                    title: req.body.title,
+                    order: parseInt(req.body.order),
+                    content: req.body.content,
+                    type: req.body.type,
+                    contentUrl: req.body.contentUrl
+                }
+            });
+            res.redirect(`/admin/course-builder/edit/${req.body.courseId}`);
+        } catch (e) {
+            res.send(renderAdminPage('Update Error', '', e.message));
+        }
+    });
+
+    // 🚀 NEW ROUTE: DELETE MODULE DB
+    app.post('/admin/course-builder/module/delete', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        try {
+            await prisma.module.delete({ where: { id: parseInt(req.body.id) } });
+            res.redirect(`/admin/course-builder/edit/${req.body.courseId}`);
+        } catch (e) {
+            res.send(renderAdminPage('Delete Error', '', e.message));
+        }
     });
 
     // 3. POST ACTIONS (Update/Delete/Parse)
