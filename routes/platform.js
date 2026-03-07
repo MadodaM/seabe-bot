@@ -646,7 +646,7 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-    // 🚀 NEW ROUTE: MODULE EDITOR FORM
+    // 🚀 NEW ROUTE: MODULE EDITOR FORM (Fixed to show AI Text)
     app.get('/admin/course-builder/module/edit/:moduleId', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         try {
@@ -678,10 +678,22 @@ module.exports = function(app, { prisma }) {
                         <div class="form-group">
                             <label>WhatsApp Message Body</label>
                             <p style="font-size:11px; color:#999; margin-top:-5px;">This is the actual text sent to the user on WhatsApp.</p>
-                            <textarea name="content" rows="12" style="font-family:monospace; font-size:13px; line-height:1.5; background:#fafafa;">${m.content || ''}</textarea>
+                            <textarea name="dailyLessonText" rows="12" style="font-family:monospace; font-size:13px; line-height:1.5; background:#fafafa;">${m.dailyLessonText || m.content || ''}</textarea>
                         </div>
 
-                        <div class="form-group" style="background:#f0f9ff; padding:15px; border-radius:6px; border:1px solid #bae6fd;">
+                        <div class="form-group" style="background:#fffbe6; padding:15px; border-radius:6px; border:1px solid #ffe58f; margin-top:20px;">
+                            <label style="color:#d48806;">🧠 Quiz (Optional)</label>
+                            <div style="margin-top:10px;">
+                                <label style="font-size:10px;">Question</label>
+                                <input name="quizQuestion" value="${m.quizQuestion || ''}" placeholder="e.g. What is the main takeaway?">
+                            </div>
+                            <div style="margin-top:10px;">
+                                <label style="font-size:10px;">Correct Answer (AI Checked)</label>
+                                <textarea name="quizAnswer" rows="2" placeholder="e.g. The main takeaway is...">${m.quizAnswer || ''}</textarea>
+                            </div>
+                        </div>
+
+                        <div class="form-group" style="background:#f0f9ff; padding:15px; border-radius:6px; border:1px solid #bae6fd; margin-top:20px;">
                             <label style="color:#0284c7;">📎 Media Attachment (Optional)</label>
                             <div style="display:grid; grid-template-columns: 1fr 2fr; gap:15px; margin-top:10px;">
                                 <div>
@@ -727,7 +739,7 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-    // 🚀 NEW ROUTE: UPDATE MODULE DB
+    // 🚀 NEW ROUTE: UPDATE MODULE DB (Saves to both fields)
     app.post('/admin/course-builder/module/update', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         try {
@@ -736,7 +748,15 @@ module.exports = function(app, { prisma }) {
                 data: {
                     title: req.body.title,
                     order: parseInt(req.body.order),
-                    content: req.body.content,
+                    
+                    // 🛠️ FIX: Save to both fields to keep them in sync
+                    dailyLessonText: req.body.dailyLessonText,
+                    content: req.body.dailyLessonText, 
+                    
+                    // 🛠️ FIX: Save Quiz Data
+                    quizQuestion: req.body.quizQuestion,
+                    quizAnswer: req.body.quizAnswer,
+
                     type: req.body.type,
                     contentUrl: req.body.contentUrl
                 }
@@ -757,7 +777,6 @@ module.exports = function(app, { prisma }) {
             res.send(renderAdminPage('Delete Error', '', e.message));
         }
     });
-
     // 3. POST ACTIONS (Update/Delete/Parse)
     app.post('/admin/course-builder/update', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
