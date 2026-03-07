@@ -1,5 +1,5 @@
 // routes/quoteGenerator.js
-// VERSION: 12.2 (Context-Aware Quote Engine & Secure Provider Lookup)
+// VERSION: 12.3 (Multi-Entity Context & Strict Provider Attribution)
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
@@ -14,24 +14,25 @@ const { sendWhatsAppMedia } = require('../services/twilioClient'); // Ensure thi
 router.get('/quote-data/:code', async (req, res) => {
     try {
         const { code } = req.params;
+        const { sourceOrg } = req.query; // Optional: If frontend wants to pass the user's base org for tracking
         
-        // 1. Find the Organization the user belongs to (e.g., their Church)
-        const church = await prisma.church.findUnique({
+        // 1. Find the SPECIFIC Entity the user is searching for / requesting a quote from
+        const targetEntity = await prisma.church.findUnique({
             where: { code: code.toUpperCase() }
         });
 
-        if (!church) return res.status(404).json({ success: false, message: "Organization not found" });
+        if (!targetEntity) return res.status(404).json({ success: false, message: "Searched entity not found" });
 
-        // 2. Find specific pricing plans for this code
+        // 2. Find specific pricing plans for this targeted entity
         const plans = await prisma.policyPlan.findMany({
-            where: { churchId: church.id }
+            where: { churchId: targetEntity.id }
         });
 
         // 🛑 CONTEXT CHECK: 
-        // Does this organization actually sell insurance?
-        const isProvider = (church.type === 'BURIAL_SOCIETY' || church.type === 'SERVICE_PROVIDER' || plans.length > 0);
+        // Does THIS searched entity actually sell insurance/plans?
+        const isProvider = (targetEntity.type === 'BURIAL_SOCIETY' || targetEntity.type === 'SERVICE_PROVIDER' || plans.length > 0);
 
-        // 3. 🚀 NEW FALLBACK: If it's just a Church/NPO, fetch the actual Burial Societies!
+        // 3. 🚀 MULTI-ENTITY FALLBACK: If they searched a Church/NPO, fetch the actual Burial Societies!
         let availableProviders = [];
         if (!isProvider) {
             availableProviders = await prisma.church.findMany({
@@ -44,28 +45,36 @@ router.get('/quote-data/:code', async (req, res) => {
                 select: {
                     id: true,
                     name: true,
-                    code: true
+                    code: true,
+                    type: true
                 }
             });
         }
 
         res.json({
             success: true,
-            orgId: church.id, // The ID of the currently requested org
-            orgName: church.name,
-            orgType: church.type,
+            
+            // 🎯 STRICT TARGET DATA: Use this block in the frontend to build the Quote URL
+            // This ensures the URL uses the Burial Society's code, NOT the user's base Church code.
+            searchedEntity: {
+                id: targetEntity.id,
+                name: targetEntity.name,
+                code: targetEntity.code,
+                type: targetEntity.type
+            },
+            
             plans: plans,
             
             // 🚩 FRONTEND SIGNALS
             isProductProvider: isProvider, 
             
-            // 👈 The UI will use this array to let the user select a valid Burial Society
+            // 👈 The UI will use this array to let the user select a valid Burial Society if the searched one isn't one
             availableProviders: availableProviders, 
             
             // Helpful message for the UI to display
             message: isProvider 
-                ? "Plans loaded successfully." 
-                : "This organization is a Church/NPO and does not offer its own products. Please select a Burial Society provider."
+                ? `Plans loaded successfully for ${targetEntity.name}.` 
+                : `${targetEntity.name} is a ${targetEntity.type} and does not offer its own products. Please select a Burial Society provider.`
         });
 
     } catch (e) {
@@ -80,13 +89,13 @@ router.get('/quote-data/:code', async (req, res) => {
 router.post('/send-quote', async (req, res) => {
     try {
         // 🚀 SECURE PROVIDER LOOKUP
-        // We now accept providerCode to ensure the quote is strictly attributed 
-        // to the Burial Society, not the user's Church.
-        const { phone, pdfBase64, orgName, providerCode } = req.body;
+        // We strictly require providerCode to ensure the quote is attributed 
+        // to the Burial Society, avoiding contamination from the user's base Church.
+        const { phone, pdfBase64, providerCode, userBaseOrgCode } = req.body;
         
-        let finalProviderName = orgName || "Our Burial Society";
+        let finalProviderName = "Our Burial Society";
 
-        // If the frontend passed the providerCode (e.g. INSIKA), fetch the real name
+        // Always fetch the real name directly from DB using the exact providerCode (e.g. INSIKA)
         if (providerCode) {
             const actualProvider = await prisma.church.findUnique({
                 where: { code: providerCode.toUpperCase() }
@@ -116,7 +125,7 @@ router.post('/send-quote', async (req, res) => {
         const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
         const pdfUrl = `${host}/public/quotes/${fileName}`;
 
-        console.log(`📄 PDF Generated for ${finalProviderName}: ${pdfUrl}`);
+        console.log(`📄 PDF Generated for exactly matched provider [${finalProviderName}]: ${pdfUrl}`);
 
         // Send via Twilio using the strictly verified Provider Name
         await sendWhatsAppMedia(phone, `📄 Here is your official quote from *${finalProviderName}*.`, pdfUrl);
