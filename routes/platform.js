@@ -1,15 +1,15 @@
 // routes/platform.js
-// VERSION: 9.4 (Restored Full Logic + Added QR Generator Panel)
-require('dotenv').config(); 
+// VERSION: 10.0 (Complete Admin Suite + AI Course Builder CRUD)
+require('dotenv').config();
 
 const fs = require('fs');
 const { processAndImportCoursePDF } = require('../services/courseImporter');
 const express = require('express');
 const { provisionNetCashAccount } = require('../services/netcashProvisioner');
-const { generatePaymentQR } = require('../services/paymentQrgen'); // 🚀 NEW: QR Module Imported
+const { generatePaymentQR } = require('../services/paymentQrgen');
 const sgMail = require('@sendgrid/mail');
 const multer = require('multer');
-const upload = multer({ dest: 'uploads/' }); 
+const upload = multer({ dest: 'uploads/' });
 
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'seabe123';
@@ -29,7 +29,7 @@ function isAuthenticated(req) {
 }
 
 function safeDate(d) {
-    if (!d) return new Date(); 
+    if (!d) return new Date();
     return new Date(d);
 }
 
@@ -472,116 +472,163 @@ module.exports = function(app, { prisma }) {
     // ============================================================
     // 🎓 AI COURSE BUILDER (LMS)
     // ============================================================
+    
+    // 1. DASHBOARD: UPLOAD + LIST
     app.get('/admin/course-builder', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
 
         try {
+            // Upload Form Options
             const churches = await prisma.church.findMany({ select: { id: true, name: true } });
             let options = churches.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
 
+            // Course List
+            const courses = await prisma.course.findMany({
+                include: { church: true, _count: { select: { modules: true } } },
+                orderBy: { id: 'desc' }
+            });
+
+            // Table Rows
+            const courseRows = courses.map(c => `
+                <tr>
+                    <td><strong>${c.title}</strong><br><span style="font-size:11px; color:#95a5a6;">${c.code || 'N/A'}</span></td>
+                    <td><span class="tag tag-church">${c.church ? c.church.name : 'Global'}</span></td>
+                    <td>R${c.price}</td>
+                    <td>${c._count.modules} Modules</td>
+                    <td><span class="tag" style="${c.status==='LIVE'?'background:#e8f5e9; color:green;':'background:#fff3e0; color:orange;'}">${c.status}</span></td>
+                    <td style="text-align:right;">
+                        <a href="/admin/course-builder/edit/${c.id}" class="btn btn-edit">Edit</a>
+                        <form method="POST" action="/admin/course-builder/delete" style="display:inline; margin-left:5px;" onsubmit="return confirm('Delete?');">
+                            <input type="hidden" name="id" value="${c.id}">
+                            <button class="btn btn-danger">Del</button>
+                        </form>
+                    </td>
+                </tr>
+            `).join('');
+
             const content = `
-                <div class="card-form" style="max-width: 600px;">
-                    <p style="color:#7f8c8d; margin-top:-20px; margin-bottom:20px;">Upload a PDF curriculum. Gemini AI will automatically convert it into a drip-feed WhatsApp course.</p>
-                    
-                    <form id="courseUploadForm">
-                        <div class="form-group">
-                            <label>Organization</label>
-                            <select id="orgId" required>${options}</select>
-                        </div>
-                        <div class="form-group">
-                            <label>Course Price (R)</label>
-                            <input type="number" id="price" value="0" required>
-                        </div>
-                        <div class="form-group">
-                            <label>Curriculum PDF</label>
-                            <input type="file" id="pdfFile" accept=".pdf" required style="padding: 10px; border: 2px dashed #00d2d3; background: #fdfdfd; cursor: pointer;">
-                        </div>
-                        
-                        <div id="statusBox" style="display:none; padding: 15px; border-radius: 5px; margin-top: 15px; font-weight: bold; text-align: center;"></div>
+                <div style="display:grid; grid-template-columns: 1fr 1.5fr; gap:30px; align-items:start;">
+                    <div class="card-form" style="max-width: 100%;">
+                        <h3 style="margin-top:0;">🤖 AI Generator</h3>
+                        <p style="color:#7f8c8d; margin-top:-10px; margin-bottom:20px; font-size:13px;">Upload a PDF to create a WhatsApp course.</p>
+                        <form id="courseUploadForm">
+                            <div class="form-group"><label>Organization</label><select id="orgId" required>${options}</select></div>
+                            <div class="form-group"><label>Price (R)</label><input type="number" id="price" value="0" required></div>
+                            <div class="form-group"><label>PDF</label><input type="file" id="pdfFile" accept=".pdf" required style="padding:10px; border:2px dashed #00d2d3; background:#fdfdfd;"></div>
+                            <div id="statusBox" style="display:none; padding:15px; border-radius:5px; margin-top:15px; font-weight:bold; text-align:center;"></div>
+                            <button type="submit" id="submitBtn" class="btn btn-primary" style="width:100%; margin-top:10px;">Generate</button>
+                        </form>
+                    </div>
 
-                        <button type="submit" id="submitBtn" class="btn btn-primary" style="width:100%; margin-top: 10px; padding: 15px; font-size: 14px;">
-                            Parse & Generate Course
-                        </button>
-                    </form>
+                    <div class="card-form" style="max-width: 100%;">
+                        <h3 style="margin-top:0;">📚 Courses</h3>
+                        <table>
+                            <thead><tr><th>Title</th><th>Org</th><th>Price</th><th>Size</th><th>Status</th><th>Action</th></tr></thead>
+                            <tbody>${courseRows.length > 0 ? courseRows : '<tr><td colspan="6" style="text-align:center;">No courses.</td></tr>'}</tbody>
+                        </table>
+                    </div>
                 </div>
-
                 <script>
                     document.getElementById('courseUploadForm').addEventListener('submit', async (e) => {
                         e.preventDefault();
                         const btn = document.getElementById('submitBtn');
                         const status = document.getElementById('statusBox');
-                        
-                        btn.innerText = "⏳ AI is reading the PDF (This takes 10-20 seconds)...";
-                        btn.disabled = true;
-                        btn.style.opacity = "0.7";
-                        status.style.display = 'none';
-
+                        btn.innerText = "⏳ Processing PDF..."; btn.disabled = true; status.style.display = 'none';
                         const formData = new FormData();
                         formData.append('orgId', document.getElementById('orgId').value);
                         formData.append('price', document.getElementById('price').value);
                         formData.append('coursePdf', document.getElementById('pdfFile').files[0]);
-
                         try {
                             const res = await fetch('/api/admin/parse-course', { method: 'POST', body: formData });
                             const data = await res.json();
-                            
                             if (data.success) {
-                                status.style.background = "#e8f5e9";
-                                status.style.color = "#27ae60";
-                                status.style.border = "1px solid #27ae60";
-                                status.innerHTML = "✅ <strong>Success!</strong><br>'" + data.course.title + "' has been generated with " + data.course.modules.length + " daily modules.";
-                                document.getElementById('courseUploadForm').reset();
-                            } else {
-                                throw new Error(data.error);
-                            }
+                                status.style.background = "#e8f5e9"; status.style.color = "#27ae60"; status.innerHTML = "✅ Success!";
+                                setTimeout(() => window.location.reload(), 2000);
+                            } else throw new Error(data.error);
                         } catch (err) {
-                            status.style.background = "#ffebee";
-                            status.style.color = "#c0392b";
-                            status.style.border = "1px solid #c0392b";
-                            status.innerText = "❌ Error: " + err.message;
-                        } finally {
-                            btn.innerText = "Parse & Generate Course";
-                            btn.disabled = false;
-                            btn.style.opacity = "1";
-                            status.style.display = 'block';
+                            status.style.display = 'block'; status.style.background = "#ffebee"; status.style.color = "#c0392b"; status.innerText = "❌ " + err.message;
+                            btn.innerText = "Generate"; btn.disabled = false;
                         }
                     });
                 </script>
             `;
-
             res.send(renderAdminPage('AI Course Builder', content));
         } catch (e) {
-            res.send(renderAdminPage('AI Course Builder', '', e.message));
+            res.send(renderAdminPage('Error', '', e.message));
         }
+    });
+
+    // 2. EDIT COURSE
+    app.get('/admin/course-builder/edit/:id', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        try {
+            const course = await prisma.course.findUnique({
+                where: { id: parseInt(req.params.id) },
+                include: { modules: { orderBy: { order: 'asc' } } }
+            });
+            if (!course) throw new Error("Course not found");
+
+            const moduleList = course.modules.map(m => `
+                <div style="background:#f8f9fa; padding:10px; margin-bottom:5px; border-left:3px solid #00d2d3; display:flex; justify-content:space-between;">
+                    <span style="font-weight:bold;">DAY ${m.order}: ${m.title}</span>
+                    <span style="font-size:11px; background:#eee; padding:2px 6px;">${m.type}</span>
+                </div>
+            `).join('');
+
+            const content = `
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:30px;">
+                    <div class="card-form" style="max-width:100%;">
+                        <h3>✏️ Details</h3>
+                        <form action="/admin/course-builder/update" method="POST">
+                            <input type="hidden" name="id" value="${course.id}">
+                            <div class="form-group"><label>Title</label><input name="title" value="${course.title}" required></div>
+                            <div class="form-group"><label>Description</label><textarea name="description">${course.description||''}</textarea></div>
+                            <div class="form-group"><label>Price</label><input type="number" name="price" value="${course.price}" required></div>
+                            <div class="form-group"><label>Status</label>
+                                <select name="status">
+                                    <option value="DRAFT" ${course.status==='DRAFT'?'selected':''}>Draft</option>
+                                    <option value="LIVE" ${course.status==='LIVE'?'selected':''}>Live</option>
+                                    <option value="ARCHIVED" ${course.status==='ARCHIVED'?'selected':''}>Archived</option>
+                                </select>
+                            </div>
+                            <button class="btn btn-save" style="width:100%;">Save Changes</button>
+                        </form>
+                    </div>
+                    <div class="card-form" style="max-width:100%;">
+                        <h3>📦 Modules</h3>
+                        <div style="max-height:400px; overflow-y:auto;">${moduleList}</div>
+                    </div>
+                </div>
+            `;
+            res.send(renderAdminPage(`Edit: ${course.title}`, content));
+        } catch (e) { res.send(renderAdminPage('Error', '', e.message)); }
+    });
+
+    // 3. POST ACTIONS (Update/Delete/Parse)
+    app.post('/admin/course-builder/update', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        await prisma.course.update({ where: { id: parseInt(req.body.id) }, data: { title: req.body.title, description: req.body.description, price: parseFloat(req.body.price), status: req.body.status } });
+        res.redirect('/admin/course-builder');
+    });
+
+    app.post('/admin/course-builder/delete', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        await prisma.course.delete({ where: { id: parseInt(req.body.id) } });
+        res.redirect('/admin/course-builder');
     });
 
     app.post('/api/admin/parse-course', upload.single('coursePdf'), async (req, res) => {
-        // Quick manual auth check since this is an API route
         const cookies = parseCookies(req);
         if (cookies[COOKIE_NAME] !== ADMIN_SECRET) return res.status(401).json({ success: false, error: "Unauthorized" });
-
         if (!req.file) return res.status(400).json({ success: false, error: "No PDF uploaded." });
-        
-        const { orgId, price } = req.body;
-        
         try {
             const pdfBuffer = fs.readFileSync(req.file.path);
-            
-            // Send to AI Service
-            const result = await processAndImportCoursePDF(pdfBuffer, req.file.mimetype, orgId, price);
-            
-            // Clean up the temp file
+            const result = await processAndImportCoursePDF(pdfBuffer, req.file.mimetype, req.body.orgId, req.body.price);
             try { fs.unlinkSync(req.file.path); } catch (e) {}
-
-            if (result.success) {
-                res.json(result);
-            } else {
-                res.status(500).json(result);
-            }
-        } catch (err) {
-            res.status(500).json({ success: false, error: "Failed to read file on server." });
-        }
+            if (result.success) res.json(result); else res.status(500).json(result);
+        } catch (err) { res.status(500).json({ success: false, error: "Failed to read file." }); }
     });
+
 
     // ============================================================
     // 🛡️ FICA & KYB COMPLIANCE DASHBOARD
@@ -884,7 +931,7 @@ module.exports = function(app, { prisma }) {
         } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
-    // 🚀 EDITED: EDIT ORGANIZATION (With QR Code Generator)
+    // 🚀 EDIT ORGANIZATION (With QR Code Generator)
     app.get('/admin/churches/edit/:code', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         
