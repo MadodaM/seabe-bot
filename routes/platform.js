@@ -1118,6 +1118,126 @@ module.exports = function(app, { prisma }) {
             res.send(renderAdminPage('Global Debt Stats', content));
         } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
+	
+	// ============================================================
+    // 🌍 GLOBAL RADAR
+    // ============================================================
+    app.get('/admin/global-radar', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        
+        const content = `
+            <style>
+                .main { padding: 0 !important; }
+            </style>
+            <iframe 
+                src="/crm/global-radar.html" 
+                style="width: 100%; height: 100vh; border: none;"
+                title="Global Radar">
+            </iframe>
+        `;
+        res.send(renderAdminPage('Global Radar', content));
+    });
+
+    // ============================================================
+    // ⚖️ REGULATORY COMPLIANCE & LSO DASHBOARD
+    // ============================================================
+    app.get('/admin/compliance', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+
+        try {
+            const txStats = await prisma.transaction.aggregate({
+                _sum: { amount: true },
+                _count: { id: true },
+                where: { status: 'SUCCESS' }
+            });
+
+            const totalVolume = txStats._sum.amount || 0;
+            const totalTx = txStats._count.id || 0;
+            const activeMandates = await prisma.member.count({ where: { status: 'ACTIVE_DEBIT_ORDER' } });
+            const kybOrgs = await prisma.church.count({ where: { ficaStatus: 'ACTIVE' } });
+
+            const legalValProg = Math.min((totalVolume / 10000000) * 100, 100).toFixed(1);
+            const legalCntProg = Math.min((totalTx / 10000) * 100, 100).toFixed(1);
+            
+            const goalValProg = Math.min((totalVolume / 50000000) * 100, 100).toFixed(1);
+            const goalCntProg = Math.min((totalTx / 50000) * 100, 100).toFixed(1);
+
+            const content = `
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:20px; margin-bottom: 30px;">
+                    <div style="background:white; padding:20px; border-radius:8px; border-top: 4px solid #3498db; box-shadow:0 2px 5px rgba(0,0,0,0.05);">
+                        <h4 style="margin:0; color:#7f8c8d; font-size:12px; text-transform:uppercase;">Value Processed</h4>
+                        <h2 style="margin:10px 0 0 0; color:#2c3e50;">R ${totalVolume.toLocaleString('en-ZA')}</h2>
+                    </div>
+                    <div style="background:white; padding:20px; border-radius:8px; border-top: 4px solid #2ecc71; box-shadow:0 2px 5px rgba(0,0,0,0.05);">
+                        <h4 style="margin:0; color:#7f8c8d; font-size:12px; text-transform:uppercase;">Volume (Tx Count)</h4>
+                        <h2 style="margin:10px 0 0 0; color:#2c3e50;">${totalTx.toLocaleString()}</h2>
+                    </div>
+                    <div style="background:white; padding:20px; border-radius:8px; border-top: 4px solid #f39c12; box-shadow:0 2px 5px rgba(0,0,0,0.05);">
+                        <h4 style="margin:0; color:#7f8c8d; font-size:12px; text-transform:uppercase;">Active DebiCheck</h4>
+                        <h2 style="margin:10px 0 0 0; color:#2c3e50;">${activeMandates}</h2>
+                    </div>
+                    <div style="background:white; padding:20px; border-radius:8px; border-top: 4px solid #9b59b6; box-shadow:0 2px 5px rgba(0,0,0,0.05);">
+                        <h4 style="margin:0; color:#7f8c8d; font-size:12px; text-transform:uppercase;">Verified Partners</h4>
+                        <h2 style="margin:10px 0 0 0; color:#2c3e50;">${kybOrgs}</h2>
+                    </div>
+                </div>
+
+                <div class="card-form" style="max-width:100%; margin-bottom:30px; border-left: 5px solid #e67e22; background: #fffaf0;">
+                    <h3 style="margin-top:0; color:#d35400;">⚠️ Regulatory Compliance (LSO Tripwires)</h3>
+                    <p style="color:#7f8c8d; font-size:13px;">Thresholds requiring formal System Operator licensing per PASA Directive 2.</p>
+                    
+                    <div style="margin-bottom:15px;">
+                        <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:bold; margin-bottom:5px;">
+                            <span>VALUE (Target: R10M)</span>
+                            <span>${legalValProg}%</span>
+                        </div>
+                        <div style="background:#ddd; border-radius:10px; height:12px; width:100%; overflow:hidden;">
+                            <div style="background:#e67e22; width:${legalValProg}%; height:100%; transition:1s;"></div>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom:5px;">
+                        <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:bold; margin-bottom:5px;">
+                            <span>VOLUME (Target: 10,000 tx)</span>
+                            <span>${legalCntProg}%</span>
+                        </div>
+                        <div style="background:#ddd; border-radius:10px; height:12px; width:100%; overflow:hidden;">
+                            <div style="background:#d35400; width:${legalCntProg}%; height:100%; transition:1s;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card-form" style="max-width:100%; margin-bottom:30px; border-left: 5px solid #2ecc71;">
+                    <h3 style="margin-top:0; color:#27ae60;">🚀 Business Scale Milestone (Series A Goal)</h3>
+                    <p style="color:#7f8c8d; font-size:13px;">Trajectory toward R50 Million/month for wholesale pricing and direct bank clearing.</p>
+                    
+                    <div style="margin-bottom:15px;">
+                        <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:bold; margin-bottom:5px;">
+                            <span>VALUE (Goal: R50M)</span>
+                            <span>${goalValProg}%</span>
+                        </div>
+                        <div style="background:#ecf0f1; border-radius:10px; height:12px; width:100%; overflow:hidden; border:1px solid #ddd;">
+                            <div style="background:#2ecc71; width:${goalValProg}%; height:100%; transition:1.5s;"></div>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom:5px;">
+                        <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:bold; margin-bottom:5px;">
+                            <span>VOLUME (Goal: 50,000 tx)</span>
+                            <span>${goalCntProg}%</span>
+                        </div>
+                        <div style="background:#ecf0f1; border-radius:10px; height:12px; width:100%; overflow:hidden; border:1px solid #ddd;">
+                            <div style="background:#27ae60; width:${goalCntProg}%; height:100%; transition:1.5s;"></div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            res.send(renderAdminPage('Regulatory Compliance', content));
+        } catch (error) {
+            res.send(renderAdminPage('Regulatory Compliance', '', error.message));
+        }
+    });
 
     // ============================================================
     // 2. EVENTS
