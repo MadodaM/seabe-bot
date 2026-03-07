@@ -1,5 +1,5 @@
 // routes/quoteGenerator.js
-// VERSION: 12.1 (Context-Aware Quote Engine with Provider Fallback)
+// VERSION: 12.2 (Context-Aware Quote Engine & Secure Provider Lookup)
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
@@ -79,8 +79,22 @@ router.get('/quote-data/:code', async (req, res) => {
 // ==========================================
 router.post('/send-quote', async (req, res) => {
     try {
-        // orgName here should be the BURIAL SOCIETY name passed from the UI
-        const { phone, pdfBase64, orgName } = req.body;
+        // 🚀 SECURE PROVIDER LOOKUP
+        // We now accept providerCode to ensure the quote is strictly attributed 
+        // to the Burial Society, not the user's Church.
+        const { phone, pdfBase64, orgName, providerCode } = req.body;
+        
+        let finalProviderName = orgName || "Our Burial Society";
+
+        // If the frontend passed the providerCode (e.g. INSIKA), fetch the real name
+        if (providerCode) {
+            const actualProvider = await prisma.church.findUnique({
+                where: { code: providerCode.toUpperCase() }
+            });
+            if (actualProvider) {
+                finalProviderName = actualProvider.name;
+            }
+        }
         
         // Strip out the data URI prefix from jsPDF so we have pure base64
         const pureBase64 = pdfBase64.replace(/^data:application\/pdf;base64,/, "");
@@ -102,10 +116,10 @@ router.post('/send-quote', async (req, res) => {
         const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
         const pdfUrl = `${host}/public/quotes/${fileName}`;
 
-        console.log(`📄 PDF Generated: ${pdfUrl}`);
+        console.log(`📄 PDF Generated for ${finalProviderName}: ${pdfUrl}`);
 
-        // Send via Twilio
-        await sendWhatsAppMedia(phone, `📄 Here is your official quote from *${orgName}*.`, pdfUrl);
+        // Send via Twilio using the strictly verified Provider Name
+        await sendWhatsAppMedia(phone, `📄 Here is your official quote from *${finalProviderName}*.`, pdfUrl);
 
         res.json({ success: true });
     } catch (e) {
