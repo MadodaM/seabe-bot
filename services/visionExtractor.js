@@ -6,7 +6,8 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 async function extractDataFromImage(imageBuffer, mimeType) {
     try {
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        // 🚀 FIXED: Upgraded model to 2.5 to fix the 404 Not Found error
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
         const prompt = `
         Analyze this image carefully. It is likely a flyer for a Church Event or a Burial Society/Insurance Plan.
@@ -14,23 +15,30 @@ async function extractDataFromImage(imageBuffer, mimeType) {
         Extract the data into a strict JSON structure.
         
         If it is a **POLICY/PLAN** (e.g., Gold Plan, Silver Plan, Burial Scheme), extract:
-        - type: "POLICY"
-        - items: An array of plans found in the image. Each item must have:
-            - name: (e.g., "Gold Plan")
-            - price: (Numeric amount only, e.g., 100)
-            - benefits: (An array of strings listing the benefits)
-            - waitingPeriod: (If mentioned)
+        {
+            "type": "POLICY",
+            "items": [
+                {
+                    "name": "Plan Name",
+                    "price": 100,
+                    "benefits": ["Benefit 1", "Benefit 2"],
+                    "waitingPeriod": "6 months"
+                }
+            ]
+        }
         
         If it is an **EVENT** (e.g., Conference, Service, Concert), extract:
-        - type: "EVENT"
-        - title: (Event name)
-        - date: (Date string)
-        - time: (Time string)
-        - location: (Address or Venue)
-        - price: (Ticket price if applicable)
-        - description: (Short summary)
+        {
+            "type": "EVENT",
+            "title": "Event Name",
+            "date": "YYYY-MM-DD",
+            "time": "HH:MM",
+            "location": "Venue Name",
+            "price": 0,
+            "description": "Short summary"
+        }
 
-        If strictly JSON, no markdown formatting.
+        RETURN ONLY THE JSON OBJECT. NO MARKDOWN. NO EXPLANATION.
         `;
 
         const imagePart = {
@@ -44,13 +52,21 @@ async function extractDataFromImage(imageBuffer, mimeType) {
         const response = await result.response;
         const text = response.text();
 
-        // Clean up markdown if Gemini adds it
-        const jsonString = text.replace(/```json/g, "").replace(/```/g, "").trim();
+        // 🛡️ HARDENED PARSING: Find the first '{' and last '}' to ignore generic text
+        const jsonStartIndex = text.indexOf('{');
+        const jsonEndIndex = text.lastIndexOf('}');
+
+        if (jsonStartIndex === -1 || jsonEndIndex === -1) {
+            throw new Error("No JSON found in AI response");
+        }
+
+        const jsonString = text.substring(jsonStartIndex, jsonEndIndex + 1);
         return JSON.parse(jsonString);
 
     } catch (error) {
         console.error("AI Vision Error:", error);
-        return { success: false, error: error.message };
+        // Return null so the UI knows it failed gracefully
+        return null; 
     }
 }
 
