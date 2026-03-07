@@ -354,7 +354,7 @@ model PolicyAddon {
 }
 
 // ==========================================
-// 🎓 LMS / COURSE BUILDER MODELS
+// 🎓 LMS / COURSE BUILDER MODELS (UPDATED)
 // ==========================================
 
 model Course {
@@ -382,10 +382,18 @@ model Module {
   course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
   
   title       String
-  order       Int      @default(1)       // Day 1, Day 2, etc.
-  type        String   @default("TEXT")  // TEXT, PDF, VIDEO, AUDIO, IMAGE
-  content     String?                    // The WhatsApp message body
-  contentUrl  String?                    // Link to Cloudinary PDF/Video
+  order       Int      @default(1)
+  type        String   @default("TEXT")  // TEXT, PDF, VIDEO, AUDIO
+  
+  // 🚀 CONTENT FIELDS (Fixed based on Error Logs)
+  content         String?  // The generic/summary content
+  dailyLessonText String?  // The full detailed lesson text
+  
+  // 🚀 QUIZ FIELDS (New)
+  quizQuestion    String?
+  quizAnswer      String?
+  
+  contentUrl      String?  // Cloudinary Link
   
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -400,8 +408,11 @@ model Enrollment {
   courseId  Int
   course    Course   @relation(fields: [courseId], references: [id])
   
-  progress  Int      @default(0) // The last Module Order # sent to the user
+  progress  Int      @default(0) // Last Module Order Sent
   status    String   @default("ACTIVE") // ACTIVE, COMPLETED, PAUSED
+  
+  // 🚀 STATE MACHINE (New)
+  quizState String   @default("IDLE") // IDLE, AWAITING_ANSWER
   
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
