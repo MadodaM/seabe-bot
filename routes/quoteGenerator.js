@@ -1,12 +1,12 @@
 // routes/quoteGenerator.js
-// VERSION: 12.0 (Context-Aware Quote Engine)
+// VERSION: 12.1 (Context-Aware Quote Engine with Provider Fallback)
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const fs = require('fs');
 const path = require('path');
-const { sendWhatsAppMedia } = require('../services/twilioClient'); // Ensure this import path is correct for your project structure
+const { sendWhatsAppMedia } = require('../services/twilioClient'); // Ensure this import path is correct
 
 // ==========================================
 // 1. GET QUOTE DATA (Fetch plans for the UI)
@@ -15,37 +15,57 @@ router.get('/quote-data/:code', async (req, res) => {
     try {
         const { code } = req.params;
         
-        // 1. Find the Organization
+        // 1. Find the Organization the user belongs to (e.g., their Church)
         const church = await prisma.church.findUnique({
             where: { code: code.toUpperCase() }
         });
 
         if (!church) return res.status(404).json({ success: false, message: "Organization not found" });
 
-        // 2. Find their specific pricing plans
+        // 2. Find specific pricing plans for this code
         const plans = await prisma.policyPlan.findMany({
             where: { churchId: church.id }
         });
 
         // 🛑 CONTEXT CHECK: 
         // Does this organization actually sell insurance?
-        // If it's a CHURCH with NO plans, we must flag it so the UI doesn't crash.
-        const isProvider = (church.type === 'BURIAL_SOCIETY' || church.type === 'INSURANCE_PROVIDER' || plans.length > 0);
+        const isProvider = (church.type === 'BURIAL_SOCIETY' || church.type === 'SERVICE_PROVIDER' || plans.length > 0);
+
+        // 3. 🚀 NEW FALLBACK: If it's just a Church/NPO, fetch the actual Burial Societies!
+        let availableProviders = [];
+        if (!isProvider) {
+            availableProviders = await prisma.church.findMany({
+                where: {
+                    OR: [
+                        { type: 'BURIAL_SOCIETY' },
+                        { type: 'SERVICE_PROVIDER' }
+                    ]
+                },
+                select: {
+                    id: true,
+                    name: true,
+                    code: true
+                }
+            });
+        }
 
         res.json({
             success: true,
+            orgId: church.id, // The ID of the currently requested org
             orgName: church.name,
             orgType: church.type,
             plans: plans,
             
             // 🚩 FRONTEND SIGNALS
-            // If false, the UI should show a "Search for Provider" box instead of the plan list
             isProductProvider: isProvider, 
             
-            // Helpful message for the UI
+            // 👈 The UI will use this array to let the user select a valid Burial Society
+            availableProviders: availableProviders, 
+            
+            // Helpful message for the UI to display
             message: isProvider 
                 ? "Plans loaded successfully." 
-                : "This organization is a Church and does not offer its own products. Please search for your Burial Society."
+                : "This organization is a Church/NPO and does not offer its own products. Please select a Burial Society provider."
         });
 
     } catch (e) {
@@ -59,6 +79,7 @@ router.get('/quote-data/:code', async (req, res) => {
 // ==========================================
 router.post('/send-quote', async (req, res) => {
     try {
+        // orgName here should be the BURIAL SOCIETY name passed from the UI
         const { phone, pdfBase64, orgName } = req.body;
         
         // Strip out the data URI prefix from jsPDF so we have pure base64
@@ -68,7 +89,6 @@ router.post('/send-quote', async (req, res) => {
         const fileName = `quote_${phone.replace(/\+/g, '')}_${Date.now()}.pdf`;
         
         // Ensure path resolves correctly relative to this file
-        // assuming routes/ is one level deep, so ../public targets the root public folder
         const publicDir = path.join(__dirname, '../public/quotes'); 
         
         if (!fs.existsSync(publicDir)) {
