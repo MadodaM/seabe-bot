@@ -353,22 +353,21 @@ model PolicyAddon {
   createdAt   DateTime @default(now())
 }
 
-// --- LEARNING MANAGEMENT SYSTEM (LMS) ---
+// ==========================================
+// 🎓 LMS / COURSE BUILDER MODELS
+// ==========================================
 
 model Course {
-  id          Int            @id @default(autoincrement())
-  churchId    Int
-  church      Church         @relation(fields: [churchId], references: [id])
+  id          Int       @id @default(autoincrement())
   title       String
   description String?
-  price       Float // 0 for free
-  modules     CourseModule[]
-  enrollments Enrollment[]
-  status      String    @default("DRAFT") // Options: DRAFT, LIVE, ARCHIVED
+  price       Decimal   @default(0.0)
+  status      String    @default("DRAFT") // DRAFT, LIVE, ARCHIVED
+  code        String?   
   
   // Relations
-  church      Church?   @relation(fields: [churchId], references: [id])
   churchId    Int?
+  church      Church?   @relation(fields: [churchId], references: [id])
   
   modules     Module[]
   enrollments Enrollment[]
@@ -377,30 +376,35 @@ model Course {
   updatedAt   DateTime  @updatedAt
 }
 
-model CourseModule {
-  id              Int     @id @default(autoincrement())
-  courseId        Int
-  course          Course  @relation(fields: [courseId], references: [id])
-  title           String
-  contentUrl      String? // Optional PDF/Video link
-  dailyLessonText String? // 07:00 AM WhatsApp Blast
-  quizQuestion    String? // 12:00 PM Check on Learning
-  quizAnswer      String? // The correct answer/rubric for AI to check against
-  quizExplanation String? // The AI's fallback explanation
-  order           Int // Day 1, Day 2, etc.
+model Module {
+  id          Int      @id @default(autoincrement())
+  courseId    Int
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  
+  title       String
+  order       Int      @default(1)       // Day 1, Day 2, etc.
+  type        String   @default("TEXT")  // TEXT, PDF, VIDEO, AUDIO, IMAGE
+  content     String?                    // The WhatsApp message body
+  contentUrl  String?                    // Link to Cloudinary PDF/Video
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Enrollment {
   id        Int      @id @default(autoincrement())
+  
   memberId  Int
   member    Member   @relation(fields: [memberId], references: [id])
+  
   courseId  Int
   course    Course   @relation(fields: [courseId], references: [id])
-  status    String   @default("PENDING_PAYMENT") // ACTIVE, COMPLETED
-  progress  Int      @default(1) // Which Module/Day they are on
-  quizState String   @default("IDLE") // IDLE, AWAITING_QUIZ
+  
+  progress  Int      @default(0) // The last Module Order # sent to the user
+  status    String   @default("ACTIVE") // ACTIVE, COMPLETED, PAUSED
+  
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
+  updatedAt DateTime @updatedAt
 }
 
 model BotSession {
