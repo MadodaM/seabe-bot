@@ -2,6 +2,7 @@
 // VERSION: 10.0 (Complete Admin Suite + AI Course Builder CRUD)
 require('dotenv').config();
 
+const { extractDataFromImage } = require('../services/visionExtractor');
 const fs = require('fs');
 const { processAndImportCoursePDF } = require('../services/courseImporter');
 const express = require('express');
