@@ -389,6 +389,117 @@ module.exports = (app, { prisma }) => {
         res.send(renderPage(req.org, 'dashboard', `<div class="card"><h3>💰 Collected (This Month)</h3><h1>R${total.toLocaleString()}</h1></div><div class="card"><h3>Recent Activity</h3><table>${tx.slice(0, 5).map(t => `<tr><td>${t.phone}</td><td>${t.type}</td><td>R${t.amount}</td></tr>`).join('')}</table></div>`));
     });
 
+    // ============================================================
+    // 📅 ORGANIZATION EVENTS MANAGEMENT (THE MISSING FIX)
+    // ============================================================
+    router.get('/admin/:code/events', checkSession, async (req, res) => {
+        try {
+            const events = await prisma.event.findMany({
+                where: { churchCode: req.org.code },
+                orderBy: { id: 'desc' }
+            });
+
+            const rows = events.map(e => `
+                <tr>
+                    <td><b>${e.name}</b><br><span style="font-size:11px; color:#888;">${e.date}</span></td>
+                    <td>R${e.price}</td>
+                    <td><span class="badge" style="background:#27ae60;">${e.status}</span></td>
+                    <td style="text-align:right;">
+                        <form method="POST" action="/admin/${req.org.code}/events/delete" style="display:inline;">
+                            <input type="hidden" name="eventId" value="${e.id}">
+                            <button class="btn-del" onclick="return confirm('Delete this event?');">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+            `).join('');
+
+            const content = `
+                <div class="card" style="display:flex; justify-content:space-between; align-items:center; background:#1e272e; color:white;">
+                    <div>
+                        <h2 style="margin:0; color:#00d2d3;">📅 Event Management</h2>
+                        <p style="margin:0; margin-top:5px; font-size:13px; color:#b2bec3;">Create and manage ticketing for your church events.</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 style="margin-top:0;">Add New Event</h3>
+                    <form method="POST" action="/admin/${req.org.code}/events/add" style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; background:#f8f9fa; padding:15px; border-radius:6px;">
+                        <div>
+                            <label>Event Name</label>
+                            <input name="name" required placeholder="e.g. Easter Conference">
+                        </div>
+                        <div>
+                            <label>Date & Time String</label>
+                            <input name="date" required placeholder="e.g. 12 April 2024, 09:00 AM">
+                        </div>
+                        <div>
+                            <label>Ticket Price (R)</label>
+                            <input type="number" name="price" required placeholder="150" value="0">
+                        </div>
+                        <div>
+                            <label>Expiry Date</label>
+                            <input type="date" name="expiryDate" required>
+                        </div>
+                        <div style="grid-column: span 2;">
+                            <button class="btn" style="background:#0984e3; width:100%;">Create Event</button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="card">
+                    <h3 style="margin:0 0 15px 0;">Active Events (${events.length})</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Event Details</th>
+                                <th>Price</th>
+                                <th>Status</th>
+                                <th style="text-align:right;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${events.length > 0 ? rows : '<tr><td colspan="4" style="text-align:center; padding:30px; color:#999;">No events created yet.</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            res.send(renderPage(req.org, 'events', content));
+        } catch (error) {
+            console.error(error);
+            res.send(renderPage(req.org, 'events', `<div class="card" style="color:red;">Error loading events.</div>`));
+        }
+    });
+
+    router.post('/admin/:code/events/add', checkSession, async (req, res) => {
+        try {
+            await prisma.event.create({
+                data: {
+                    name: req.body.name,
+                    date: req.body.date,
+                    price: parseFloat(req.body.price),
+                    churchCode: req.org.code,
+                    status: 'Active',
+                    expiryDate: req.body.expiryDate ? new Date(req.body.expiryDate) : null
+                }
+            });
+        } catch (e) {
+            console.error("Add event error:", e);
+        }
+        res.redirect(`/admin/${req.org.code}/events`);
+    });
+
+    router.post('/admin/:code/events/delete', checkSession, async (req, res) => {
+        try {
+            await prisma.event.delete({
+                where: { id: parseInt(req.body.eventId) }
+            });
+        } catch (e) {
+            console.error("Delete event error:", e);
+        }
+        res.redirect(`/admin/${req.org.code}/events`);
+    });
+
     // --- 💰 REVENUE RECOVERY (UI) ---
     router.get('/admin/:code/collections', checkSession, async (req, res) => {
         const debts = await prisma.collection.findMany({ 
@@ -1236,7 +1347,7 @@ module.exports = (app, { prisma }) => {
                         <div style="display:flex; gap:10px; margin-top:10px;">
                             <button name="action" value="approve" class="btn" style="flex:1; background:#27ae60; padding:15px; font-size:16px;">✅ Approve KYC</button> 
                             <button name="action" value="reject" class="btn" style="flex:1; background:#e74c3c; padding:15px; font-size:16px;">❌ Reject Documents</button>
-                                                                    
+                                                                                                                
                         </div>
                     </form>
                 </div>
