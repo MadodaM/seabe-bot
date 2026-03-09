@@ -1353,6 +1353,150 @@ module.exports = function(app, { prisma }) {
             res.send(renderAdminPage('Regulatory Compliance', '', error.message));
         }
     });
+	
+	// ============================================================
+    // 🔍 COMPLIANCE REVIEW UI (Priority 1)
+    // ============================================================
+    app.get('/admin/compliance/review/:id', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        
+        try {
+            const tx = await prisma.transaction.findUnique({
+                where: { id: parseInt(req.params.id) },
+                include: { complianceLog: true, member: true, church: true }
+            });
+
+            if (!tx || !tx.complianceLog) throw new Error("Transaction or Compliance Log not found.");
+
+            const log = tx.complianceLog;
+            const isFlagged = log.status === 'FLAGGED';
+            
+            const content = `
+                <div style="max-width: 800px; margin: 0 auto;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                        <h2 style="margin:0; color:#2c3e50;">🔍 Compliance Review</h2>
+                        <a href="/admin/compliance" class="btn btn-edit">&larr; Back to Dashboard</a>
+                    </div>
+
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; margin-bottom:20px;">
+                        <div class="card-form" style="margin:0;">
+                            <h3 style="margin-top:0; color:#2c3e50; border-bottom:1px solid #eee; padding-bottom:10px;">🧾 Transaction Info</h3>
+                            <p><strong>ID:</strong> #${tx.id}</p>
+                            <p><strong>Ref:</strong> ${tx.reference}</p>
+                            <p><strong>Amount:</strong> R${tx.amount.toFixed(2)}</p>
+                            <p><strong>Date:</strong> ${new Date(tx.date).toLocaleString()}</p>
+                            <p><strong>Organization:</strong> ${tx.church?.name || tx.churchCode}</p>
+                        </div>
+                        <div class="card-form" style="margin:0;">
+                            <h3 style="margin-top:0; color:#2c3e50; border-bottom:1px solid #eee; padding-bottom:10px;">👤 Payer Info</h3>
+                            <p><strong>Phone:</strong> ${tx.phone}</p>
+                            <p><strong>Name:</strong> ${tx.member ? tx.member.firstName + ' ' + tx.member.lastName : 'Unregistered / Walk-in'}</p>
+                            <p><strong>ID Number:</strong> ${tx.member?.idNumber || 'N/A'}</p>
+                        </div>
+                    </div>
+
+                    <div class="card-form" style="border-left: 5px solid ${log.status === 'CLEARED' ? '#27ae60' : (log.status === 'BLOCKED' ? '#c0392b' : '#e67e22')};">
+                        <h3 style="margin-top:0;">🛡️ Risk Engine Report</h3>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin-bottom:20px;">
+                            <div style="background:#f8f9fa; padding:15px; border-radius:6px; text-align:center;">
+                                <div style="font-size:11px; color:#7f8c8d; text-transform:uppercase;">Risk Score</div>
+                                <div style="font-size:24px; font-weight:bold; color:#2c3e50;">${(log.riskScore * 100).toFixed(0)}%</div>
+                            </div>
+                            <div style="background:#f8f9fa; padding:15px; border-radius:6px; text-align:center;">
+                                <div style="font-size:11px; color:#7f8c8d; text-transform:uppercase;">PEP Hit</div>
+                                <div style="font-size:16px; font-weight:bold; color:${log.isPepFound ? '#c0392b' : '#27ae60'}; margin-top:5px;">${log.isPepFound ? 'YES' : 'NO'}</div>
+                            </div>
+                            <div style="background:#f8f9fa; padding:15px; border-radius:6px; text-align:center;">
+                                <div style="font-size:11px; color:#7f8c8d; text-transform:uppercase;">Sanction Hit</div>
+                                <div style="font-size:16px; font-weight:bold; color:${log.isSanctionHit ? '#c0392b' : '#27ae60'}; margin-top:5px;">${log.isSanctionHit ? 'YES' : 'NO'}</div>
+                            </div>
+                        </div>
+                        <p><strong>Current Status:</strong> <span class="tag" style="background:#eee;">${log.status}</span></p>
+                        <p><strong>System Flags:</strong> ${log.adminNotes || 'None'}</p>
+                    </div>
+
+                    ${isFlagged ? `
+                    <div class="card-form" style="background:#fffaf0; border:1px solid #ffe58f;">
+                        <h3 style="margin-top:0; color:#d48806;">⚖️ Admin Resolution</h3>
+                        <p style="font-size:13px; color:#666;">This transaction requires manual review. Please verify the user's identity and determine if this is a false positive or a true risk.</p>
+                        <form action="/admin/compliance/resolve" method="POST">
+                            <input type="hidden" name="logId" value="${log.id}">
+                            <input type="hidden" name="transactionId" value="${tx.id}">
+                            <div class="form-group">
+                                <label>Resolution Notes (Required for Audit)</label>
+                                <textarea name="resolutionNotes" rows="3" required placeholder="e.g. Verified ID matches different person, false positive."></textarea>
+                            </div>
+                            <div style="display:flex; gap:15px;">
+                                <button type="submit" name="decision" value="CLEARED" class="btn btn-save" style="flex:1;">✅ Clear (False Positive)</button>
+                                <button type="submit" name="decision" value="BLOCKED" class="btn btn-danger" style="flex:1; padding:10px 20px; font-weight:bold; border-radius:4px; border:none; cursor:pointer;">🛑 Block (Confirm Risk)</button>
+                            </div>
+                        </form>
+                    </div>
+                    ` : `
+                    <div class="card-form" style="background:#f0fdf4; border:1px solid #bbf7d0; text-align:center;">
+                        <h3 style="color:#166534; margin:0;">Resolution Complete</h3>
+                        <p style="font-size:13px; color:#15803d; margin-bottom:0;">This transaction has been processed and is marked as <strong>${log.status}</strong>.</p>
+                    </div>
+                    `}
+                </div>
+            `;
+            res.send(renderAdminPage(`Review TX #${tx.id}`, content));
+        } catch (e) {
+            res.send(renderAdminPage('Error', '', e.message));
+        }
+    });
+
+    app.post('/admin/compliance/resolve', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        
+        try {
+            const { logId, transactionId, decision, resolutionNotes } = req.body;
+            
+            const log = await prisma.complianceLog.findUnique({ where: { id: logId } });
+            
+            // Append the admin's notes to the existing system flags
+            const updatedNotes = log.adminNotes 
+                ? `${log.adminNotes} | Admin Resolved: ${resolutionNotes}`
+                : `Admin Resolved: ${resolutionNotes}`;
+
+            // 1. Update the Compliance Log
+            await prisma.complianceLog.update({
+                where: { id: logId },
+                data: {
+                    status: decision,
+                    adminNotes: updatedNotes
+                }
+            });
+
+            // 2. If BLOCKED, update the actual Transaction ledger so the money isn't paid out
+            if (decision === 'BLOCKED') {
+                await prisma.transaction.update({
+                    where: { id: parseInt(transactionId) },
+                    data: { status: 'BLOCKED_FICA' }
+                });
+            }
+
+            // 3. 🛡️ IMMUTABLE AUDIT LOG (FICA Requirement)
+            await logAction({
+                actorId: 'admin', // Super Admin 
+                role: 'SUPER_ADMIN',
+                action: decision === 'CLEARED' ? 'CLEAR_TRANSACTION' : 'BLOCK_TRANSACTION',
+                entity: 'ComplianceLog',
+                entityId: logId,
+                metadata: {
+                    transactionId: parseInt(transactionId),
+                    notes: resolutionNotes,
+                    previousStatus: log.status
+                },
+                ipAddress: req.ip
+            });
+
+            // Redirect back to the review page to see the green success state
+            res.redirect(`/admin/compliance/review/${transactionId}`);
+        } catch (e) {
+            res.send(renderAdminPage('Error', '', e.message));
+        }
+    });
 
     // ============================================================
     // 2. EVENTS
