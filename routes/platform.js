@@ -1,5 +1,5 @@
 // routes/platform.js
-// VERSION: 12.3 (Compliance Engine UI Integrated)
+// VERSION: 12.5 (Compliance Resolution UI + Payouts Dashboard + AI Manual Override)
 require('dotenv').config();
 
 const fs = require('fs');
@@ -94,7 +94,7 @@ function renderAdminPage(title, content, error = null) {
                 <a href="/admin/fica">🛡️ FICA & KYB</a> 
                 <a href="/admin/compliance">⚖️ Compliance & LSO</a>
                 <a href="/admin/global-collections">💰 Global Collections</a>
-				<a href="/admin/payouts">💸 Organization Payouts</a>
+                <a href="/admin/payouts">💸 Church Payouts</a>
                 <a href="/admin/course-builder">🤖 AI Course Builder</a>
                 <a href="/admin/events">🎟️ Events & Projects</a>
                 <a href="/admin/ads">📢 Broadcasts</a>
@@ -387,6 +387,28 @@ module.exports = function(app, { prisma }) {
                 </div>
 
                 <script>
+                    async function submitOverriddenEvent(churchCode) {
+                        const title = document.getElementById('aiEventTitle').value;
+                        const date = document.getElementById('aiEventDate').value;
+                        const price = document.getElementById('aiEventPrice').value;
+                        
+                        saveExtractedEventToDB({ eventName: title, date: date, price: price, churchCode: churchCode });
+                    }
+
+                    async function submitOverriddenPolicies(churchCode, count) {
+                        const plans = [];
+                        for(let i=0; i<count; i++) {
+                            const name = document.getElementById('planName_'+i).value;
+                            const price = document.getElementById('planPrice_'+i).value;
+                            const benefitsStr = document.getElementById('planBenefits_'+i).value;
+                            // Convert comma string back to array
+                            const benefits = benefitsStr.split(',').map(b => b.trim()).filter(b => b);
+                            
+                            plans.push({ name, price, benefits });
+                        }
+                        saveExtractedPolicyToDB(churchCode, plans);
+                    }
+
                     async function saveExtractedEventToDB(aiExtractedData) {
                         const payload = {
                             name: aiExtractedData.eventName, 
@@ -403,7 +425,7 @@ module.exports = function(app, { prisma }) {
                             const result = await response.json();
                             if (result.success) {
                                 alert(result.message);
-                                window.location.href = \`/admin/\${payload.churchCode}/events\`;
+                                window.location.href = '/admin/' + payload.churchCode + '/events';
                             } else {
                                 alert("❌ " + result.error);
                             }
@@ -454,59 +476,43 @@ module.exports = function(app, { prisma }) {
 
                             if (data.success && data.result) {
                                 const info = data.result;
-                                let html = `<strong>🎯 AI Found: ${info.type}</strong><br><hr style="border:0; border-top:1px solid #ddd; margin:10px 0;">`;
+                                let html = '<strong>🎯 AI Found: ' + info.type + '</strong><br><hr style="border:0; border-top:1px solid #ddd; margin:10px 0;">';
                                 
                                 if (info.type === 'POLICY' && info.items) {
-                                    html += `<p style="font-size:11px; color:#666;">Please review and edit the AI-extracted plans below before saving.</p>`;
-                                    html += `<form id="policyOverrideForm">`;
+                                    html += '<p style="font-size:11px; color:#666;">Please review and edit the AI-extracted plans below before saving.</p>';
+                                    html += '<form id="policyOverrideForm">';
                                     
                                     info.items.forEach((plan, index) => {
-                                        html += `
-                                            <div style="background:#fff; padding:10px; border:1px solid #eee; border-radius:4px; margin-bottom:10px;">
-                                                <div style="display:grid; grid-template-columns: 2fr 1fr; gap:10px;">
-                                                    <div>
-                                                        <label style="font-size:10px; color:#999;">Plan Name</label>
-                                                        <input type="text" id="planName_${index}" value="${plan.name || ''}" style="width:100%; padding:5px; font-size:12px; border:1px solid #ccc; border-radius:3px;">
-                                                    </div>
-                                                    <div>
-                                                        <label style="font-size:10px; color:#999;">Price (R)</label>
-                                                        <input type="number" id="planPrice_${index}" value="${plan.price || 0}" style="width:100%; padding:5px; font-size:12px; border:1px solid #ccc; border-radius:3px;">
-                                                    </div>
-                                                </div>
-                                                <div style="margin-top:5px;">
-                                                    <label style="font-size:10px; color:#999;">Benefits (Comma separated)</label>
-                                                    <input type="text" id="planBenefits_${index}" value="${(plan.benefits || []).join(', ')}" style="width:100%; padding:5px; font-size:11px; border:1px solid #ccc; border-radius:3px; background:#f9f9f9;">
-                                                </div>
-                                            </div>
-                                        `;
+                                        html += '<div style="background:#fff; padding:10px; border:1px solid #eee; border-radius:4px; margin-bottom:10px;">';
+                                        html += '<div style="display:grid; grid-template-columns: 2fr 1fr; gap:10px;">';
+                                        html += '<div><label style="font-size:10px; color:#999;">Plan Name</label>';
+                                        html += '<input type="text" id="planName_' + index + '" value="' + (plan.name || '') + '" style="width:100%; padding:5px; font-size:12px; border:1px solid #ccc; border-radius:3px;"></div>';
+                                        html += '<div><label style="font-size:10px; color:#999;">Price (R)</label>';
+                                        html += '<input type="number" id="planPrice_' + index + '" value="' + (plan.price || 0) + '" style="width:100%; padding:5px; font-size:12px; border:1px solid #ccc; border-radius:3px;"></div>';
+                                        html += '</div>';
+                                        html += '<div style="margin-top:5px;"><label style="font-size:10px; color:#999;">Benefits (Comma separated)</label>';
+                                        html += '<input type="text" id="planBenefits_' + index + '" value="' + (plan.benefits || []).join(', ') + '" style="width:100%; padding:5px; font-size:11px; border:1px solid #ccc; border-radius:3px; background:#f9f9f9;"></div>';
+                                        html += '</div>';
                                     });
                                     
-                                    html += `<button type="button" onclick="submitOverriddenPolicies('${c.code}', ${info.items.length})" class="btn" style="width:100%; background:#27ae60; color:white; font-size:12px; padding:10px;">💾 Confirm & Save Plans</button>`;
-                                    html += `</form>`;
+                                    html += '<button type="button" onclick="submitOverriddenPolicies(\\'${c.code}\\', ' + info.items.length + ')" class="btn" style="width:100%; background:#27ae60; color:white; font-size:12px; padding:10px;">💾 Confirm & Save Plans</button>';
+                                    html += '</form>';
                                 } 
                                 else if (info.type === 'EVENT') {
-                                    html += `<p style="font-size:11px; color:#666;">Please review the AI-extracted event details.</p>`;
+                                    html += '<p style="font-size:11px; color:#666;">Please review the AI-extracted event details.</p>';
                                     const safeTitle = info.title ? info.title.replace(/"/g, '&quot;') : "";
                                     
-                                    html += `
-                                        <form id="eventOverrideForm" style="background:#fff; padding:10px; border:1px solid #eee; border-radius:4px;">
-                                            <div style="margin-bottom:8px;">
-                                                <label style="font-size:10px; color:#999;">Event Title</label>
-                                                <input type="text" id="aiEventTitle" value="${safeTitle}" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:3px; box-sizing:border-box;">
-                                            </div>
-                                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:10px;">
-                                                <div>
-                                                    <label style="font-size:10px; color:#999;">Date (YYYY-MM-DD)</label>
-                                                    <input type="text" id="aiEventDate" value="${info.date || ''}" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:3px; box-sizing:border-box;">
-                                                </div>
-                                                <div>
-                                                    <label style="font-size:10px; color:#999;">Ticket Price (R)</label>
-                                                    <input type="number" id="aiEventPrice" value="${info.price || 0}" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:3px; box-sizing:border-box;">
-                                                </div>
-                                            </div>
-                                            <button type="button" onclick="submitOverriddenEvent('${c.code}')" class="btn" style="width:100%; background:#2980b9; color:white; font-size:12px; padding:10px;">📅 Confirm & Create Event</button>
-                                        </form>
-                                    `;
+                                    html += '<form id="eventOverrideForm" style="background:#fff; padding:10px; border:1px solid #eee; border-radius:4px;">';
+                                    html += '<div style="margin-bottom:8px;"><label style="font-size:10px; color:#999;">Event Title</label>';
+                                    html += '<input type="text" id="aiEventTitle" value="' + safeTitle + '" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:3px; box-sizing:border-box;"></div>';
+                                    html += '<div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:10px;">';
+                                    html += '<div><label style="font-size:10px; color:#999;">Date (YYYY-MM-DD)</label>';
+                                    html += '<input type="text" id="aiEventDate" value="' + (info.date || '') + '" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:3px; box-sizing:border-box;"></div>';
+                                    html += '<div><label style="font-size:10px; color:#999;">Ticket Price (R)</label>';
+                                    html += '<input type="number" id="aiEventPrice" value="' + (info.price || 0) + '" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:3px; box-sizing:border-box;"></div>';
+                                    html += '</div>';
+                                    html += '<button type="button" onclick="submitOverriddenEvent(\\'${c.code}\\')" class="btn" style="width:100%; background:#2980b9; color:white; font-size:12px; padding:10px;">📅 Confirm & Create Event</button>';
+                                    html += '</form>';
                                 }
                                 else {
                                     html += '<span style="color:orange">Could not identify structured data. Please try a clearer image.</span>';
@@ -515,29 +521,10 @@ module.exports = function(app, { prisma }) {
                             } else {
                                 resultBox.innerHTML = '<span style="color:red">AI could not read this image.</span>';
                             }
-							
-							async function submitOverriddenEvent(churchCode) {
-                        const title = document.getElementById('aiEventTitle').value;
-                        const date = document.getElementById('aiEventDate').value;
-                        const price = document.getElementById('aiEventPrice').value;
-                        
-                        saveExtractedEventToDB({ eventName: title, date: date, price: price, churchCode: churchCode });
-                    }
-
-                    async function submitOverriddenPolicies(churchCode, count) {
-                        const plans = [];
-                        for(let i=0; i<count; i++) {
-                            const name = document.getElementById(`planName_${i}`).value;
-                            const price = document.getElementById(`planPrice_${i}`).value;
-                            const benefitsStr = document.getElementById(`planBenefits_${i}`).value;
-                            // Convert comma string back to array
-                            const benefits = benefitsStr.split(',').map(b => b.trim()).filter(b => b);
-                            
-                            plans.push({ name, price, benefits });
+                        } catch (e) {
+                            alert("Scan Error: " + e.message);
+                            document.getElementById('aiLoader').style.display = 'none';
                         }
-                        saveExtractedPolicyToDB(churchCode, plans);
-                    }
-							
                     }
                 </script>
             `;
@@ -1211,7 +1198,6 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-
     // ============================================================
     // 6. GLOBAL COLLECTIONS
     // ============================================================
@@ -1245,6 +1231,178 @@ module.exports = function(app, { prisma }) {
         } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
     
+    // ============================================================
+    // 💸 PAYOUTS & SETTLEMENTS (Priority 2)
+    // ============================================================
+    app.get('/admin/payouts', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+
+        try {
+            const pendingPayoutsRaw = await prisma.transaction.groupBy({
+                by: ['churchCode'],
+                where: { 
+                    status: 'SUCCESS', 
+                    payoutId: null     
+                },
+                _sum: {
+                    amount: true,        
+                    platformFee: true,   
+                    netcashFee: true,    
+                    netSettlement: true  
+                },
+                _count: { id: true }
+            });
+
+            const pendingPayouts = await Promise.all(pendingPayoutsRaw.map(async (p) => {
+                const church = await prisma.church.findUnique({ where: { code: p.churchCode } });
+                return { ...p, church };
+            }));
+
+            const payoutHistory = await prisma.payoutLog.findMany({
+                orderBy: { createdAt: 'desc' },
+                take: 20
+            });
+
+            const pendingRows = pendingPayouts.map(p => {
+                const amountOwed = p._sum.netSettlement || 0;
+                if (amountOwed <= 0) return ''; 
+
+                return `
+                    <tr>
+                        <td>
+                            <strong>${p.church?.name || p.churchCode}</strong><br>
+                            <span style="font-size:11px; color:#7f8c8d;">Code: ${p.churchCode} | Bank: ${p.church?.bankName || 'Unknown'} (${p.church?.accountNumber || 'N/A'})</span>
+                        </td>
+                        <td>${p._count.id}</td>
+                        <td>
+                            R${(p._sum.amount || 0).toFixed(2)}<br>
+                            <span style="font-size:10px; color:#c0392b;">- R${(p._sum.platformFee || 0).toFixed(2)} (Seabe)</span><br>
+                            <span style="font-size:10px; color:#c0392b;">- R${(p._sum.netcashFee || 0).toFixed(2)} (Netcash)</span>
+                        </td>
+                        <td style="font-weight:bold; color:#27ae60; font-size:16px;">
+                            R${amountOwed.toFixed(2)}
+                        </td>
+                        <td style="text-align:right;">
+                            <form action="/admin/payouts/process" method="POST" onsubmit="return confirm('Confirm you have EFT\\'d exactly R${amountOwed.toFixed(2)} to ${p.churchCode}?');">
+                                <input type="hidden" name="churchCode" value="${p.churchCode}">
+                                <input type="hidden" name="amount" value="${amountOwed}">
+                                <input type="hidden" name="txCount" value="${p._count.id}">
+                                <button type="submit" class="btn" style="background:#27ae60; color:white; font-size:11px; padding:6px 12px;">Mark as Paid</button>
+                            </form>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            const historyRows = payoutHistory.map(h => `
+                <tr>
+                    <td>${new Date(h.createdAt).toLocaleDateString()}</td>
+                    <td><strong>${h.churchCode}</strong></td>
+                    <td>${h.txCount}</td>
+                    <td style="font-weight:bold;">R${h.amount.toFixed(2)}</td>
+                    <td><span class="tag" style="background:#e8f5e9; color:#27ae60;">${h.status}</span></td>
+                    <td><span style="font-size:11px; font-family:monospace; color:#95a5a6;">${h.reference}</span></td>
+                </tr>
+            `).join('');
+
+            const content = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                    <h2 style="margin:0; color:#2c3e50;">💸 Organization Payouts & Settlements</h2>
+                    <span style="font-size:12px; color:#7f8c8d;">PASA Directive 1 (TPPP) Compliant Ledger</span>
+                </div>
+
+                <div class="card-form" style="max-width:100%; margin-bottom:30px; border-top:4px solid #27ae60;">
+                    <h3 style="margin-top:0;">⏳ Pending Settlements</h3>
+                    <p style="font-size:13px; color:#666;">These funds have cleared Netcash and are ready to be transferred to the Organization's bank account.</p>
+                    
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Organization</th>
+                                <th>Unpaid TXs</th>
+                                <th>Gross & Fees</th>
+                                <th>Net Payout Owed</th>
+                                <th style="text-align:right;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${pendingRows || '<tr><td colspan="5" style="text-align:center; padding:30px; color:#95a5a6;">No pending payouts. All caught up!</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="card-form" style="max-width:100%;">
+                    <h3 style="margin-top:0;">📜 Recent Payout History</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Org Code</th>
+                                <th>TX Count</th>
+                                <th>Amount Paid</th>
+                                <th>Status</th>
+                                <th>Audit Ref</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${historyRows || '<tr><td colspan="6" style="text-align:center; padding:30px; color:#95a5a6;">No payout history found.</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            res.send(renderAdminPage('Church Payouts', content));
+        } catch (e) {
+            res.send(renderAdminPage('Payouts Error', '', e.message));
+        }
+    });
+
+    app.post('/admin/payouts/process', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        
+        try {
+            const { churchCode, amount, txCount } = req.body;
+            const payoutAmount = parseFloat(amount);
+            const payoutRef = `PAY-${churchCode}-${Date.now().toString().slice(-6)}`;
+
+            const payoutLog = await prisma.payoutLog.create({
+                data: {
+                    churchCode: churchCode,
+                    amount: payoutAmount,
+                    txCount: parseInt(txCount),
+                    reference: payoutRef,
+                    status: 'COMPLETED',
+                    adminId: 'admin'
+                }
+            });
+
+            await prisma.transaction.updateMany({
+                where: { 
+                    churchCode: churchCode,
+                    status: 'SUCCESS',
+                    payoutId: null
+                },
+                data: {
+                    payoutId: payoutLog.id
+                }
+            });
+
+            await logAction({
+                actorId: 'admin',
+                role: 'SUPER_ADMIN',
+                action: 'PROCESS_PAYOUT',
+                entity: 'PayoutLog',
+                entityId: String(payoutLog.id),
+                metadata: { churchCode, amount: payoutAmount, reference: payoutRef },
+                ipAddress: req.ip
+            });
+
+            res.redirect('/admin/payouts');
+        } catch (e) {
+            res.send(renderAdminPage('Payout Processing Error', '', e.message));
+        }
+    });
+
     // ============================================================
     // 🌍 GLOBAL RADAR
     // ============================================================
@@ -1288,7 +1446,6 @@ module.exports = function(app, { prisma }) {
             const goalValProg = Math.min((totalVolume / 50000000) * 100, 100).toFixed(1);
             const goalCntProg = Math.min((totalTx / 50000) * 100, 100).toFixed(1);
 
-            // 🚀 FETCH TRANSACTIONS FOR THE COMPLIANCE TABLE HERE
             const recentTxs = await prisma.transaction.findMany({
                 orderBy: { date: 'desc' },
                 take: 50,
@@ -1296,16 +1453,16 @@ module.exports = function(app, { prisma }) {
             });
 
             const txRowsHtml = recentTxs.map(t => {
-                const riskColor = t.complianceLog?.status === 'FLAGGED' ? '#e74c3c' : (t.complianceLog?.status === 'CLEARED' ? '#27ae60' : '#f39c12');
+                const riskColor = t.complianceLog?.status === 'FLAGGED' ? '#e74c3c' : (t.complianceLog?.status === 'CLEARED' ? '#27ae60' : (t.complianceLog?.status === 'BLOCKED' ? '#000' : '#f39c12'));
                 const riskLabel = t.complianceLog?.status || 'UNCHECKED';
 
                 return `
                     <tr>
                         <td>${t.churchCode}</td>
                         <td>R${t.amount}</td>
-                        <td><span class="badge" style="background:${riskColor};">${riskLabel}</span></td>
+                        <td><span class="badge" style="background:${riskColor}; color:white; padding:4px 8px; border-radius:4px; font-size:11px;">${riskLabel}</span></td>
                         <td>${new Date(t.date).toLocaleString()}</td>
-                        <td><a href="/admin/compliance/review/${t.id}" class="btn-del">Review</a></td>
+                        <td><a href="/admin/compliance/review/${t.id}" class="btn-del" style="background:#3498db; color:white; padding:4px 8px; text-decoration:none; border-radius:4px;">Review</a></td>
                     </tr>
                 `;
             }).join('');
@@ -1354,33 +1511,7 @@ module.exports = function(app, { prisma }) {
                         </div>
                     </div>
                 </div>
-
-                <div class="card-form" style="max-width:100%; margin-bottom:30px; border-left: 5px solid #2ecc71;">
-                    <h3 style="margin-top:0; color:#27ae60;">🚀 Business Scale Milestone (Series A Goal)</h3>
-                    <p style="color:#7f8c8d; font-size:13px;">Trajectory toward R50 Million/month for wholesale pricing and direct bank clearing.</p>
-                    
-                    <div style="margin-bottom:15px;">
-                        <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:bold; margin-bottom:5px;">
-                            <span>VALUE (Goal: R50M)</span>
-                            <span>${goalValProg}%</span>
-                        </div>
-                        <div style="background:#ecf0f1; border-radius:10px; height:12px; width:100%; overflow:hidden; border:1px solid #ddd;">
-                            <div style="background:#2ecc71; width:${goalValProg}%; height:100%; transition:1.5s;"></div>
-                        </div>
-                    </div>
-
-                    <div style="margin-bottom:5px;">
-                        <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:bold; margin-bottom:5px;">
-                            <span>VOLUME (Goal: 50,000 tx)</span>
-                            <span>${goalCntProg}%</span>
-                        </div>
-                        <div style="background:#ecf0f1; border-radius:10px; height:12px; width:100%; overflow:hidden; border:1px solid #ddd;">
-                            <div style="background:#27ae60; width:${goalCntProg}%; height:100%; transition:1.5s;"></div>
-                        </div>
-                    </div>
-                </div>
                 
-                <!-- 🚀 MOVED THE ORPHANED CODE HERE -->
                 <div class="card-form" style="max-width:100%;">
                     <h3 style="margin-top:0;">🛡️ Recent Transactions (Real-Time Screening)</h3>
                     <table>
@@ -1405,8 +1536,8 @@ module.exports = function(app, { prisma }) {
             res.send(renderAdminPage('Regulatory Compliance', '', error.message));
         }
     });
-	
-	// ============================================================
+
+    // ============================================================
     // 🔍 COMPLIANCE REVIEW UI (Priority 1)
     // ============================================================
     app.get('/admin/compliance/review/:id', async (req, res) => {
@@ -1427,7 +1558,7 @@ module.exports = function(app, { prisma }) {
                 <div style="max-width: 800px; margin: 0 auto;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
                         <h2 style="margin:0; color:#2c3e50;">🔍 Compliance Review</h2>
-                        <a href="/admin/compliance" class="btn btn-edit">&larr; Back to Dashboard</a>
+                        <a href="/admin/compliance" class="btn" style="background:#dfe6e9; color:#2d3436;">&larr; Back to Dashboard</a>
                     </div>
 
                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; margin-bottom:20px;">
@@ -1463,7 +1594,7 @@ module.exports = function(app, { prisma }) {
                                 <div style="font-size:16px; font-weight:bold; color:${log.isSanctionHit ? '#c0392b' : '#27ae60'}; margin-top:5px;">${log.isSanctionHit ? 'YES' : 'NO'}</div>
                             </div>
                         </div>
-                        <p><strong>Current Status:</strong> <span class="tag" style="background:#eee;">${log.status}</span></p>
+                        <p><strong>Current Status:</strong> <span class="tag" style="background:#eee; color:#333;">${log.status}</span></p>
                         <p><strong>System Flags:</strong> ${log.adminNotes || 'None'}</p>
                     </div>
 
@@ -1504,23 +1635,20 @@ module.exports = function(app, { prisma }) {
         try {
             const { logId, transactionId, decision, resolutionNotes } = req.body;
             
-            const log = await prisma.complianceLog.findUnique({ where: { id: logId } });
+            const log = await prisma.complianceLog.findUnique({ where: { id: parseInt(logId) } });
             
-            // Append the admin's notes to the existing system flags
             const updatedNotes = log.adminNotes 
                 ? `${log.adminNotes} | Admin Resolved: ${resolutionNotes}`
                 : `Admin Resolved: ${resolutionNotes}`;
 
-            // 1. Update the Compliance Log
             await prisma.complianceLog.update({
-                where: { id: logId },
+                where: { id: parseInt(logId) },
                 data: {
                     status: decision,
                     adminNotes: updatedNotes
                 }
             });
 
-            // 2. If BLOCKED, update the actual Transaction ledger so the money isn't paid out
             if (decision === 'BLOCKED') {
                 await prisma.transaction.update({
                     where: { id: parseInt(transactionId) },
@@ -1528,9 +1656,8 @@ module.exports = function(app, { prisma }) {
                 });
             }
 
-            // 3. 🛡️ IMMUTABLE AUDIT LOG (FICA Requirement)
             await logAction({
-                actorId: 'admin', // Super Admin 
+                actorId: 'admin', 
                 role: 'SUPER_ADMIN',
                 action: decision === 'CLEARED' ? 'CLEAR_TRANSACTION' : 'BLOCK_TRANSACTION',
                 entity: 'ComplianceLog',
@@ -1543,194 +1670,9 @@ module.exports = function(app, { prisma }) {
                 ipAddress: req.ip
             });
 
-            // Redirect back to the review page to see the green success state
             res.redirect(`/admin/compliance/review/${transactionId}`);
         } catch (e) {
             res.send(renderAdminPage('Error', '', e.message));
-        }
-    });
-
-	// ============================================================
-    // 💸 PAYOUTS & SETTLEMENTS (Priority 2)
-    // ============================================================
-    app.get('/admin/payouts', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
-
-        try {
-            // 1. Calculate Owed Settlements (Pending Payouts)
-            // We group by churchCode and sum the netSettlement for all SUCCESS transactions
-            const pendingPayoutsRaw = await prisma.transaction.groupBy({
-                by: ['churchCode'],
-                where: { 
-                    status: 'SUCCESS', // Only successful, un-blocked money
-                    payoutId: null     // Only money that hasn't been paid out yet
-                },
-                _sum: {
-                    amount: true,        // Gross
-                    platformFee: true,   // Seabe Profit
-                    netcashFee: true,    // Gateway Cost
-                    netSettlement: true  // What the church gets
-                },
-                _count: {
-                    id: true // Number of transactions
-                }
-            });
-
-            // Fetch church details to get bank info
-            const pendingPayouts = await Promise.all(pendingPayoutsRaw.map(async (p) => {
-                const church = await prisma.church.findUnique({ where: { code: p.churchCode } });
-                return { ...p, church };
-            }));
-
-            // 2. Fetch History of Completed Payouts
-            const payoutHistory = await prisma.payoutLog.findMany({
-                orderBy: { createdAt: 'desc' },
-                take: 20
-            });
-
-            // Build Pending Table Rows
-            const pendingRows = pendingPayouts.map(p => {
-                const amountOwed = p._sum.netSettlement || 0;
-                if (amountOwed <= 0) return ''; // Skip if nothing owed
-
-                return `
-                    <tr>
-                        <td>
-                            <strong>${p.church?.name || p.churchCode}</strong><br>
-                            <span style="font-size:11px; color:#7f8c8d;">Code: ${p.churchCode} | Bank: ${p.church?.bankName || 'Unknown'} (${p.church?.accountNumber || 'N/A'})</span>
-                        </td>
-                        <td>${p._count.id}</td>
-                        <td>
-                            R${(p._sum.amount || 0).toFixed(2)}<br>
-                            <span style="font-size:10px; color:#c0392b;">- R${(p._sum.platformFee || 0).toFixed(2)} (Seabe)</span><br>
-                            <span style="font-size:10px; color:#c0392b;">- R${(p._sum.netcashFee || 0).toFixed(2)} (Netcash)</span>
-                        </td>
-                        <td style="font-weight:bold; color:#27ae60; font-size:16px;">
-                            R${amountOwed.toFixed(2)}
-                        </td>
-                        <td style="text-align:right;">
-                            <form action="/admin/payouts/process" method="POST" onsubmit="return confirm('Confirm you have EFT\\'d exactly R${amountOwed.toFixed(2)} to ${p.churchCode}?');">
-                                <input type="hidden" name="churchCode" value="${p.churchCode}">
-                                <input type="hidden" name="amount" value="${amountOwed}">
-                                <input type="hidden" name="txCount" value="${p._count.id}">
-                                <button type="submit" class="btn" style="background:#27ae60; color:white; font-size:11px; padding:6px 12px;">Mark as Paid</button>
-                            </form>
-                        </td>
-                    </tr>
-                `;
-            }).join('');
-
-            // Build History Table Rows
-            const historyRows = payoutHistory.map(h => `
-                <tr>
-                    <td>${new Date(h.createdAt).toLocaleDateString()}</td>
-                    <td><strong>${h.churchCode}</strong></td>
-                    <td>${h.txCount}</td>
-                    <td style="font-weight:bold;">R${h.amount.toFixed(2)}</td>
-                    <td><span class="tag" style="background:#e8f5e9; color:#27ae60;">${h.status}</span></td>
-                    <td><span style="font-size:11px; font-family:monospace; color:#95a5a6;">${h.reference}</span></td>
-                </tr>
-            `).join('');
-
-            const content = `
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-                    <h2 style="margin:0; color:#2c3e50;">💸 Organization Payouts & Settlements</h2>
-                    <span style="font-size:12px; color:#7f8c8d;">PASA Directive 1 (TPPP) Compliant Ledger</span>
-                </div>
-
-                <div class="card-form" style="max-width:100%; margin-bottom:30px; border-top:4px solid #27ae60;">
-                    <h3 style="margin-top:0;">⏳ Pending Settlements</h3>
-                    <p style="font-size:13px; color:#666;">These funds have cleared Netcash and are ready to be transferred to the Church's bank account.</p>
-                    
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Organization</th>
-                                <th>Unpaid TXs</th>
-                                <th>Gross & Fees</th>
-                                <th>Net Payout Owed</th>
-                                <th style="text-align:right;">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${pendingRows || '<tr><td colspan="5" style="text-align:center; padding:30px; color:#95a5a6;">No pending payouts. All caught up!</td></tr>'}
-                        </tbody>
-                    </table>
-                </div>
-
-                <div class="card-form" style="max-width:100%;">
-                    <h3 style="margin-top:0;">📜 Recent Payout History</h3>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>Org Code</th>
-                                <th>TX Count</th>
-                                <th>Amount Paid</th>
-                                <th>Status</th>
-                                <th>Audit Ref</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${historyRows || '<tr><td colspan="6" style="text-align:center; padding:30px; color:#95a5a6;">No payout history found.</td></tr>'}
-                        </tbody>
-                    </table>
-                </div>
-            `;
-
-            res.send(renderAdminPage('Organization Payouts', content));
-        } catch (e) {
-            res.send(renderAdminPage('Payouts Error', '', e.message));
-        }
-    });
-
-    app.post('/admin/payouts/process', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
-        
-        try {
-            const { churchCode, amount, txCount } = req.body;
-            const payoutAmount = parseFloat(amount);
-            const payoutRef = `PAY-${churchCode}-${Date.now().toString().slice(-6)}`;
-
-            // 1. Create the Payout Log (Audit Trail)
-            const payoutLog = await prisma.payoutLog.create({
-                data: {
-                    churchCode: churchCode,
-                    amount: payoutAmount,
-                    txCount: parseInt(txCount),
-                    reference: payoutRef,
-                    status: 'COMPLETED',
-                    adminId: 'admin'
-                }
-            });
-
-            // 2. Mark all currently pending SUCCESS transactions for this church as PAID
-            // We link them to the newly created payoutLog via payoutId
-            await prisma.transaction.updateMany({
-                where: { 
-                    churchCode: churchCode,
-                    status: 'SUCCESS',
-                    payoutId: null
-                },
-                data: {
-                    payoutId: payoutLog.id
-                }
-            });
-
-            // 3. FICA Audit Logging
-            await logAction({
-                actorId: 'admin',
-                role: 'SUPER_ADMIN',
-                action: 'PROCESS_PAYOUT',
-                entity: 'PayoutLog',
-                entityId: String(payoutLog.id),
-                metadata: { churchCode, amount: payoutAmount, reference: payoutRef },
-                ipAddress: req.ip
-            });
-
-            res.redirect('/admin/payouts');
-        } catch (e) {
-            res.send(renderAdminPage('Payout Processing Error', '', e.message));
         }
     });
 
@@ -2000,11 +1942,8 @@ module.exports = function(app, { prisma }) {
             const org = await prisma.church.findUnique({ where: { code: churchCode.toUpperCase() } });
             if (!org) return res.status(404).json({ success: false, error: "Organization not found" });
 
-            // 📅 1. Parse the incoming date (AI usually gives YYYY-MM-DD)
-            // Fallback to today if the AI failed to extract a valid date
+            // Parse Date and calculate expiry (Event Date + 1 Day)
             const eventDate = date && !isNaN(Date.parse(date)) ? new Date(date) : new Date();
-
-            // ➕ 2. Calculate Expiry (Event Date + 1 Day)
             const calculatedExpiry = new Date(eventDate);
             calculatedExpiry.setDate(calculatedExpiry.getDate() + 1);
 
@@ -2015,7 +1954,7 @@ module.exports = function(app, { prisma }) {
                     price: parseFloat(price) || 0,
                     churchCode: org.code,
                     status: 'Active',
-                    expiryDate: calculatedExpiry // 🚀 Now passed correctly as a Date object
+                    expiryDate: calculatedExpiry
                 }
             });
 
