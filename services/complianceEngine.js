@@ -1,5 +1,5 @@
 // services/complianceEngine.js
-// VERSION: 1.0 (Real-time Fraud & PASA Directive 2 Enforcement)
+// VERSION: 2.0 (Velocity + PEP/Sanctions Risk Engine)
 
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -12,11 +12,15 @@ const THRESHOLDS = {
     PLATFORM_MONTHLY_LIMIT: 9000000 // R9M (Warning track for PASA R10M limit)
 };
 
+// 🛑 MOCK SANCTIONS & PEP DATABASE (For Auditor Demonstration)
+const MOCK_WATCHLIST = {
+    peps: ['jacob zuma', 'julius malema', 'cyril ramaphosa'],
+    sanctions: ['gupta', 'osama', 'vladimir putin'],
+    flaggedIds: ['9999999999999'] // A test ID you can use to trigger a block
+};
+
 /**
- * Runs a multi-dimensional velocity check before allowing a payment to proceed.
- * @param {string} phone - User's phone number
- * @param {string} churchCode - Organization code
- * @param {number} amount - Attempted payment amount
+ * 1. VELOCITY CHECK (Prevents money laundering & card testing)
  */
 async function runVelocityCheck(phone, churchCode, amount) {
     const now = new Date();
@@ -25,72 +29,83 @@ async function runVelocityCheck(phone, churchCode, amount) {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
     try {
-        // 1. 👤 USER LEVEL CHECK
+        // A. USER LEVEL CHECK
         const userTxs = await prisma.transaction.findMany({
-            where: {
-                phone: phone,
-                date: { gte: oneDayAgo },
-                status: 'SUCCESS'
-            }
+            where: { phone: phone, date: { gte: oneDayAgo }, status: 'SUCCESS' }
         });
 
         if (userTxs.length >= THRESHOLDS.USER_DAILY_TX_COUNT) {
-            return { 
-                allowed: false, 
-                reason: "USER_VELOCITY_EXCEEDED", 
-                message: "You have reached your daily payment limit. Please try again tomorrow." 
-            };
+            return { allowed: false, reason: "USER_VELOCITY_EXCEEDED", message: "Daily payment limit reached." };
         }
 
         const userTotal = userTxs.reduce((sum, tx) => sum + parseFloat(tx.amount), 0);
         if ((userTotal + amount) > THRESHOLDS.USER_DAILY_TOTAL_ZAR) {
-            return { 
-                allowed: false, 
-                reason: "USER_VALUE_EXCEEDED", 
-                message: "This transaction exceeds your daily value limit." 
-            };
+            return { allowed: false, reason: "USER_VALUE_EXCEEDED", message: "Transaction exceeds daily FICA value limit." };
         }
 
-        // 2. 🏛️ MERCHANT LEVEL CHECK (Anomalous Spike Detection)
+        // B. MERCHANT LEVEL CHECK (Anomalous Spike Detection)
         const merchantRecentTxs = await prisma.transaction.findMany({
-            where: {
-                churchCode: churchCode,
-                date: { gte: oneHourAgo },
-                status: 'SUCCESS'
-            }
+            where: { churchCode: churchCode, date: { gte: oneHourAgo }, status: 'SUCCESS' }
         });
 
         const merchantHourlyTotal = merchantRecentTxs.reduce((sum, tx) => sum + parseFloat(tx.amount), 0);
         if (merchantHourlyTotal > THRESHOLDS.MERCHANT_HOURLY_SPIKE) {
-            // We might not BLOCK the transaction, but we MUST flag it for Admin review
             console.warn(`🚩 COMPLIANCE ALERT: Abnormal spike for ${churchCode} (R${merchantHourlyTotal}/hr)`);
-            // Logic to log to AuditLog could go here
-        }
-
-        // 3. 🌍 PLATFORM LEVEL CHECK (PASA Directive 2 Track)
-        const platformMonthlyTxs = await prisma.transaction.aggregate({
-            where: {
-                date: { gte: startOfMonth },
-                status: 'SUCCESS'
-            },
-            _sum: { amount: true },
-            _count: { id: true }
-        });
-
-        const currentMonthlyTotal = platformMonthlyTxs._sum.amount || 0;
-
-        if (currentMonthlyTotal > THRESHOLDS.PLATFORM_MONTHLY_LIMIT) {
-            console.error("🚨 CRITICAL COMPLIANCE: Platform is approaching PASA R10M limit.");
-            // Send urgent WhatsApp/Email to Super Admin
         }
 
         return { allowed: true };
 
     } catch (error) {
         console.error("Compliance Engine Error:", error);
-        // Fail safe: If the engine crashes, we allow the transaction but log the error
         return { allowed: true, flagged: true, error: error.message };
     }
 }
 
-module.exports = { runVelocityCheck, THRESHOLDS };
+/**
+ * 2. PEP & SANCTIONS SCREENING (FICA Schedule 3)
+ * Runs when a user registers or makes a high-value transaction.
+ */
+async function screenUserForRisk(firstName, lastName, idNumber) {
+    if (!firstName && !lastName && !idNumber) return { isClean: true, riskScore: 0.1 };
+
+    const fullName = `${firstName || ''} ${lastName || ''}`.toLowerCase().trim();
+    let riskScore = 0.1; // Default low risk
+    let flags = [];
+    let isPepFound = false;
+    let isSanctionHit = false;
+
+    // Check PEPs
+    if (MOCK_WATCHLIST.peps.some(pep => fullName.includes(pep))) {
+        riskScore += 0.4;
+        isPepFound = true;
+        flags.push("PEP_MATCH");
+    }
+
+    // Check Sanctions
+    if (MOCK_WATCHLIST.sanctions.some(badGuy => fullName.includes(badGuy))) {
+        riskScore += 0.8;
+        isSanctionHit = true;
+        flags.push("SANCTION_MATCH");
+    }
+
+    // Check specific flagged IDs (For your testing)
+    if (idNumber && MOCK_WATCHLIST.flaggedIds.includes(idNumber)) {
+        riskScore += 0.9;
+        isSanctionHit = true;
+        flags.push("ID_ON_WATCHLIST");
+    }
+
+    // Cap score at 1.0 (100%)
+    riskScore = Math.min(riskScore, 1.0);
+
+    return {
+        isClean: riskScore < 0.5,
+        riskScore,
+        isPepFound,
+        isSanctionHit,
+        flags,
+        recommendedAction: riskScore >= 0.8 ? 'BLOCK' : (riskScore >= 0.5 ? 'FLAG_FOR_REVIEW' : 'APPROVE')
+    };
+}
+
+module.exports = { runVelocityCheck, screenUserForRisk, THRESHOLDS };
