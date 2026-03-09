@@ -11,6 +11,7 @@ const { processAndImportCoursePDF } = require('../services/courseImporter');
 const { extractDataFromImage } = require('../services/visionExtractor');
 const { provisionNetCashAccount } = require('../services/netcashProvisioner');
 const { generatePaymentQR } = require('../services/paymentQrgen');
+const { logAction } = require('../services/audit');
 
 const upload = multer({ dest: 'uploads/' });
 
@@ -1130,9 +1131,32 @@ module.exports = function(app, { prisma }) {
     app.post('/admin/pricing/update', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         try {
-            await prisma.servicePrice.update({ where: { code: req.body.code }, data: { amount: parseFloat(req.body.amount) } });
+            // 1. Fetch the OLD value first so we can log it!
+            const oldPriceRecord = await prisma.servicePrice.findUnique({ where: { code: req.body.code } });
+            const oldAmount = oldPriceRecord ? oldPriceRecord.amount : 0;
+
+            // 2. Update the DB with the NEW value
+            await prisma.servicePrice.update({ 
+                where: { code: req.body.code }, 
+                data: { amount: parseFloat(req.body.amount) } 
+            });
+            
+            // 3. Log the action securely
+            await logAction({
+                actorId: 'admin', // Only the Super Admin can reach this route
+                role: 'SUPER_ADMIN',
+                action: 'UPDATE_FEE',
+                entity: 'ServicePrice',
+                entityId: req.body.code,
+                metadata: { oldVal: oldAmount, newVal: parseFloat(req.body.amount) },
+                ipAddress: req.ip
+            });
+
+            // 4. Finally, redirect the user
             res.redirect('/admin/pricing');
-        } catch (e) { res.send(renderAdminPage('Pricing Error', '', e.message)); }
+        } catch (e) { 
+            res.send(renderAdminPage('Pricing Error', '', e.message)); 
+        }
     });
 
 
