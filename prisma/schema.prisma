@@ -503,6 +503,26 @@ model ComplianceLog {
   createdAt       DateTime @default(now())
 }
 
-// (The second AuditLog is gone!)
+// ⚙️ DYNAMIC FEE CONFIGURATION
+model FeeConfiguration {
+  id          Int      @id @default(autoincrement())
+  provider    String   // 'NETCASH', 'OZOW'
+  method      String   // 'CARD', 'EFT', 'CASH'
+  
+  // Cost Structure (What they charge YOU)
+  baseFee     Float    // Fixed cost (e.g., R2.00)
+  percentFee  Float    // Percentage (e.g., 2.5%)
+  
+  // Revenue Structure (What YOU charge the church)
+  seabeFixed  Float    @default(5.00) // Your flat markup
+  seabePercent Float   @default(0.0)  // Your % markup (if applicable)
+  
+  isActive    Boolean  @default(true) // Easy switch to turn off old rates
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Optional: Link to specific churches if you negotiate custom rates
+  // churches Church[] 
+}
 
 

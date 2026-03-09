@@ -52,10 +52,13 @@
     "globals": "^17.3.0",
     "husky": "^9.1.7",
     "jest": "^30.2.0",
-    "supertest": "^7.2.2"
+    "supertest": "^7.2.2",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.1",
+    "@types/node": "^20.0.0"
   },
   "prisma": {
-    "seed": "node prisma/seedquote.js"
+    "seed": "ts-node prisma/seed.ts"
   },
   "directories": {
     "test": "tests"
