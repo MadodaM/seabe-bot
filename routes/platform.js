@@ -416,14 +416,20 @@ module.exports = function(app, { prisma }) {
                                         html += '<span style="color:#666;">' + (plan.benefits ? plan.benefits.length : 0) + ' Benefits detected.</span>';
                                         html += '</div>';
                                     });
-                                    html += '<button onclick="alert(\\'Simulated: Plans saved to DB!\\')" class="btn" style="width:100%; background:#27ae60; color:white; font-size:11px;">💾 Save Plans</button>';
+                                    
+                                    // 🛡️ Safely stringify JSON and use double-quotes for JS concatenation to avoid breaking Node.js
+                                    const safeJson = JSON.stringify(info.items).replace(/'/g, "&#39;");
+                                    html += "<button onclick='saveExtractedPolicyToDB(\"${c.code}\", " + safeJson + ")' class=\"btn\" style=\"width:100%; background:#27ae60; color:white; font-size:11px;\">💾 Save Plans</button>";
                                 } 
                                 else if (info.type === 'EVENT') {
                                     html += '<div style="font-size:12px; margin-bottom:10px;">';
                                     html += '<strong>' + info.title + '</strong><br>';
                                     html += '📅 ' + info.date + '<br>📍 ' + info.location;
                                     html += '</div>';
-                                    html += '<button onclick="alert(\\'Simulated: Event Created!\\')" class="btn" style="width:100%; background:#2980b9; color:white; font-size:11px;">📅 Create Event</button>';
+                                    
+                                    // 🛡️ Safely concatenate frontend variables while allowing Node to parse ${c.code}
+                                    const safeTitle = info.title ? info.title.replace(/'/g, "&#39;") : "";
+                                    html += "<button onclick='saveExtractedEventToDB({ eventName: \"" + safeTitle + "\", date: \"" + info.date + "\", price: \"" + (info.price || 0) + "\", churchCode: \"${c.code}\" })' class=\"btn\" style=\"width:100%; background:#2980b9; color:white; font-size:11px;\">📅 Create Event</button>";
                                 }
                                 else {
                                     html += '<span style="color:orange">Could not identify structured data.</span>';
@@ -481,7 +487,65 @@ module.exports = function(app, { prisma }) {
             res.status(500).json({ success: false, error: error.message });
         }
     });
+	
+	// ============================================================
+    // 💾 API: SAVE AI-SCANNED EVENT
+    // ============================================================
+    app.post('/api/admin/vision/save-event', express.json(), async (req, res) => {
+        try {
+            const { name, date, price, churchCode } = req.body;
+            if (!name || !churchCode) return res.status(400).json({ success: false, error: "Missing event name or org code." });
 
+            const org = await prisma.church.findUnique({ where: { code: churchCode.toUpperCase() } });
+            if (!org) return res.status(404).json({ success: false, error: "Organization not found" });
+
+            const newEvent = await prisma.event.create({
+                data: {
+                    name: name,
+                    date: date || "TBD",
+                    price: parseFloat(price) || 0,
+                    churchCode: org.code,
+                    status: 'Active'
+                }
+            });
+
+            res.json({ success: true, message: "✅ Event successfully saved to database!", event: newEvent });
+        } catch (error) {
+            console.error("AI Event Save Error:", error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ============================================================
+    // 💾 API: SAVE AI-SCANNED POLICIES/PLANS
+    // ============================================================
+    app.post('/api/admin/vision/save-policy', express.json(), async (req, res) => {
+        try {
+            const { churchCode, plans } = req.body;
+            if (!churchCode || !plans || plans.length === 0) return res.status(400).json({ success: false, error: "Missing policy data." });
+
+            const org = await prisma.church.findUnique({ where: { code: churchCode.toUpperCase() } });
+            if (!org) return res.status(404).json({ success: false, error: "Organization not found" });
+
+            // Loop through the AI-extracted plans and create them in the DB
+            for (const plan of plans) {
+                await prisma.policyPlan.create({
+                    data: {
+                        name: plan.name,
+                        price: parseFloat(plan.price) || 0,
+                        churchId: org.id,
+                        benefits: plan.benefits ? plan.benefits.join(', ') : '' 
+                    }
+                });
+            }
+
+            res.json({ success: true, message: `✅ Successfully saved ${plans.length} policy plans!` });
+        } catch (error) {
+            console.error("AI Policy Save Error:", error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+	
     // ============================================================
     // 🎓 AI COURSE BUILDER (LMS)
     // ============================================================
@@ -1493,4 +1557,23 @@ module.exports = function(app, { prisma }) {
             res.send(renderAdminPage('Manage Users', content));
         } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
+	
+// Inside your renderAdminPage logic for Transactions/Collections
+// Map your transactions to include their compliance status
+
+const rows = transactions.map(t => {
+    const riskColor = t.complianceLog?.status === 'FLAGGED' ? '#e74c3c' : '#27ae60';
+    const riskLabel = t.complianceLog?.status || 'UNCHECKED';
+
+    return `
+        <tr>
+            <td>${t.churchCode}</td>
+            <td>R${t.amount}</td>
+            <td><span class="badge" style="background:${riskColor}">${riskLabel}</span></td>
+            <td>${new Date(t.date).toLocaleString()}</td>
+            <td><a href="/admin/compliance/review/${t.id}" class="btn-del">Review</a></td>
+        </tr>
+    `;
+}).join('');
+
 };
