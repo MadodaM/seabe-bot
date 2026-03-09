@@ -1583,7 +1583,7 @@ module.exports = function(app, { prisma }) {
 
             const content = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-                    <h2 style="margin:0; color:#2c3e50;">💸 Church Payouts & Settlements</h2>
+                    <h2 style="margin:0; color:#2c3e50;">💸 Organization Payouts & Settlements</h2>
                     <span style="font-size:12px; color:#7f8c8d;">PASA Directive 1 (TPPP) Compliant Ledger</span>
                 </div>
 
@@ -1627,7 +1627,7 @@ module.exports = function(app, { prisma }) {
                 </div>
             `;
 
-            res.send(renderAdminPage('Church Payouts', content));
+            res.send(renderAdminPage('Organization Payouts', content));
         } catch (e) {
             res.send(renderAdminPage('Payouts Error', '', e.message));
         }
