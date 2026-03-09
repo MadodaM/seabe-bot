@@ -454,39 +454,90 @@ module.exports = function(app, { prisma }) {
 
                             if (data.success && data.result) {
                                 const info = data.result;
-                                let html = '<strong>Found: ' + info.type + '</strong><br><hr style="border:0; border-top:1px solid #ddd; margin:5px 0;">';
+                                let html = `<strong>🎯 AI Found: ${info.type}</strong><br><hr style="border:0; border-top:1px solid #ddd; margin:10px 0;">`;
                                 
                                 if (info.type === 'POLICY' && info.items) {
-                                    info.items.forEach(plan => {
-                                        html += '<div style="margin-bottom:10px; font-size:12px;">';
-                                        html += '<strong>' + plan.name + '</strong> (R' + plan.price + ')<br>';
-                                        html += '<span style="color:#666;">' + (plan.benefits ? plan.benefits.length : 0) + ' Benefits detected.</span>';
-                                        html += '</div>';
+                                    html += `<p style="font-size:11px; color:#666;">Please review and edit the AI-extracted plans below before saving.</p>`;
+                                    html += `<form id="policyOverrideForm">`;
+                                    
+                                    info.items.forEach((plan, index) => {
+                                        html += `
+                                            <div style="background:#fff; padding:10px; border:1px solid #eee; border-radius:4px; margin-bottom:10px;">
+                                                <div style="display:grid; grid-template-columns: 2fr 1fr; gap:10px;">
+                                                    <div>
+                                                        <label style="font-size:10px; color:#999;">Plan Name</label>
+                                                        <input type="text" id="planName_${index}" value="${plan.name || ''}" style="width:100%; padding:5px; font-size:12px; border:1px solid #ccc; border-radius:3px;">
+                                                    </div>
+                                                    <div>
+                                                        <label style="font-size:10px; color:#999;">Price (R)</label>
+                                                        <input type="number" id="planPrice_${index}" value="${plan.price || 0}" style="width:100%; padding:5px; font-size:12px; border:1px solid #ccc; border-radius:3px;">
+                                                    </div>
+                                                </div>
+                                                <div style="margin-top:5px;">
+                                                    <label style="font-size:10px; color:#999;">Benefits (Comma separated)</label>
+                                                    <input type="text" id="planBenefits_${index}" value="${(plan.benefits || []).join(', ')}" style="width:100%; padding:5px; font-size:11px; border:1px solid #ccc; border-radius:3px; background:#f9f9f9;">
+                                                </div>
+                                            </div>
+                                        `;
                                     });
                                     
-                                    const safeJson = JSON.stringify(info.items).replace(/'/g, "&#39;");
-                                    html += "<button onclick='saveExtractedPolicyToDB(\\"${c.code}\\", " + safeJson + ")' class=\\"btn\\" style=\\"width:100%; background:#27ae60; color:white; font-size:11px;\\">💾 Save Plans</button>";
+                                    html += `<button type="button" onclick="submitOverriddenPolicies('${c.code}', ${info.items.length})" class="btn" style="width:100%; background:#27ae60; color:white; font-size:12px; padding:10px;">💾 Confirm & Save Plans</button>`;
+                                    html += `</form>`;
                                 } 
                                 else if (info.type === 'EVENT') {
-                                    html += '<div style="font-size:12px; margin-bottom:10px;">';
-                                    html += '<strong>' + info.title + '</strong><br>';
-                                    html += '📅 ' + info.date + '<br>📍 ' + info.location;
-                                    html += '</div>';
+                                    html += `<p style="font-size:11px; color:#666;">Please review the AI-extracted event details.</p>`;
+                                    const safeTitle = info.title ? info.title.replace(/"/g, '&quot;') : "";
                                     
-                                    const safeTitle = info.title ? info.title.replace(/'/g, "&#39;") : "";
-                                    html += "<button onclick='saveExtractedEventToDB({ eventName: \\"" + safeTitle + "\\", date: \\"" + info.date + "\\", price: \\"" + (info.price || 0) + "\\", churchCode: \\"${c.code}\\" })' class=\\"btn\\" style=\\"width:100%; background:#2980b9; color:white; font-size:11px;\\">📅 Create Event</button>";
+                                    html += `
+                                        <form id="eventOverrideForm" style="background:#fff; padding:10px; border:1px solid #eee; border-radius:4px;">
+                                            <div style="margin-bottom:8px;">
+                                                <label style="font-size:10px; color:#999;">Event Title</label>
+                                                <input type="text" id="aiEventTitle" value="${safeTitle}" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:3px; box-sizing:border-box;">
+                                            </div>
+                                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:10px;">
+                                                <div>
+                                                    <label style="font-size:10px; color:#999;">Date (YYYY-MM-DD)</label>
+                                                    <input type="text" id="aiEventDate" value="${info.date || ''}" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:3px; box-sizing:border-box;">
+                                                </div>
+                                                <div>
+                                                    <label style="font-size:10px; color:#999;">Ticket Price (R)</label>
+                                                    <input type="number" id="aiEventPrice" value="${info.price || 0}" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:3px; box-sizing:border-box;">
+                                                </div>
+                                            </div>
+                                            <button type="button" onclick="submitOverriddenEvent('${c.code}')" class="btn" style="width:100%; background:#2980b9; color:white; font-size:12px; padding:10px;">📅 Confirm & Create Event</button>
+                                        </form>
+                                    `;
                                 }
                                 else {
-                                    html += '<span style="color:orange">Could not identify structured data.</span>';
+                                    html += '<span style="color:orange">Could not identify structured data. Please try a clearer image.</span>';
                                 }
                                 resultBox.innerHTML = html;
                             } else {
                                 resultBox.innerHTML = '<span style="color:red">AI could not read this image.</span>';
                             }
-                        } catch (e) {
-                            alert("Scan Error: " + e.message);
-                            document.getElementById('aiLoader').style.display = 'none';
+							
+							async function submitOverriddenEvent(churchCode) {
+                        const title = document.getElementById('aiEventTitle').value;
+                        const date = document.getElementById('aiEventDate').value;
+                        const price = document.getElementById('aiEventPrice').value;
+                        
+                        saveExtractedEventToDB({ eventName: title, date: date, price: price, churchCode: churchCode });
+                    }
+
+                    async function submitOverriddenPolicies(churchCode, count) {
+                        const plans = [];
+                        for(let i=0; i<count; i++) {
+                            const name = document.getElementById(`planName_${i}`).value;
+                            const price = document.getElementById(`planPrice_${i}`).value;
+                            const benefitsStr = document.getElementById(`planBenefits_${i}`).value;
+                            // Convert comma string back to array
+                            const benefits = benefitsStr.split(',').map(b => b.trim()).filter(b => b);
+                            
+                            plans.push({ name, price, benefits });
                         }
+                        saveExtractedPolicyToDB(churchCode, plans);
+                    }
+							
                     }
                 </script>
             `;
