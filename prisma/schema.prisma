@@ -151,6 +151,10 @@ model Transaction {
   method          String?  // CARD, EFT, CASH
   description     String?
   date            DateTime @default(now())
+  
+  // 💸 PAYOUT RELATION (To track if this money has been settled)
+  payoutId      Int?
+  payoutBatch   PayoutLog? @relation(fields: [payoutId], references: [id])
 
   // 🛡️ COMPLIANCE RELATION (Links to the AML Risk Engine)
   complianceLog   ComplianceLog?
@@ -523,6 +527,23 @@ model FeeConfiguration {
   
   // Optional: Link to specific churches if you negotiate custom rates
   // churches Church[] 
+}
+
+// ==========================================
+// 💸 PAYOUT & SETTLEMENT LOGGING
+// ==========================================
+model PayoutLog {
+  id          Int      @id @default(autoincrement())
+  churchCode  String   // Which org got paid
+  amount      Float    // The total netSettlement paid out
+  txCount     Int      // How many transactions this covers
+  reference   String   @unique // Generated unique ID (e.g. PAY-AFM-1234)
+  status      String   // 'COMPLETED', 'FAILED'
+  adminId     String   // Who clicked the button
+  createdAt   DateTime @default(now())
+
+  // A payout is made up of many transactions
+  transactions Transaction[]
 }
 
 

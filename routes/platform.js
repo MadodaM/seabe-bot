@@ -94,6 +94,7 @@ function renderAdminPage(title, content, error = null) {
                 <a href="/admin/fica">🛡️ FICA & KYB</a> 
                 <a href="/admin/compliance">⚖️ Compliance & LSO</a>
                 <a href="/admin/global-collections">💰 Global Collections</a>
+				<a href="/admin/payouts">💸 Organization Payouts</a>
                 <a href="/admin/course-builder">🤖 AI Course Builder</a>
                 <a href="/admin/events">🎟️ Events & Projects</a>
                 <a href="/admin/ads">📢 Broadcasts</a>
@@ -1495,6 +1496,190 @@ module.exports = function(app, { prisma }) {
             res.redirect(`/admin/compliance/review/${transactionId}`);
         } catch (e) {
             res.send(renderAdminPage('Error', '', e.message));
+        }
+    });
+
+	// ============================================================
+    // 💸 PAYOUTS & SETTLEMENTS (Priority 2)
+    // ============================================================
+    app.get('/admin/payouts', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+
+        try {
+            // 1. Calculate Owed Settlements (Pending Payouts)
+            // We group by churchCode and sum the netSettlement for all SUCCESS transactions
+            const pendingPayoutsRaw = await prisma.transaction.groupBy({
+                by: ['churchCode'],
+                where: { 
+                    status: 'SUCCESS', // Only successful, un-blocked money
+                    payoutId: null     // Only money that hasn't been paid out yet
+                },
+                _sum: {
+                    amount: true,        // Gross
+                    platformFee: true,   // Seabe Profit
+                    netcashFee: true,    // Gateway Cost
+                    netSettlement: true  // What the church gets
+                },
+                _count: {
+                    id: true // Number of transactions
+                }
+            });
+
+            // Fetch church details to get bank info
+            const pendingPayouts = await Promise.all(pendingPayoutsRaw.map(async (p) => {
+                const church = await prisma.church.findUnique({ where: { code: p.churchCode } });
+                return { ...p, church };
+            }));
+
+            // 2. Fetch History of Completed Payouts
+            const payoutHistory = await prisma.payoutLog.findMany({
+                orderBy: { createdAt: 'desc' },
+                take: 20
+            });
+
+            // Build Pending Table Rows
+            const pendingRows = pendingPayouts.map(p => {
+                const amountOwed = p._sum.netSettlement || 0;
+                if (amountOwed <= 0) return ''; // Skip if nothing owed
+
+                return `
+                    <tr>
+                        <td>
+                            <strong>${p.church?.name || p.churchCode}</strong><br>
+                            <span style="font-size:11px; color:#7f8c8d;">Code: ${p.churchCode} | Bank: ${p.church?.bankName || 'Unknown'} (${p.church?.accountNumber || 'N/A'})</span>
+                        </td>
+                        <td>${p._count.id}</td>
+                        <td>
+                            R${(p._sum.amount || 0).toFixed(2)}<br>
+                            <span style="font-size:10px; color:#c0392b;">- R${(p._sum.platformFee || 0).toFixed(2)} (Seabe)</span><br>
+                            <span style="font-size:10px; color:#c0392b;">- R${(p._sum.netcashFee || 0).toFixed(2)} (Netcash)</span>
+                        </td>
+                        <td style="font-weight:bold; color:#27ae60; font-size:16px;">
+                            R${amountOwed.toFixed(2)}
+                        </td>
+                        <td style="text-align:right;">
+                            <form action="/admin/payouts/process" method="POST" onsubmit="return confirm('Confirm you have EFT\\'d exactly R${amountOwed.toFixed(2)} to ${p.churchCode}?');">
+                                <input type="hidden" name="churchCode" value="${p.churchCode}">
+                                <input type="hidden" name="amount" value="${amountOwed}">
+                                <input type="hidden" name="txCount" value="${p._count.id}">
+                                <button type="submit" class="btn" style="background:#27ae60; color:white; font-size:11px; padding:6px 12px;">Mark as Paid</button>
+                            </form>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            // Build History Table Rows
+            const historyRows = payoutHistory.map(h => `
+                <tr>
+                    <td>${new Date(h.createdAt).toLocaleDateString()}</td>
+                    <td><strong>${h.churchCode}</strong></td>
+                    <td>${h.txCount}</td>
+                    <td style="font-weight:bold;">R${h.amount.toFixed(2)}</td>
+                    <td><span class="tag" style="background:#e8f5e9; color:#27ae60;">${h.status}</span></td>
+                    <td><span style="font-size:11px; font-family:monospace; color:#95a5a6;">${h.reference}</span></td>
+                </tr>
+            `).join('');
+
+            const content = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                    <h2 style="margin:0; color:#2c3e50;">💸 Church Payouts & Settlements</h2>
+                    <span style="font-size:12px; color:#7f8c8d;">PASA Directive 1 (TPPP) Compliant Ledger</span>
+                </div>
+
+                <div class="card-form" style="max-width:100%; margin-bottom:30px; border-top:4px solid #27ae60;">
+                    <h3 style="margin-top:0;">⏳ Pending Settlements</h3>
+                    <p style="font-size:13px; color:#666;">These funds have cleared Netcash and are ready to be transferred to the Church's bank account.</p>
+                    
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Organization</th>
+                                <th>Unpaid TXs</th>
+                                <th>Gross & Fees</th>
+                                <th>Net Payout Owed</th>
+                                <th style="text-align:right;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${pendingRows || '<tr><td colspan="5" style="text-align:center; padding:30px; color:#95a5a6;">No pending payouts. All caught up!</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="card-form" style="max-width:100%;">
+                    <h3 style="margin-top:0;">📜 Recent Payout History</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Org Code</th>
+                                <th>TX Count</th>
+                                <th>Amount Paid</th>
+                                <th>Status</th>
+                                <th>Audit Ref</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${historyRows || '<tr><td colspan="6" style="text-align:center; padding:30px; color:#95a5a6;">No payout history found.</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            res.send(renderAdminPage('Church Payouts', content));
+        } catch (e) {
+            res.send(renderAdminPage('Payouts Error', '', e.message));
+        }
+    });
+
+    app.post('/admin/payouts/process', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        
+        try {
+            const { churchCode, amount, txCount } = req.body;
+            const payoutAmount = parseFloat(amount);
+            const payoutRef = `PAY-${churchCode}-${Date.now().toString().slice(-6)}`;
+
+            // 1. Create the Payout Log (Audit Trail)
+            const payoutLog = await prisma.payoutLog.create({
+                data: {
+                    churchCode: churchCode,
+                    amount: payoutAmount,
+                    txCount: parseInt(txCount),
+                    reference: payoutRef,
+                    status: 'COMPLETED',
+                    adminId: 'admin'
+                }
+            });
+
+            // 2. Mark all currently pending SUCCESS transactions for this church as PAID
+            // We link them to the newly created payoutLog via payoutId
+            await prisma.transaction.updateMany({
+                where: { 
+                    churchCode: churchCode,
+                    status: 'SUCCESS',
+                    payoutId: null
+                },
+                data: {
+                    payoutId: payoutLog.id
+                }
+            });
+
+            // 3. FICA Audit Logging
+            await logAction({
+                actorId: 'admin',
+                role: 'SUPER_ADMIN',
+                action: 'PROCESS_PAYOUT',
+                entity: 'PayoutLog',
+                entityId: String(payoutLog.id),
+                metadata: { churchCode, amount: payoutAmount, reference: payoutRef },
+                ipAddress: req.ip
+            });
+
+            res.redirect('/admin/payouts');
+        } catch (e) {
+            res.send(renderAdminPage('Payout Processing Error', '', e.message));
         }
     });
 
