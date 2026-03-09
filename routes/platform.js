@@ -1620,13 +1620,22 @@ module.exports = function(app, { prisma }) {
             const org = await prisma.church.findUnique({ where: { code: churchCode.toUpperCase() } });
             if (!org) return res.status(404).json({ success: false, error: "Organization not found" });
 
+            // 📅 1. Parse the incoming date (AI usually gives YYYY-MM-DD)
+            // Fallback to today if the AI failed to extract a valid date
+            const eventDate = date && !isNaN(Date.parse(date)) ? new Date(date) : new Date();
+
+            // ➕ 2. Calculate Expiry (Event Date + 1 Day)
+            const calculatedExpiry = new Date(eventDate);
+            calculatedExpiry.setDate(calculatedExpiry.getDate() + 1);
+
             const newEvent = await prisma.event.create({
                 data: {
                     name: name,
                     date: date || "TBD",
                     price: parseFloat(price) || 0,
                     churchCode: org.code,
-                    status: 'Active'
+                    status: 'Active',
+                    expiryDate: calculatedExpiry // 🚀 Now passed correctly as a Date object
                 }
             });
 
