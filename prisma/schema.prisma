@@ -132,20 +132,28 @@ enum OrgType {
 
 // --- FINANCES & CONTENT ---
 model Transaction {
-  id         Int      @id @default(autoincrement())
-  churchCode String
-  church     Church   @relation(fields: [churchCode], references: [code])
-  phone      String // Keep this for easy Twilio replies
-  memberId   Int? // Add this new field
-  member     Member?  @relation(fields: [memberId], references: [id])
-  type       String // OFFERING, TITHE, PREM, TICKET
-  amount     Float
-  platformFee Float?
-  reference  String   @unique
-  status     String // 👈 Is the default 'pending' or 'PENDING'?
-  method     String? // 👈 Add this line!
-  description String?
-  date       DateTime @default(now())
+  id              Int      @id @default(autoincrement())
+  churchCode      String
+  church          Church   @relation(fields: [churchCode], references: [code])
+  phone           String   // Keep this for easy Twilio replies
+  memberId        Int?     // Link to the specific member profile
+  member          Member?  @relation(fields: [memberId], references: [id])
+  type            String   // OFFERING, TITHE, PREM, TICKET
+  
+  // 💰 THE 4-PILLAR LEDGER (For Segregation & Auditing)
+  amount          Float    // 1. Gross Amount (What the user's card was charged, e.g., R150)
+  netcashFee      Float?   // 2. Gateway Fee (What Netcash deducts, e.g., R2.50)
+  platformFee     Float?   // 3. Seabe Fee (Your revenue, e.g., R5.00)
+  netSettlement   Float?   // 4. Church Payout (What physically lands in their bank, e.g., R142.50)
+  
+  reference       String   @unique
+  status          String   @default("PENDING") // 👈 Default set to uppercase PENDING
+  method          String?  // CARD, EFT, CASH
+  description     String?
+  date            DateTime @default(now())
+
+  // 🛡️ COMPLIANCE RELATION (Links to the AML Risk Engine)
+  complianceLog   ComplianceLog?
 }
 
 model Event {
@@ -477,3 +485,24 @@ model ServicePrice {
   description String?
   updatedAt   DateTime @updatedAt
 }
+
+// ==========================================
+// 🛡️ COMPLIANCE & AUDIT MODELS
+// ==========================================
+
+model ComplianceLog {
+  id              String   @id @default(uuid())
+  transactionId   Int      @unique
+  transaction     Transaction @relation(fields: [transactionId], references: [id])
+  riskScore       Float    // 0.0 to 1.0
+  isPepFound      Boolean  @default(false)
+  isSanctionHit   Boolean  @default(false)
+  isCtrTriggered  Boolean  @default(false) // Cash Threshold Report (>R49,999)
+  status          String   // 'CLEARED', 'FLAGGED', 'BLOCKED'
+  adminNotes      String?
+  createdAt       DateTime @default(now())
+}
+
+// (The second AuditLog is gone!)
+
+
