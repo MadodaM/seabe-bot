@@ -1,5 +1,5 @@
 // routes/platform.js
-// VERSION: 12.2 (Fully Expanded, Restored UI, Un-minified)
+// VERSION: 12.3 (Compliance Engine UI Integrated)
 require('dotenv').config();
 
 const fs = require('fs');
@@ -385,6 +385,51 @@ module.exports = function(app, { prisma }) {
                 </div>
 
                 <script>
+                    async function saveExtractedEventToDB(aiExtractedData) {
+                        const payload = {
+                            name: aiExtractedData.eventName, 
+                            date: aiExtractedData.date, 
+                            price: aiExtractedData.price, 
+                            churchCode: aiExtractedData.churchCode 
+                        };
+                        try {
+                            const response = await fetch('/api/admin/vision/save-event', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            });
+                            const result = await response.json();
+                            if (result.success) {
+                                alert(result.message);
+                                window.location.href = \`/admin/\${payload.churchCode}/events\`;
+                            } else {
+                                alert("❌ " + result.error);
+                            }
+                        } catch (error) {
+                            alert("❌ System Error: Could not connect to database.");
+                        }
+                    }
+
+                    async function saveExtractedPolicyToDB(churchCode, plans) {
+                        const payload = { churchCode: churchCode, plans: plans };
+                        try {
+                            const response = await fetch('/api/admin/vision/save-policy', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            });
+                            const result = await response.json();
+                            if (result.success) {
+                                alert(result.message);
+                                window.location.reload();
+                            } else {
+                                alert("❌ " + result.error);
+                            }
+                        } catch (error) {
+                            alert("❌ System Error: Could not connect to database.");
+                        }
+                    }
+
                     async function scanImage() {
                         const fileInput = document.getElementById('scannerInput');
                         const file = fileInput.files[0];
@@ -417,9 +462,8 @@ module.exports = function(app, { prisma }) {
                                         html += '</div>';
                                     });
                                     
-                                    // 🛡️ Safely stringify JSON and use double-quotes for JS concatenation to avoid breaking Node.js
                                     const safeJson = JSON.stringify(info.items).replace(/'/g, "&#39;");
-                                    html += "<button onclick='saveExtractedPolicyToDB(\"${c.code}\", " + safeJson + ")' class=\"btn\" style=\"width:100%; background:#27ae60; color:white; font-size:11px;\">💾 Save Plans</button>";
+                                    html += "<button onclick='saveExtractedPolicyToDB(\\"${c.code}\\", " + safeJson + ")' class=\\"btn\\" style=\\"width:100%; background:#27ae60; color:white; font-size:11px;\\">💾 Save Plans</button>";
                                 } 
                                 else if (info.type === 'EVENT') {
                                     html += '<div style="font-size:12px; margin-bottom:10px;">';
@@ -427,9 +471,8 @@ module.exports = function(app, { prisma }) {
                                     html += '📅 ' + info.date + '<br>📍 ' + info.location;
                                     html += '</div>';
                                     
-                                    // 🛡️ Safely concatenate frontend variables while allowing Node to parse ${c.code}
                                     const safeTitle = info.title ? info.title.replace(/'/g, "&#39;") : "";
-                                    html += "<button onclick='saveExtractedEventToDB({ eventName: \"" + safeTitle + "\", date: \"" + info.date + "\", price: \"" + (info.price || 0) + "\", churchCode: \"${c.code}\" })' class=\"btn\" style=\"width:100%; background:#2980b9; color:white; font-size:11px;\">📅 Create Event</button>";
+                                    html += "<button onclick='saveExtractedEventToDB({ eventName: \\"" + safeTitle + "\\", date: \\"" + info.date + "\\", price: \\"" + (info.price || 0) + "\\", churchCode: \\"${c.code}\\" })' class=\\"btn\\" style=\\"width:100%; background:#2980b9; color:white; font-size:11px;\\">📅 Create Event</button>";
                                 }
                                 else {
                                     html += '<span style="color:orange">Could not identify structured data.</span>';
@@ -487,65 +530,8 @@ module.exports = function(app, { prisma }) {
             res.status(500).json({ success: false, error: error.message });
         }
     });
-	
-	// ============================================================
-    // 💾 API: SAVE AI-SCANNED EVENT
-    // ============================================================
-    app.post('/api/admin/vision/save-event', express.json(), async (req, res) => {
-        try {
-            const { name, date, price, churchCode } = req.body;
-            if (!name || !churchCode) return res.status(400).json({ success: false, error: "Missing event name or org code." });
 
-            const org = await prisma.church.findUnique({ where: { code: churchCode.toUpperCase() } });
-            if (!org) return res.status(404).json({ success: false, error: "Organization not found" });
 
-            const newEvent = await prisma.event.create({
-                data: {
-                    name: name,
-                    date: date || "TBD",
-                    price: parseFloat(price) || 0,
-                    churchCode: org.code,
-                    status: 'Active'
-                }
-            });
-
-            res.json({ success: true, message: "✅ Event successfully saved to database!", event: newEvent });
-        } catch (error) {
-            console.error("AI Event Save Error:", error);
-            res.status(500).json({ success: false, error: error.message });
-        }
-    });
-
-    // ============================================================
-    // 💾 API: SAVE AI-SCANNED POLICIES/PLANS
-    // ============================================================
-    app.post('/api/admin/vision/save-policy', express.json(), async (req, res) => {
-        try {
-            const { churchCode, plans } = req.body;
-            if (!churchCode || !plans || plans.length === 0) return res.status(400).json({ success: false, error: "Missing policy data." });
-
-            const org = await prisma.church.findUnique({ where: { code: churchCode.toUpperCase() } });
-            if (!org) return res.status(404).json({ success: false, error: "Organization not found" });
-
-            // Loop through the AI-extracted plans and create them in the DB
-            for (const plan of plans) {
-                await prisma.policyPlan.create({
-                    data: {
-                        name: plan.name,
-                        price: parseFloat(plan.price) || 0,
-                        churchId: org.id,
-                        benefits: plan.benefits ? plan.benefits.join(', ') : '' 
-                    }
-                });
-            }
-
-            res.json({ success: true, message: `✅ Successfully saved ${plans.length} policy plans!` });
-        } catch (error) {
-            console.error("AI Policy Save Error:", error);
-            res.status(500).json({ success: false, error: error.message });
-        }
-    });
-	
     // ============================================================
     // 🎓 AI COURSE BUILDER (LMS)
     // ============================================================
@@ -1182,8 +1168,8 @@ module.exports = function(app, { prisma }) {
             res.send(renderAdminPage('Global Debt Stats', content));
         } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
-	
-	// ============================================================
+    
+    // ============================================================
     // 🌍 GLOBAL RADAR
     // ============================================================
     app.get('/admin/global-radar', async (req, res) => {
@@ -1225,6 +1211,28 @@ module.exports = function(app, { prisma }) {
             
             const goalValProg = Math.min((totalVolume / 50000000) * 100, 100).toFixed(1);
             const goalCntProg = Math.min((totalTx / 50000) * 100, 100).toFixed(1);
+
+            // 🚀 FETCH TRANSACTIONS FOR THE COMPLIANCE TABLE HERE
+            const recentTxs = await prisma.transaction.findMany({
+                orderBy: { date: 'desc' },
+                take: 50,
+                include: { complianceLog: true }
+            });
+
+            const txRowsHtml = recentTxs.map(t => {
+                const riskColor = t.complianceLog?.status === 'FLAGGED' ? '#e74c3c' : (t.complianceLog?.status === 'CLEARED' ? '#27ae60' : '#f39c12');
+                const riskLabel = t.complianceLog?.status || 'UNCHECKED';
+
+                return `
+                    <tr>
+                        <td>${t.churchCode}</td>
+                        <td>R${t.amount}</td>
+                        <td><span class="badge" style="background:${riskColor};">${riskLabel}</span></td>
+                        <td>${new Date(t.date).toLocaleString()}</td>
+                        <td><a href="/admin/compliance/review/${t.id}" class="btn-del">Review</a></td>
+                    </tr>
+                `;
+            }).join('');
 
             const content = `
                 <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:20px; margin-bottom: 30px;">
@@ -1294,6 +1302,25 @@ module.exports = function(app, { prisma }) {
                             <div style="background:#27ae60; width:${goalCntProg}%; height:100%; transition:1.5s;"></div>
                         </div>
                     </div>
+                </div>
+                
+                <!-- 🚀 MOVED THE ORPHANED CODE HERE -->
+                <div class="card-form" style="max-width:100%;">
+                    <h3 style="margin-top:0;">🛡️ Recent Transactions (Real-Time Screening)</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Org Code</th>
+                                <th>Amount</th>
+                                <th>Risk Status</th>
+                                <th>Date</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${txRowsHtml.length > 0 ? txRowsHtml : '<tr><td colspan="5" style="text-align:center;">No recent transactions.</td></tr>'}
+                        </tbody>
+                    </table>
                 </div>
             `;
 
@@ -1557,23 +1584,63 @@ module.exports = function(app, { prisma }) {
             res.send(renderAdminPage('Manage Users', content));
         } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
-	
-// Inside your renderAdminPage logic for Transactions/Collections
-// Map your transactions to include their compliance status
 
-const rows = transactions.map(t => {
-    const riskColor = t.complianceLog?.status === 'FLAGGED' ? '#e74c3c' : '#27ae60';
-    const riskLabel = t.complianceLog?.status || 'UNCHECKED';
+    // ============================================================
+    // 💾 API: SAVE AI-SCANNED EVENT
+    // ============================================================
+    app.post('/api/admin/vision/save-event', express.json(), async (req, res) => {
+        try {
+            const { name, date, price, churchCode } = req.body;
+            if (!name || !churchCode) return res.status(400).json({ success: false, error: "Missing event name or org code." });
 
-    return `
-        <tr>
-            <td>${t.churchCode}</td>
-            <td>R${t.amount}</td>
-            <td><span class="badge" style="background:${riskColor}">${riskLabel}</span></td>
-            <td>${new Date(t.date).toLocaleString()}</td>
-            <td><a href="/admin/compliance/review/${t.id}" class="btn-del">Review</a></td>
-        </tr>
-    `;
-}).join('');
+            const org = await prisma.church.findUnique({ where: { code: churchCode.toUpperCase() } });
+            if (!org) return res.status(404).json({ success: false, error: "Organization not found" });
+
+            const newEvent = await prisma.event.create({
+                data: {
+                    name: name,
+                    date: date || "TBD",
+                    price: parseFloat(price) || 0,
+                    churchCode: org.code,
+                    status: 'Active'
+                }
+            });
+
+            res.json({ success: true, message: "✅ Event successfully saved to database!", event: newEvent });
+        } catch (error) {
+            console.error("AI Event Save Error:", error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // ============================================================
+    // 💾 API: SAVE AI-SCANNED POLICIES/PLANS
+    // ============================================================
+    app.post('/api/admin/vision/save-policy', express.json(), async (req, res) => {
+        try {
+            const { churchCode, plans } = req.body;
+            if (!churchCode || !plans || plans.length === 0) return res.status(400).json({ success: false, error: "Missing policy data." });
+
+            const org = await prisma.church.findUnique({ where: { code: churchCode.toUpperCase() } });
+            if (!org) return res.status(404).json({ success: false, error: "Organization not found" });
+
+            // Loop through the AI-extracted plans and create them in the DB
+            for (const plan of plans) {
+                await prisma.policyPlan.create({
+                    data: {
+                        name: plan.name,
+                        price: parseFloat(plan.price) || 0,
+                        churchId: org.id,
+                        benefits: plan.benefits ? plan.benefits.join(', ') : '' 
+                    }
+                });
+            }
+
+            res.json({ success: true, message: `✅ Successfully saved ${plans.length} policy plans!` });
+        } catch (error) {
+            console.error("AI Policy Save Error:", error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
 
 };
