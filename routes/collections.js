@@ -1,3 +1,4 @@
+// routes/collections.js
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -9,7 +10,7 @@ const { sendWhatsApp } = require('../services/whatsapp');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient(); // ✅ Centralized DB connection
 
-// 🚀 FIX: Removed Paystack, replaced with Netcash
+// 🚀 Netcash & Compliance integration
 const { createPaymentLink } = require('../services/netcash'); 
 
 // 1. Configure Uploads
@@ -141,15 +142,25 @@ module.exports = (app) => {
                 // 💳 1. Call your new Netcash Service
                 const uniqueRef = `COL-${debt.reference}-${Date.now().toString().slice(-4)}`; 
                 
-                // 🚀 FIX: createPaymentLink for Netcash only needs: amount, ref, phone, orgName
+                // 🛡️ CRITICAL FIX: Pass the email (empty string) and churchCode (req.org.code) 
+                // so the Velocity Engine and Ledger know who this belongs to!
                 let payLink = await createPaymentLink(
                     debt.amount, 
                     uniqueRef, 
                     debt.phone, 
-                    req.org.name
+                    req.org.name,
+                    '', // email 
+                    req.org.code // 👈 Needed for FICA Compliance Limits
                 );
                 
-                // Fallback just in case Netcash API fails
+                // 🛡️ RISK ENGINE CHECK: Did the Velocity engine block this link generation?
+                if (payLink && payLink.startsWith('BLOCKED_RISK')) {
+                    console.warn(`[COMPLIANCE] Skipping debt blast for ${debt.phone} - FICA Velocity limit exceeded.`);
+                    // We skip sending the message and leave the debt as PENDING for tomorrow
+                    continue; 
+                }
+
+                // Fallback just in case Netcash API fails (and it wasn't a risk block)
                 const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
                 if (!payLink) payLink = `${host}/link/${req.params.code}`;
 
@@ -168,7 +179,7 @@ module.exports = (app) => {
                 // 6. Update the database status to match UI standards!
                 await prisma.collection.update({
                     where: { id: debt.id },
-                    data: { status: 'REMINDER_1' } // 🚀 FIX: Changed from 'SENT' so UI turns Yellow
+                    data: { status: 'REMINDER_1' } 
                 });
             } catch (error) {
                 console.error(`Error processing debt for ${debt.phone}:`, error);
