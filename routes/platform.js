@@ -12,6 +12,7 @@ const { extractDataFromImage } = require('../services/visionExtractor');
 const { provisionNetCashAccount } = require('../services/netcashProvisioner');
 const { generatePaymentQR } = require('../services/paymentQrgen');
 const { logAction } = require('../services/audit');
+const { sendRemittanceAdvice } = require('../services/remittance');
 
 const upload = multer({ dest: 'uploads/' });
 
@@ -1397,6 +1398,8 @@ module.exports = function(app, { prisma }) {
                 ipAddress: req.ip
             });
 
+			sendRemittanceAdvice(payoutLog.id);
+			
             res.redirect('/admin/payouts');
         } catch (e) {
             res.send(renderAdminPage('Payout Processing Error', '', e.message));
