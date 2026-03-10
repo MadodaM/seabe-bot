@@ -1109,7 +1109,7 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-app.post('/api/prospect/admin/approve-level-1', async (req, res) => {
+	app.post('/api/prospect/admin/approve-level-1', async (req, res) => {
         if (!isAuthenticated(req)) return res.status(401).json({ error: "Unauthorized" });
         
         try {
@@ -1123,23 +1123,19 @@ app.post('/api/prospect/admin/approve-level-1', async (req, res) => {
                 data: { ficaStatus: 'AWAITING_LEVEL_2', setupToken: token } 
             });
 
-            // 3. Trigger WhatsApp Onboarding Blast via Twilio
-            const twilio = require('twilio');
-            const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-            
-            let targetPhone = org.adminPhone;
-            if (targetPhone && targetPhone.startsWith('0')) targetPhone = '27' + targetPhone.substring(1);
-            
+            // 3. Format the setup link
             const setupLink = `https://${req.get('host')}/org/setup/${token}`;
+            const msg = `🟢 *Seabe Digital KYC*\n\nCongratulations! ${org.name} has passed Level 1 Compliance.\n\nTo securely access your Customer Admin Dashboard, please click below to set your password and 2FA:\n\n🔗 ${setupLink}`;
+
+            // 4. Clean the phone number and send using your central WhatsApp service
+            let cleanPhone = org.adminPhone.replace(/\D/g, '');
+            if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
             
-            await client.messages.create({
-                from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
-                to: `whatsapp:+${targetPhone.replace('+', '')}`,
-                body: `🟢 *Seabe Digital KYC*\n\nCongratulations! ${org.name} has passed Level 1 Compliance.\n\nTo securely access your Customer Admin Dashboard, please click below to set your password and 2FA:\n\n🔗 ${setupLink}`
-            });
+            await sendWhatsApp(cleanPhone, msg);
 
             res.json({ message: "Level 1 Approved. Onboarding WhatsApp sent to Customer Admin." });
         } catch (e) { 
+            console.error("KYC Approval Error:", e);
             res.status(500).json({ error: e.message }); 
         }
     });
