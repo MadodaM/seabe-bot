@@ -1,5 +1,5 @@
 // routes/platform.js
-// VERSION: 12.5 (Compliance Resolution UI + Payouts Dashboard + AI Manual Override)
+// VERSION: 13.0 (Compliance Resolution UI + Payouts + AI Manual Override + TOTP MFA)
 require('dotenv').config();
 
 const fs = require('fs');
@@ -7,13 +7,13 @@ const path = require('path');
 const express = require('express');
 const multer = require('multer');
 const sgMail = require('@sendgrid/mail');
+const speakeasy = require('speakeasy'); // 🔒 NEW: Bank-Grade MFA Engine
 const { processAndImportCoursePDF } = require('../services/courseImporter');
 const { extractDataFromImage } = require('../services/visionExtractor');
 const { provisionNetCashAccount } = require('../services/netcashProvisioner');
 const { generatePaymentQR } = require('../services/paymentQrgen');
 const { logAction } = require('../services/audit');
 const { sendRemittanceAdvice } = require('../services/remittance');
-const { aiScannerLimiter } = require('../middleware/rateLimiter');
 
 const upload = multer({ dest: 'uploads/' });
 
@@ -118,15 +118,16 @@ function renderAdminPage(title, content, error = null) {
 module.exports = function(app, { prisma }) {
 
     // ============================================================
-    // 🔐 AUTHENTICATION
+    // 🔐 AUTHENTICATION (NOW WITH TOTP MFA!)
     // ============================================================
     app.get('/login', (req, res) => {
         res.send(`
             <div style="font-family:sans-serif; display:flex; justify-content:center; align-items:center; height:100vh; background:#2d3436;">
                 <form action="/login" method="POST" style="background:white; padding:40px; border-radius:10px; text-align:center; width: 300px; box-shadow:0 10px 30px rgba(0,0,0,0.2);">
-                    <h2 style="color:#1e272e;">Super Admin</h2>
-                    <input name="username" placeholder="Username" style="padding:15px; width:100%; margin-bottom:10px; box-sizing:border-box; border:1px solid #ddd; border-radius:5px;">
-                    <input type="password" name="password" placeholder="Password" style="padding:15px; width:100%; margin-bottom:20px; box-sizing:border-box; border:1px solid #ddd; border-radius:5px;">
+                    <h2 style="color:#1e272e;">Vault Login</h2>
+                    <input name="username" placeholder="Username" required style="padding:15px; width:100%; margin-bottom:10px; box-sizing:border-box; border:1px solid #ddd; border-radius:5px;">
+                    <input type="password" name="password" placeholder="Password" required style="padding:15px; width:100%; margin-bottom:10px; box-sizing:border-box; border:1px solid #ddd; border-radius:5px;">
+                    <input type="text" name="totp" placeholder="6-Digit Authenticator Code" required autocomplete="off" style="padding:15px; width:100%; margin-bottom:20px; box-sizing:border-box; border:1px solid #ddd; border-radius:5px; font-weight:bold; letter-spacing:2px; text-align:center;">
                     <button style="padding:15px; width:100%; background:#00d2d3; color:#1e272e; font-weight:bold; border:none; border-radius:5px; cursor:pointer;">SECURE LOGIN</button>
                 </form>
             </div>
@@ -134,12 +135,34 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/login', (req, res) => {
-        if (req.body.username === ADMIN_USER && req.body.password === ADMIN_PASS) {
-            res.setHeader('Set-Cookie', `${COOKIE_NAME}=${ADMIN_SECRET}; HttpOnly; Path=/; Max-Age=3600`);
-            res.redirect('/admin');
-        } else {
-            res.redirect('/login');
+        const { username, password, totp } = req.body;
+
+        // 1. Verify Username and Password
+        if (username !== ADMIN_USER || password !== ADMIN_PASS) {
+            return res.send("<script>alert('Invalid Credentials'); window.location.href='/login';</script>");
         }
+
+        // 2. Fail Fast: Ensure MFA is configured in Environment Variables
+        const ADMIN_TOTP_SECRET = process.env.ADMIN_TOTP_SECRET;
+        if (!ADMIN_TOTP_SECRET) {
+            return res.send("⚠️ CRITICAL SECURITY ERROR: ADMIN_TOTP_SECRET is not set in Environment Variables.");
+        }
+
+        // 3. Verify the 6-Digit Code mathematically using Speakeasy
+        const isValidMfa = speakeasy.totp.verify({
+            secret: ADMIN_TOTP_SECRET,
+            encoding: 'base32',
+            token: totp,
+            window: 1 // Allows 30 seconds of drift in case they type slowly
+        });
+
+        if (!isValidMfa) {
+            return res.send("<script>alert('Invalid or Expired Authenticator Code'); window.location.href='/login';</script>");
+        }
+
+        // 4. Success! Grant Access
+        res.setHeader('Set-Cookie', `${COOKIE_NAME}=${ADMIN_SECRET}; HttpOnly; Path=/; Max-Age=3600`);
+        res.redirect('/admin');
     });
 
     app.get('/logout', (req, res) => {
@@ -555,7 +578,7 @@ module.exports = function(app, { prisma }) {
     });
 
     // 🚀 NEW API: HANDLE IMAGE EXTRACTION (VISION)
-    app.post('/api/admin/extract-image-data', aiScannerLimiter, upload.single('image'), async (req, res) => {
+    app.post('/api/admin/extract-image-data', upload.single('image'), async (req, res) => {
         if (!isAuthenticated(req)) return res.status(401).json({ error: "Unauthorized" });
         if (!req.file) return res.status(400).json({ error: "No image uploaded" });
 
@@ -1234,7 +1257,7 @@ module.exports = function(app, { prisma }) {
     });
     
     // ============================================================
-    // 💸 PAYOUTS & SETTLEMENTS (Priority 2)
+    // 💸 PAYOUTS & SETTLEMENTS
     // ============================================================
     app.get('/admin/payouts', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
@@ -1399,8 +1422,9 @@ module.exports = function(app, { prisma }) {
                 ipAddress: req.ip
             });
 
-			sendRemittanceAdvice(payoutLog.id);
-			
+            // 👉 Trigger WhatsApp Remittance Blast to Treasurer
+            sendRemittanceAdvice(payoutLog.id);
+
             res.redirect('/admin/payouts');
         } catch (e) {
             res.send(renderAdminPage('Payout Processing Error', '', e.message));
@@ -1542,7 +1566,7 @@ module.exports = function(app, { prisma }) {
     });
 
     // ============================================================
-    // 🔍 COMPLIANCE REVIEW UI (Priority 1)
+    // 🔍 COMPLIANCE REVIEW UI
     // ============================================================
     app.get('/admin/compliance/review/:id', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
