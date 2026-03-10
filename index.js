@@ -12,6 +12,7 @@ const prisma = require('./services/db');
 //const { PrismaClient } = require('@prisma/client');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
+const { globalLimiter } = require('./middleware/rateLimiter');
 
 // Cron Services
 const { startCronJobs } = require('./services/scheduler');
