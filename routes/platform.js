@@ -378,6 +378,12 @@ module.exports = function(app, { prisma }) {
                             
                             <button class="btn btn-primary" style="padding:12px; width:100%;">Update Organization Details</button>
                         </form>
+						<!-- 🔒 NEW SECURITY & ACCESS CARD -->
+                        <div class="card-form" style="border-top: 5px solid #e74c3c; margin-top: 20px; max-width:100%;">
+                            <h3 style="margin-top:0; color:#c0392b;">🔒 Security & Access</h3>
+                            <p style="font-size:12px; color:#7f8c8d;">Resetting access will wipe the client's current password and MFA, and send them a new WhatsApp onboarding link.</p>
+                            <button type="button" onclick="resetClientAccess('${c.code}')" class="btn btn-danger" style="width:100%; padding:12px;">Reset Password & MFA</button>
+                        </div>
                     </div>
 
                     <!-- RIGHT: TOOLS (QR & SCANNERS) -->
@@ -414,6 +420,26 @@ module.exports = function(app, { prisma }) {
                 </div>
 
                 <script>
+				
+					async function resetClientAccess(code) {
+                        if(!confirm("⚠️ Are you sure? This will lock the client out until they complete the new MFA setup.")) return;
+                        try {
+                            const res = await fetch('/api/admin/churches/reset-access', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ code: code })
+                            });
+                            const data = await res.json();
+                            if(data.success) {
+                                alert("✅ Success! " + data.message);
+                            } else {
+                                alert("❌ Error: " + data.error);
+                            }
+                        } catch(e) {
+                            alert("Network error.");
+                        }
+                    }
+					
                     async function submitOverriddenEvent(churchCode) {
                         const title = document.getElementById('aiEventTitle').value;
                         const date = document.getElementById('aiEventDate').value;
@@ -2041,6 +2067,48 @@ module.exports = function(app, { prisma }) {
             res.json({ success: true, message: `✅ Successfully saved ${plans.length} policy plans!` });
         } catch (error) {
             console.error("AI Policy Save Error:", error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+	
+	// ============================================================
+    // 🔒 API: RESET CLIENT PASSWORD & MFA
+    // ============================================================
+    app.post('/api/admin/churches/reset-access', express.json(), async (req, res) => {
+        if (!isAuthenticated(req)) return res.status(401).json({ error: "Unauthorized" });
+
+        try {
+            const { code } = req.body;
+            const org = await prisma.church.findUnique({ where: { code } });
+            if (!org) return res.status(404).json({ success: false, error: "Organization not found" });
+
+            // 1. Generate new setup token
+            const crypto = require('crypto');
+            const token = crypto.randomBytes(20).toString('hex');
+
+            // 2. Wipe old credentials and lock them out until they setup again
+            await prisma.church.update({
+                where: { code },
+                data: {
+                    password: null,
+                    mfaSecret: null,
+                    setupToken: token
+                }
+            });
+
+            // 3. Send WhatsApp onboarding blast
+            const setupLink = `https://${req.get('host')}/org/setup/${token}`;
+            const msg = `⚠️ *Seabe Digital Security Alert*\n\nYour Admin access for ${org.name} has been reset by the Super Admin.\n\nPlease click below to set up a new password and re-link your Google Authenticator 2FA:\n\n🔗 ${setupLink}`;
+
+            if (org.adminPhone) {
+                let cleanPhone = org.adminPhone.replace(/\D/g, '');
+                if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+                await sendWhatsApp(cleanPhone, msg);
+            }
+
+            res.json({ success: true, message: "Access wiped. New setup link sent via WhatsApp!" });
+        } catch (error) {
+            console.error("Reset Access Error:", error);
             res.status(500).json({ success: false, error: error.message });
         }
     });
