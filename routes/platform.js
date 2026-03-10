@@ -1109,10 +1109,10 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-    app.post('/api/prospect/admin/approve-level-1', async (req, res) => {
+app.post('/api/prospect/admin/approve-level-1', async (req, res) => {
         if (!isAuthenticated(req)) return res.status(401).json({ error: "Unauthorized" });
+        
         try {
-			try {
             // 1. Generate a secure, one-time setup token
             const crypto = require('crypto');
             const token = crypto.randomBytes(20).toString('hex');
@@ -1142,13 +1142,6 @@ module.exports = function(app, { prisma }) {
         } catch (e) { 
             res.status(500).json({ error: e.message }); 
         }
-			
-            const org = await prisma.church.update({ 
-                where: { id: parseInt(req.body.churchId) }, 
-                data: { ficaStatus: 'AWAITING_LEVEL_2' } 
-            });
-            res.json({ message: "Level 1 Approved." });
-        } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
     app.post('/api/prospect/admin/approve-final', async (req, res) => {
