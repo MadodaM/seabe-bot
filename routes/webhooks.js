@@ -4,7 +4,7 @@
 const express = require('express');
 const router = express.Router();
 //const { PrismaClient } = require('@prisma/client');
-const prisma = require('./services/db');
+const prisma = require('../services/db');
 //const prisma = new PrismaClient();
 const axios = require('axios');
 
