@@ -30,6 +30,7 @@ const mandatesRouter = require('./routes/mandates');
 const webhookRouter = require('./routes/webhooks'); // Yes, this is duplicated in imports but used differently below
 
 const app = express();
+app.use(globalLimiter); 
 //const prisma = new PrismaClient();
 const upload = multer({ dest: 'uploads/' }); 
 

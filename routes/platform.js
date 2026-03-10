@@ -13,6 +13,7 @@ const { provisionNetCashAccount } = require('../services/netcashProvisioner');
 const { generatePaymentQR } = require('../services/paymentQrgen');
 const { logAction } = require('../services/audit');
 const { sendRemittanceAdvice } = require('../services/remittance');
+const { aiScannerLimiter } = require('../middleware/rateLimiter');
 
 const upload = multer({ dest: 'uploads/' });
 
@@ -554,7 +555,7 @@ module.exports = function(app, { prisma }) {
     });
 
     // 🚀 NEW API: HANDLE IMAGE EXTRACTION (VISION)
-    app.post('/api/admin/extract-image-data', upload.single('image'), async (req, res) => {
+    app.post('/api/admin/extract-image-data', aiScannerLimiter, upload.single('image'), async (req, res) => {
         if (!isAuthenticated(req)) return res.status(401).json({ error: "Unauthorized" });
         if (!req.file) return res.status(400).json({ error: "No image uploaded" });
 
