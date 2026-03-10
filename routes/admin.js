@@ -60,6 +60,7 @@ const renderPage = (org, activeTab, content) => {
     <body><div class="header"><b>${org.name} (${org.type})</b><a href="/admin/${org.code}/logout" style="color:red;font-size:12px;">Logout</a></div>
     <div class="nav">
         <a href="/admin/${org.code}/dashboard" style="${navStyle('dashboard')}">📊 Dashboard</a>
+        <a href="/admin/${org.code}/transactions" style="${navStyle('transactions')}">🧾 Ledger</a>
         ${verifyTab}
         <a href="/admin/${org.code}/members" style="${navStyle('members')}">👥 Members</a>
         ${claimsTab}
@@ -378,15 +379,166 @@ module.exports = (app, { prisma }) => {
         }
     });
 
-    // --- DASHBOARD ---
+    // ============================================================
+    // 📊 DASHBOARD & WALLET SUMMARY (REPLACED)
+    // ============================================================
     router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
-        const start = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-        const tx = await prisma.transaction.findMany({ 
-            where: { churchCode: req.org.code, status: 'SUCCESS', date: { gte: start } }, 
-            orderBy: { id: 'desc' } 
-        });
-        const total = tx.reduce((s, t) => s + parseFloat(t.amount), 0);
-        res.send(renderPage(req.org, 'dashboard', `<div class="card"><h3>💰 Collected (This Month)</h3><h1>R${total.toLocaleString()}</h1></div><div class="card"><h3>Recent Activity</h3><table>${tx.slice(0, 5).map(t => `<tr><td>${t.phone}</td><td>${t.type}</td><td>R${t.amount}</td></tr>`).join('')}</table></div>`));
+        try {
+            const org = req.org;
+
+            // 1. Calculate Pending Wallet (Cleared Netcash, waiting for Seabe payout)
+            const pendingStats = await prisma.transaction.aggregate({
+                where: { churchCode: org.code, status: 'SUCCESS', payoutId: null },
+                _sum: { netSettlement: true, amount: true, platformFee: true, netcashFee: true },
+                _count: { id: true }
+            });
+
+            // 2. Calculate Lifetime Settled (Money already paid into their bank account)
+            const settledStats = await prisma.transaction.aggregate({
+                where: { churchCode: org.code, status: 'SUCCESS', payoutId: { not: null } },
+                _sum: { netSettlement: true },
+                _count: { id: true }
+            });
+
+            const pendingGross = pendingStats._sum.amount || 0;
+            const pendingFees = (pendingStats._sum.platformFee || 0) + (pendingStats._sum.netcashFee || 0);
+            const pendingNet = pendingStats._sum.netSettlement || 0;
+            const totalSettled = settledStats._sum.netSettlement || 0;
+
+            // 3. Get Recent Transactions
+            const recentTxs = await prisma.transaction.findMany({
+                where: { churchCode: org.code },
+                orderBy: { date: 'desc' },
+                take: 10,
+                include: { member: true }
+            });
+
+            const txRows = recentTxs.map(tx => `
+                <tr>
+                    <td>${new Date(tx.date).toLocaleDateString()}</td>
+                    <td>${tx.member ? tx.member.firstName + ' ' + tx.member.lastName : 'Walk-in'}</td>
+                    <td>R${tx.amount.toFixed(2)}</td>
+                    <td style="color:#27ae60; font-weight:bold;">+ R${(tx.netSettlement || 0).toFixed(2)}</td>
+                    <td>${tx.payoutId ? '<span class="badge" style="background:#27ae60;">Settled</span>' : '<span class="badge" style="background:#e67e22;">Pending</span>'}</td>
+                </tr>
+            `).join('');
+
+            const content = `
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:20px; margin-bottom:30px;">
+                    <div class="card" style="border-top:4px solid #3498db; margin-bottom:0;">
+                        <div style="font-size:11px; color:#7f8c8d; text-transform:uppercase; font-weight:bold; margin-bottom:5px;">Available Balance (Pending Payout)</div>
+                        <h2 style="font-size:24px; color:#2c3e50; margin:0;">R ${pendingNet.toFixed(2)}</h2>
+                        <div style="font-size:11px; color:#7f8c8d; margin-top:8px;">Gross: R${pendingGross.toFixed(2)} | Fees: -R${pendingFees.toFixed(2)}</div>
+                    </div>
+                    <div class="card" style="border-top:4px solid #2ecc71; margin-bottom:0;">
+                        <div style="font-size:11px; color:#7f8c8d; text-transform:uppercase; font-weight:bold; margin-bottom:5px;">Lifetime Settled (Paid Out)</div>
+                        <h2 style="font-size:24px; color:#2c3e50; margin:0;">R ${totalSettled.toFixed(2)}</h2>
+                        <div style="font-size:11px; color:#27ae60; margin-top:8px;">✅ Transferred to Bank Account</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                        <h3 style="margin:0; color:#2c3e50;">Recent Ledger Activity</h3>
+                        <a href="/admin/${org.code}/transactions" style="font-size:12px; color:#3498db; text-decoration:none; font-weight:bold;">View All &rarr;</a>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Payer</th>
+                                <th>Gross Paid</th>
+                                <th>Net Received</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${txRows || '<tr><td colspan="5" style="text-align:center; padding:20px; color:#95a5a6;">No transactions yet.</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            res.send(renderPage(req.org, 'dashboard', content));
+        } catch (e) {
+            res.status(500).send("Error loading dashboard: " + e.message);
+        }
+    });
+
+    // ============================================================
+    // 🧾 TRANSACTION LEDGER (NEW ADDITION)
+    // ============================================================
+    router.get('/admin/:code/transactions', checkSession, async (req, res) => {
+        try {
+            const org = req.org;
+            const transactions = await prisma.transaction.findMany({
+                where: { churchCode: org.code },
+                orderBy: { date: 'desc' },
+                take: 100,
+                include: { member: true, payoutBatch: true }
+            });
+
+            const rows = transactions.map(tx => {
+                const isSuccess = tx.status === 'SUCCESS';
+                const totalFees = (tx.platformFee || 0) + (tx.netcashFee || 0);
+                const feeText = isSuccess ? `- R${totalFees.toFixed(2)} fees` : 'Failed';
+                const netText = isSuccess ? `R${(tx.netSettlement || 0).toFixed(2)}` : 'R0.00';
+                
+                let settlementStatus = '<span class="badge" style="background:#eee; color:#666;">N/A</span>';
+                if (isSuccess) {
+                    settlementStatus = tx.payoutId 
+                        ? `<span style="color:#27ae60; font-weight:bold; font-size:12px;">✅ Paid (Batch #${tx.payoutId})</span>` 
+                        : `<span style="color:#e67e22; font-weight:bold; font-size:12px;">⏳ Pending Payout</span>`;
+                }
+
+                let statusBadgeColor = isSuccess ? '#27ae60' : '#e74c3c';
+                if(tx.status === 'PENDING') statusBadgeColor = '#f39c12';
+
+                return `
+                    <tr>
+                        <td>
+                            <span style="font-family:monospace; font-size:11px; color:#7f8c8d;">${tx.reference}</span><br>
+                            ${new Date(tx.date).toLocaleString()}
+                        </td>
+                        <td>
+                            <strong>${tx.member ? tx.member.firstName + ' ' + tx.member.lastName : 'Walk-in / Link'}</strong><br>
+                            <span style="font-size:11px; color:#95a5a6;">${tx.phone || 'No Phone'}</span>
+                        </td>
+                        <td>
+                            <strong>R${tx.amount.toFixed(2)}</strong><br>
+                            <span style="font-size:10px; color:#c0392b;">${feeText}</span>
+                        </td>
+                        <td style="color:${isSuccess ? '#27ae60' : '#95a5a6'}; font-weight:bold;">${netText}</td>
+                        <td><span class="badge" style="background:${statusBadgeColor};">${tx.status}</span></td>
+                        <td>${settlementStatus}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            const content = `
+                <div class="card" style="border-top:4px solid #34db98;">
+                    <h3 style="margin-top:0;">Master Ledger</h3>
+                    <p style="font-size:12px; color:#7f8c8d; margin-bottom:20px;">Detailed breakdown of all gross payments, deducted gateway/platform fees, and your final Net Settlement.</p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Ref & Date</th>
+                                <th>Payer Details</th>
+                                <th>Gross & Fees</th>
+                                <th>Net Settlement</th>
+                                <th>Payment Status</th>
+                                <th>Payout Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows || '<tr><td colspan="6" style="text-align:center; padding:30px;">No transactions recorded.</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            res.send(renderPage(req.org, 'transactions', content));
+        } catch (e) {
+            res.status(500).send("Error loading transactions: " + e.message);
+        }
     });
 
     // ============================================================
@@ -1347,7 +1499,7 @@ module.exports = (app, { prisma }) => {
                         <div style="display:flex; gap:10px; margin-top:10px;">
                             <button name="action" value="approve" class="btn" style="flex:1; background:#27ae60; padding:15px; font-size:16px;">✅ Approve KYC</button> 
                             <button name="action" value="reject" class="btn" style="flex:1; background:#e74c3c; padding:15px; font-size:16px;">❌ Reject Documents</button>
-                                                                                                                
+                                                                                                                                                
                         </div>
                     </form>
                 </div>
