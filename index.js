@@ -8,7 +8,8 @@ const path = require('path');
 const multer = require('multer');
 const axios = require('axios'); 
 const sgMail = require('@sendgrid/mail'); 
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('./services/db');
+//const { PrismaClient } = require('@prisma/client');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 
@@ -29,7 +30,7 @@ const mandatesRouter = require('./routes/mandates');
 const webhookRouter = require('./routes/webhooks'); // Yes, this is duplicated in imports but used differently below
 
 const app = express();
-const prisma = new PrismaClient();
+//const prisma = new PrismaClient();
 const upload = multer({ dest: 'uploads/' }); 
 
 // 🛡️ TRUST PROXY (Required for Render/Heroku)

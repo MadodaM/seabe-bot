@@ -3,8 +3,9 @@
 // BANK-GRADE SECURITY COMPLIANT (2026)
 const express = require('express');
 const router = express.Router();
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+//const { PrismaClient } = require('@prisma/client');
+const prisma = require('./services/db');
+//const prisma = new PrismaClient();
 const axios = require('axios');
 
 // 🚀 Import Seabe Engines
