@@ -1112,6 +1112,37 @@ module.exports = function(app, { prisma }) {
     app.post('/api/prospect/admin/approve-level-1', async (req, res) => {
         if (!isAuthenticated(req)) return res.status(401).json({ error: "Unauthorized" });
         try {
+			try {
+            // 1. Generate a secure, one-time setup token
+            const crypto = require('crypto');
+            const token = crypto.randomBytes(20).toString('hex');
+            
+            // 2. Update the DB
+            const org = await prisma.church.update({ 
+                where: { id: parseInt(req.body.churchId) }, 
+                data: { ficaStatus: 'AWAITING_LEVEL_2', setupToken: token } 
+            });
+
+            // 3. Trigger WhatsApp Onboarding Blast via Twilio
+            const twilio = require('twilio');
+            const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+            
+            let targetPhone = org.adminPhone;
+            if (targetPhone && targetPhone.startsWith('0')) targetPhone = '27' + targetPhone.substring(1);
+            
+            const setupLink = `https://${req.get('host')}/org/setup/${token}`;
+            
+            await client.messages.create({
+                from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
+                to: `whatsapp:+${targetPhone.replace('+', '')}`,
+                body: `🟢 *Seabe Digital KYC*\n\nCongratulations! ${org.name} has passed Level 1 Compliance.\n\nTo securely access your Customer Admin Dashboard, please click below to set your password and 2FA:\n\n🔗 ${setupLink}`
+            });
+
+            res.json({ message: "Level 1 Approved. Onboarding WhatsApp sent to Customer Admin." });
+        } catch (e) { 
+            res.status(500).json({ error: e.message }); 
+        }
+			
             const org = await prisma.church.update({ 
                 where: { id: parseInt(req.body.churchId) }, 
                 data: { ficaStatus: 'AWAITING_LEVEL_2' } 

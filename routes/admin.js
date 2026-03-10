@@ -5,6 +5,12 @@ const csv = require('csv-parser');
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const cloudinary = require('cloudinary').v2;
+
+// 🔒 NEW BANK-GRADE SECURITY IMPORTS
+const bcrypt = require('bcryptjs');
+const speakeasy = require('speakeasy');
+const qrcode = require('qrcode');
+
 const { sendWhatsApp } = require('../services/whatsapp'); 
 const { decrypt } = require('../utils/crypto'); 
 const { analyzeAdminDocument } = require('../services/aiClaimWorker');
@@ -35,7 +41,6 @@ const upload = multer({
 });
 
 // --- HELPERS ---
-const generateOTP = () => Math.floor(1000 + Math.random() * 9000).toString();
 const parseCookies = (req) => {
     const list = {};
     const rc = req.headers.cookie;
@@ -86,39 +91,161 @@ module.exports = (app, { prisma }) => {
         next();
     };
 
-    // --- LOGIN ---
+    // ==========================================
+    // 🔐 ONBOARDING & MFA SETUP SCREEN (Triggered by Super Admin)
+    // ==========================================
+    router.get('/org/setup/:token', async (req, res) => {
+        try {
+            const org = await prisma.church.findFirst({ where: { setupToken: req.params.token } });
+            if (!org) return res.send("<h1>Invalid or Expired Link</h1>");
+
+            const secret = speakeasy.generateSecret({ name: `Seabe: ${org.name}` });
+            const qrImage = await qrcode.toDataURL(secret.otpauth_url);
+
+            res.send(`
+                <html><body style="font-family:sans-serif; background:#f4f7f6; display:flex; justify-content:center; align-items:center; height:100vh; margin:0;">
+                <form action="/org/setup/${req.params.token}" method="POST" style="background:white; padding:30px; border-radius:10px; width:350px; box-shadow:0 10px 25px rgba(0,0,0,0.1); text-align:center;">
+                    <h2>Setup Secure Access</h2>
+                    <p style="color:#7f8c8d; font-size:14px;">Welcome, <strong>${org.name}</strong></p>
+                    
+                    <input type="hidden" name="tempSecret" value="${secret.base32}">
+                    
+                    <div style="margin-bottom:15px; text-align:left;">
+                        <label style="font-size:12px; font-weight:bold; color:#555;">Create Password</label>
+                        <input type="password" name="password" required minlength="8" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:5px; box-sizing:border-box;">
+                    </div>
+
+                    <div style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:15px;">
+                        <p style="font-size:12px; margin-top:0;"><strong>Step 2:</strong> Scan this QR with Google Authenticator or Authy.</p>
+                        <img src="${qrImage}" style="width:150px; height:150px; border:3px solid #fff; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);">
+                    </div>
+
+                    <div style="margin-bottom:15px; text-align:left;">
+                        <label style="font-size:12px; font-weight:bold; color:#555;">Enter 6-Digit App Code</label>
+                        <input type="text" name="totp" required placeholder="000 000" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:5px; box-sizing:border-box; text-align:center; font-weight:bold; letter-spacing:2px;">
+                    </div>
+
+                    <button style="width:100%; padding:15px; background:#1e272e; color:white; border:none; border-radius:5px; cursor:pointer; font-weight:bold;">SECURE MY ACCOUNT</button>
+                </form>
+                </body></html>
+            `);
+        } catch (e) {
+            res.send("Error: " + e.message);
+        }
+    });
+
+    router.post('/org/setup/:token', async (req, res) => {
+        try {
+            const { password, tempSecret, totp } = req.body;
+            const org = await prisma.church.findFirst({ where: { setupToken: req.params.token } });
+            
+            if (!org) return res.send("Link expired.");
+
+            const isValidMfa = speakeasy.totp.verify({
+                secret: tempSecret,
+                encoding: 'base32',
+                token: totp,
+                window: 1
+            });
+
+            if (!isValidMfa) return res.send("<h2>Setup Failed</h2><p>Incorrect Authenticator Code.</p><a href='javascript:history.back()'>Try again</a>");
+
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(password, salt);
+
+            await prisma.church.update({
+                where: { id: org.id },
+                data: {
+                    password: hashedPassword,
+                    mfaSecret: tempSecret,
+                    setupToken: null // Destroy token
+                }
+            });
+
+            res.send(`
+                <html><body style="font-family:sans-serif; background:#f4f7f6; display:flex; justify-content:center; align-items:center; height:100vh; margin:0;">
+                <div style="background:white; padding:40px; border-radius:10px; width:350px; box-shadow:0 10px 25px rgba(0,0,0,0.1); text-align:center;">
+                    <h2>Setup Complete! 🎉</h2>
+                    <p style="color:#7f8c8d;">Your portal is now secured with Bank-Grade MFA.</p>
+                    <a href="/admin/${org.code}" style="display:inline-block; padding:12px 20px; background:#27ae60; color:white; text-decoration:none; border-radius:5px; margin-top:15px; font-weight:bold;">Go to Login</a>
+                </div>
+                </body></html>
+            `);
+        } catch (e) {
+            res.send("Error: " + e.message);
+        }
+    });
+
+    // ==========================================
+    // 🔐 LOGIN (Now Requires Password + MFA)
+    // ==========================================
     router.get('/admin/:code', async (req, res) => {
         const { code } = req.params;
-        const { phone } = req.query; 
         const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
         if (!org) return res.send("Not Found");
 
-        if (!phone) {
-            return res.send(`<html><body style="font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;background:#f4f7f6;margin:0;">
-                <form style="background:white;padding:30px;border-radius:10px;width:300px;box-shadow:0 10px 25px rgba(0,0,0,0.1);">
-                    <h3 style="text-align:center;">🔐 ${org.name}</h3>
-                    <input name="phone" placeholder="+27..." required style="width:100%;padding:12px;margin-bottom:10px;border:1px solid #ddd;border-radius:5px;">
-                    <button style="width:100%;padding:15px;background:#1e272e;color:white;border:none;border-radius:5px;cursor:pointer;width:100%;font-weight:bold;">Request OTP</button>
-                </form></body></html>`);
-        }
-        const otp = generateOTP();
-        await prisma.church.update({ where: { id: org.id }, data: { otp, otpExpires: new Date(Date.now() + 300000) } });
-        try { await sendWhatsApp(phone, `🔐 *${org.name} Admin Login*\nOTP: *${otp}*`); } catch (e) {}
-        
-        res.send(`<html><body style="font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;background:#f4f7f6;margin:0;">
-            <form action="/admin/${code}/verify" method="POST" style="background:white;padding:30px;border-radius:10px;width:300px;box-shadow:0 10px 25px rgba(0,0,0,0.1);">
-                <input type="hidden" name="phone" value="${phone}">
-                <h3 style="text-align:center;">Enter OTP</h3>
-                <input name="otp" maxlength="4" style="font-size:28px;text-align:center;width:100%;padding:10px;border:1px solid #ddd;" required autofocus>
-                <button style="width:100%;padding:15px;background:#1e272e;color:white;border:none;border-radius:5px;margin-top:15px;cursor:pointer;width:100%;">Verify</button>
-            </form></body></html>`);
+        res.send(`
+            <html><body style="font-family:sans-serif; display:flex; justify-content:center; align-items:center; height:100vh; background:#f4f7f6; margin:0;">
+                <form action="/admin/${code}/login" method="POST" style="background:white; padding:30px; border-radius:10px; width:300px; box-shadow:0 10px 25px rgba(0,0,0,0.1);">
+                    <h3 style="text-align:center; margin-top:0; color:#1e272e;">🔐 ${org.name}</h3>
+                    
+                    <div style="margin-bottom:15px;">
+                        <label style="font-size:12px; font-weight:bold; color:#7f8c8d;">Admin Phone</label>
+                        <input type="text" name="phone" placeholder="+27..." required style="width:100%; padding:12px; border:1px solid #ddd; border-radius:5px; box-sizing:border-box;">
+                    </div>
+                    
+                    <div style="margin-bottom:15px;">
+                        <label style="font-size:12px; font-weight:bold; color:#7f8c8d;">Password</label>
+                        <input type="password" name="password" required style="width:100%; padding:12px; border:1px solid #ddd; border-radius:5px; box-sizing:border-box;">
+                    </div>
+
+                    <div style="margin-bottom:20px; background:#fffbe6; padding:15px; border:1px solid #ffe58f; border-radius:5px;">
+                        <label style="font-size:12px; font-weight:bold; color:#d48806;">Google Authenticator Code</label>
+                        <input type="text" name="totp" required placeholder="000 000" autocomplete="off" style="width:100%; padding:12px; border:1px solid #ddd; border-radius:5px; box-sizing:border-box; text-align:center; font-weight:bold; letter-spacing:2px; margin-top:5px;">
+                    </div>
+
+                    <button style="width:100%; padding:15px; background:#1e272e; color:white; border:none; border-radius:5px; cursor:pointer; font-weight:bold;">SECURE LOGIN</button>
+                </form>
+            </body></html>
+        `);
     });
 
-    router.post('/admin/:code/verify', async (req, res) => {
-        const org = await prisma.church.findUnique({ where: { code: req.params.code.toUpperCase() } });
-        if (!org || org.otp !== req.body.otp) return res.send("Invalid OTP");
-        res.setHeader('Set-Cookie', `session_${org.code}=active; HttpOnly; Path=/; Max-Age=3600`);
-        res.redirect(`/admin/${org.code}/dashboard`);
+    router.post('/admin/:code/login', async (req, res) => {
+        try {
+            const { phone, password, totp } = req.body;
+            const code = req.params.code.toUpperCase();
+            
+            // Clean phone for lookup
+            let cleanPhone = phone.trim().replace(/\D/g, '');
+            if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+            
+            const org = await prisma.church.findFirst({ where: { code: code, adminPhone: cleanPhone } });
+            
+            if (!org || !org.password || !org.mfaSecret) {
+                return res.send(`<h2>Login Failed</h2><p>Invalid Credentials or MFA Setup Incomplete.</p><a href="/admin/${code}">Back</a>`);
+            }
+
+            const validPass = await bcrypt.compare(password, org.password);
+            if (!validPass) {
+                return res.send(`<h2>Login Failed</h2><p>Invalid Password.</p><a href="/admin/${code}">Back</a>`);
+            }
+
+            const isValidMfa = speakeasy.totp.verify({
+                secret: org.mfaSecret,
+                encoding: 'base32',
+                token: totp,
+                window: 1
+            });
+
+            if (!isValidMfa) {
+                return res.send(`<h2>Login Failed</h2><p>Invalid 2FA Code.</p><a href="/admin/${code}">Back</a>`);
+            }
+
+            res.setHeader('Set-Cookie', `session_${org.code}=active; HttpOnly; Path=/; Max-Age=86400`);
+            res.redirect(`/admin/${org.code}/dashboard`);
+        } catch (e) {
+            res.send("Error: " + e.message);
+        }
     });
     
     // --- Vendors ---
@@ -380,7 +507,7 @@ module.exports = (app, { prisma }) => {
     });
 
     // ============================================================
-    // 📊 DASHBOARD & WALLET SUMMARY (REPLACED)
+    // 📊 DASHBOARD & WALLET SUMMARY
     // ============================================================
     router.get('/admin/:code/dashboard', checkSession, async (req, res) => {
         try {
@@ -465,7 +592,7 @@ module.exports = (app, { prisma }) => {
     });
 
     // ============================================================
-    // 🧾 TRANSACTION LEDGER (NEW ADDITION)
+    // 🧾 TRANSACTION LEDGER
     // ============================================================
     router.get('/admin/:code/transactions', checkSession, async (req, res) => {
         try {
@@ -542,7 +669,7 @@ module.exports = (app, { prisma }) => {
     });
 
     // ============================================================
-    // 📅 ORGANIZATION EVENTS MANAGEMENT (THE MISSING FIX)
+    // 📅 ORGANIZATION EVENTS MANAGEMENT
     // ============================================================
     router.get('/admin/:code/events', checkSession, async (req, res) => {
         try {
@@ -723,10 +850,8 @@ module.exports = (app, { prisma }) => {
         res.send(renderPage(req.org, 'collections', content));
     });
     
-// --- ⚰️ SUREPOL (BURIAL ADMIN UI) ---
+    // --- ⚰️ SUREPOL (BURIAL ADMIN UI) ---
     router.get('/admin/:code/surepol', checkSession, async (req, res) => {
-        
-        // 🚀 FIX: We added "include: { member: true }" to stop the crash!
         const pendingClaims = await prisma.claim.findMany({
             where: {
                 churchCode: req.org.code,
@@ -738,23 +863,20 @@ module.exports = (app, { prisma }) => {
             orderBy: { id: 'desc' }
         });
 
-        // 2. Build the HTML rows for the claims table
         let claimsHtml = '';
         if (pendingClaims.length === 0) {
             claimsHtml = '<tr><td colspan="5" style="text-align:center; padding:30px; color:#999;">🎉 Queue is empty! No pending claims to review.</td></tr>';
         } else {
             claimsHtml = pendingClaims.map(c => {
-                // Assign Badge Colors based on the AI's status
-                let badgeColor = '#f39c12'; // Default Warning Orange
-                if (c.status === 'FLAGGED_WAITING_PERIOD') badgeColor = '#e74c3c'; // Danger Red
-                if (c.status === 'PENDING_REVIEW') badgeColor = '#3498db'; // Info Blue
-                if (c.status === 'MANUAL_REVIEW_NEEDED') badgeColor = '#e67e22'; // Action Orange
+                let badgeColor = '#f39c12';
+                if (c.status === 'FLAGGED_WAITING_PERIOD') badgeColor = '#e74c3c';
+                if (c.status === 'PENDING_REVIEW') badgeColor = '#3498db';
+                if (c.status === 'MANUAL_REVIEW_NEEDED') badgeColor = '#e67e22';
                 
                 const docLink = c.documentUrl 
                     ? `<a href="${c.documentUrl}" target="_blank" style="background:#ecf0f1; padding:5px 10px; border-radius:4px; font-size:12px; font-weight:bold;">🖼️ View Doc</a>` 
                     : '<span style="color:#999; font-size:12px;">No Doc</span>';
                 
-                // 🚀 FIX: Safely grab phone numbers from relation
                 const displayPhone = c.claimantPhone || (c.member ? c.member.phone : 'Unknown');
 
                 return `

@@ -21,6 +21,7 @@
     "@prisma/client": "^5.22.0",
     "@sendgrid/mail": "^8.1.6",
     "axios": "^1.13.5",
+    "bcryptjs": "^3.0.3",
     "body-parser": "^2.2.2",
     "canvas": "^3.2.1",
     "cheerio": "^1.2.0",

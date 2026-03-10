@@ -75,6 +75,9 @@ model Church {
   type       String // "CHURCH" or "BURIAL_SOCIETY"
   adminPhone String?
   email      String? // ✅ Fixed
+  password   String?
+  mfaSecret  String?
+  setupToken String?
 
   // FICA Level 1 (Initial FICA)
   pastorIdUrl    String? // Cloudinary Vault Link
