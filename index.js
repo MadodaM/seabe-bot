@@ -32,6 +32,7 @@ const webhookRouter = require('./routes/webhooks'); // Yes, this is duplicated i
 
 const app = express();
 app.use(globalLimiter); 
+app.use('/', require('./routes/checkout'));
 //const prisma = new PrismaClient();
 const upload = multer({ dest: 'uploads/' }); 
 

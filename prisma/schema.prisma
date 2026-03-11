@@ -161,6 +161,7 @@ model Transaction {
 
   // 🛡️ COMPLIANCE RELATION (Links to the AML Risk Engine)
   complianceLog   ComplianceLog?
+  gateway         String?   @default("NETCASH") // "PAYFAST" or "NETCASH"
 }
 
 model Event {
