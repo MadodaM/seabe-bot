@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seabe Credit Passport</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Phosphor Icons for Vanilla JS -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans min-h-screen">
+
+    <!-- Top Navigation -->
+    <nav class="bg-slate-900 text-white p-4 shadow-md flex justify-between items-center">
+        <div class="flex items-center space-x-2 font-bold text-xl tracking-tight">
+            <i class="ph-fill ph-shield-check text-emerald-400 text-2xl"></i>
+            <span>Seabe Digital</span>
+        </div>
+        <div class="flex space-x-4 text-sm font-medium">
+            <button id="nav-dashboard" onclick="switchTab('dashboard')" class="px-3 py-1 rounded transition-colors bg-slate-800 text-emerald-400">
+                Treasurer Dashboard
+            </button>
+            <button id="nav-verify" onclick="switchTab('verify')" class="px-3 py-1 rounded transition-colors hover:text-emerald-300">
+                Bank Portal (/verify)
+            </button>
+        </div>
+    </nav>
+
+    <main class="max-w-6xl mx-auto p-6 mt-6">
+        
+        <!-- ========================================== -->
+        <!-- VIEW 1: TREASURER DASHBOARD -->
+        <!-- ========================================== -->
+        <div id="tab-dashboard" class="space-y-6 block">
+            <div class="flex justify-between items-end">
+                <div>
+                    <h1 class="text-2xl font-bold text-slate-800">Mamelodi Property Stokvel</h1>
+                    <p class="text-slate-500">Manage members and generate Verifiable Credentials.</p>
+                </div>
+                <div class="bg-white px-4 py-2 rounded-lg shadow-sm border border-slate-200 flex items-center space-x-2">
+                    <span class="text-sm text-slate-500">Available Wallet:</span>
+                    <span class="font-bold text-emerald-600 text-lg">R 125,000.00</span>
+                </div>
+            </div>
+
+            <!-- Member List Table -->
+            <div id="view-table" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden block">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-50 border-b border-slate-200 text-slate-600 text-sm">
+                            <th class="p-4 font-semibold">Member Name</th>
+                            <th class="p-4 font-semibold">History</th>
+                            <th class="p-4 font-semibold">Avg. Contribution</th>
+                            <th class="p-4 font-semibold">Status</th>
+                            <th class="p-4 font-semibold text-right">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="member-tbody">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Certificate Generator (PDF Mockup) -->
+            <div id="view-pdf" class="hidden fade-in">
+                <button onclick="showTable()" class="text-sm font-medium text-slate-500 hover:text-slate-800 mb-4 flex items-center">
+                    &larr; Back to Members
+                </button>
+                
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <!-- The "PDF" Visual -->
+                    <div class="bg-white p-10 rounded-xl shadow-xl border border-slate-200 aspect-[1/1.4] relative overflow-hidden flex flex-col">
+                        <i class="ph-fill ph-shield-check absolute -right-20 -bottom-20 text-slate-50 opacity-50" style="font-size: 400px;"></i>
+                        
+                        <div class="border-b-2 border-slate-900 pb-4 mb-8 flex justify-between items-center z-10">
+                            <div>
+                                <h2 class="text-2xl font-black text-slate-900 tracking-tight">Zero-Knowledge<br/>Credit Passport</h2>
+                                <p class="text-slate-500 text-xs mt-1">ISSUED BY SEABE DIGITAL LEDGER</p>
+                            </div>
+                            <i class="ph-fill ph-shield-check text-emerald-600 text-5xl"></i>
+                        </div>
+
+                        <div class="space-y-6 z-10 flex-grow">
+                            <div>
+                                <p class="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">Subject Identity Hash</p>
+                                <p class="font-mono text-sm bg-slate-100 p-2 rounded text-slate-700 break-all border border-slate-200">
+                                    a8f5f167f44f4964e6c998dee827110c
+                                </p>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="bg-emerald-50 border border-emerald-100 p-4 rounded-lg">
+                                    <p class="text-xs text-emerald-600 font-bold uppercase mb-1">Verified History</p>
+                                    <p class="text-2xl font-black text-emerald-900" id="pdf-history">36 Mos</p>
+                                </div>
+                                <div class="bg-emerald-50 border border-emerald-100 p-4 rounded-lg">
+                                    <p class="text-xs text-emerald-600 font-bold uppercase mb-1">Avg. Contribution</p>
+                                    <p class="text-2xl font-black text-emerald-900" id="pdf-avg">R 2500</p>
+                                </div>
+                            </div>
+
+                            <div class="pt-4">
+                                <p class="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">Attestation Statement</p>
+                                <p class="text-sm text-slate-700 leading-relaxed">
+                                    Seabe Digital certifies that the individual associated with the above Identity Hash has maintained a flawless financial contribution record within a verified financial cooperative for the stated duration.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="mt-auto pt-8 border-t border-slate-100 flex items-center space-x-6 z-10">
+                            <div class="bg-white p-2 shadow-sm border border-slate-200 rounded-lg">
+                                <i class="ph ph-qr-code text-slate-800" style="font-size: 80px;"></i>
+                            </div>
+                            <div>
+                                <p class="text-xs font-bold text-slate-800 mb-1">Bank Verification Required</p>
+                                <p class="text-xs text-slate-500 leading-tight">
+                                    Scan this code or visit <strong>seabe.tech/verify</strong> to cryptographically prove this document's authenticity.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Actions & Explainer -->
+                    <div class="flex flex-col justify-center space-y-6">
+                        <div class="bg-blue-50 border border-blue-100 p-6 rounded-xl">
+                            <h3 class="font-bold text-blue-900 flex items-center space-x-2 mb-2">
+                                <i class="ph-fill ph-shield-check text-xl"></i>
+                                <span>Privacy Preserved</span>
+                            </h3>
+                            <p class="text-sm text-blue-800 leading-relaxed">
+                                Notice that your Stokvel's total balance (R125,000) and your personal details are completely hidden. The bank only sees the proof of <span id="pdf-name" class="font-bold"></span>'s reliability.
+                            </p>
+                        </div>
+
+                        <button class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 px-6 rounded-xl shadow-lg transition-all flex items-center justify-center space-x-2 w-full text-lg">
+                            <i class="ph-bold ph-download-simple text-xl"></i>
+                            <span>Download Official PDF</span>
+                        </button>
+
+                        <div class="mt-8 border-t border-slate-200 pt-6">
+                            <p class="text-sm text-slate-500 mb-3">For Testing Purposes: Copy this raw token to paste into the Bank Verification Portal.</p>
+                            <code id="pdf-token" class="block bg-slate-900 text-emerald-400 p-4 rounded-lg text-xs break-all shadow-inner">
+                                <!-- Token goes here -->
+                            </code>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========================================== -->
+        <!-- VIEW 2: BANK VERIFICATION PORTAL -->
+        <!-- ========================================== -->
+        <div id="tab-verify" class="hidden max-w-2xl mx-auto space-y-8 fade-in">
+            <div class="text-center space-y-2">
+                <div class="inline-flex items-center justify-center w-16 h-16 bg-slate-900 rounded-2xl shadow-lg mb-4">
+                    <i class="ph-fill ph-buildings text-white text-3xl"></i>
+                </div>
+                <h1 class="text-3xl font-black text-slate-900">Partner Verification Portal</h1>
+                <p class="text-slate-500">Enter a Seabe ZK-Token to cryptographically verify applicant financial data.</p>
+            </div>
+
+            <!-- Input Screen -->
+            <div id="verify-input-screen" class="bg-white p-8 rounded-2xl shadow-xl border border-slate-200 space-y-6 block">
+                <div>
+                    <label class="block text-sm font-bold text-slate-700 mb-2">Paste ZK-Token or Scan QR</label>
+                    <textarea id="verify-textarea" rows="4" placeholder="eyJhbGciOiJIUzI1NiIs..." class="w-full border border-slate-300 rounded-xl p-4 font-mono text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all" oninput="checkInput()"></textarea>
+                </div>
+                
+                <div class="bg-amber-50 border border-amber-200 p-4 rounded-lg flex items-start space-x-3">
+                    <i class="ph-fill ph-shield-warning text-amber-600 text-xl mt-0.5 flex-shrink-0"></i>
+                    <p class="text-xs text-amber-800 font-medium">
+                        This API call carries a <strong>R50.00</strong> verification fee, charged to your institutional account.
+                    </p>
+                </div>
+
+                <button id="verify-btn" onclick="processVerification()" disabled class="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl shadow-md transition-all flex justify-center items-center space-x-2">
+                    <i class="ph-bold ph-magnifying-glass text-xl"></i>
+                    <span>Verify Cryptographic Signature</span>
+                </button>
+            </div>
+
+            <!-- Success Screen -->
+            <div id="verify-success-screen" class="hidden bg-white p-8 rounded-2xl shadow-xl border border-slate-200 space-y-6 fade-in">
+                <div class="flex flex-col items-center justify-center text-center space-y-3 pb-6 border-b border-slate-100">
+                    <div class="bg-emerald-100 text-emerald-600 p-4 rounded-full">
+                        <i class="ph-fill ph-check-circle text-5xl"></i>
+                    </div>
+                    <h2 class="text-2xl font-black text-slate-900">Signature Valid</h2>
+                    <p class="text-emerald-700 font-medium bg-emerald-50 px-4 py-1 rounded-full text-sm">
+                        Zero-Knowledge Proof Verified
+                    </p>
+                </div>
+
+                <div class="space-y-4">
+                    <div class="flex justify-between items-center py-2 border-b border-slate-50">
+                        <span class="text-slate-500 text-sm">Issuer</span>
+                        <span class="font-bold text-slate-800">Seabe Digital Core Ledger</span>
+                    </div>
+                    <div class="flex justify-between items-center py-2 border-b border-slate-50">
+                        <span class="text-slate-500 text-sm">Subject ID (Hashed)</span>
+                        <span class="font-mono text-xs text-slate-600 bg-slate-100 px-2 py-1 rounded">a8f5f167f44f4964e6c998dee827110c</span>
+                    </div>
+                    <div class="flex justify-between items-center py-2 border-b border-slate-50">
+                        <span class="text-slate-500 text-sm">Flawless History</span>
+                        <span class="font-black text-emerald-600 text-lg">36 Months</span>
+                    </div>
+                    <div class="flex justify-between items-center py-2 border-b border-slate-50">
+                        <span class="text-slate-500 text-sm">Avg. Contribution</span>
+                        <span class="font-black text-emerald-600 text-lg">R 2500 / mo</span>
+                    </div>
+                    <div class="flex justify-between items-center py-2">
+                        <span class="text-slate-500 text-sm">Calculated Risk Profile</span>
+                        <span class="font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full text-sm">LOW</span>
+                    </div>
+                </div>
+                
+                <button onclick="resetVerify()" class="w-full border-2 border-slate-200 hover:border-slate-300 text-slate-700 font-bold py-3 rounded-xl transition-all">
+                    Verify Another Document
+                </button>
+            </div>
+
+            <!-- Fail Screen -->
+            <div id="verify-fail-screen" class="hidden bg-white p-8 rounded-2xl shadow-xl border border-slate-200 space-y-6 fade-in">
+                <div class="flex flex-col items-center justify-center text-center space-y-3">
+                    <div class="bg-red-100 text-red-600 p-4 rounded-full">
+                        <i class="ph-fill ph-warning-circle text-5xl"></i>
+                    </div>
+                    <h2 class="text-2xl font-black text-slate-900">Verification Failed</h2>
+                    <p class="text-red-600 font-medium bg-red-50 px-4 py-2 rounded-lg text-sm border border-red-100">
+                        Invalid Cryptographic Signature. This credential may have been forged or altered.
+                    </p>
+                </div>
+                <button onclick="resetVerify()" class="w-full border-2 border-slate-200 hover:border-slate-300 text-slate-700 font-bold py-3 rounded-xl transition-all">
+                    Try Again
+                </button>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Connect the JS file here -->
+    <script src="/js/credit-passport.js"></script>
+</body>
+</html>
