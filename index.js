@@ -32,6 +32,11 @@ const webhookRouter = require('./routes/webhooks'); // Yes, this is duplicated i
 
 const app = express();
 app.use(globalLimiter); 
+
+// Route to serve the Credit Passport UI for testing
+app.get('/passport-test', (req, res) => {
+    res.sendFile(path.join(__dirname, 'views', 'credit-passport.html'));
+});
 app.use('/', require('./routes/checkout'));
 //const prisma = new PrismaClient();
 const upload = multer({ dest: 'uploads/' }); 
