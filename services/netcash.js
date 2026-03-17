@@ -195,8 +195,8 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
         // Encrypt the reference number
         const secureToken = encryptReference(ref);
         
-        // Return a beautiful, short, white-labeled URL
-        return `${BASE_URL}/pay/${secureToken}`;
+        // Return a beautiful, short, white-labeled URL (Changed from /pay/ to /secure-pay/)
+        return `${BASE_URL}/secure-pay/${secureToken}`;
 
     } catch (error) {
         console.error("❌ NetCash Link Error:", error.message);

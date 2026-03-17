@@ -83,7 +83,7 @@ const syncToHubSpot = async (data) => {
 // ==========================================
 
 // 🛡️ SEABE PAY SECURE CHECKOUT ROUTER
-app.get('/pay/:token', async (req, res) => {
+app.get('/secure-pay/:token', async (req, res) => {
     try {
         const secureToken = req.params.token;
         
