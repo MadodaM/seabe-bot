@@ -124,7 +124,7 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
         // 💾 STEP 3: GUARANTEE LEDGER RECORD (UPSERT)
         const member = await prisma.member.findFirst({ where: { phone: phone } });
 
-        // 💡 SMART EXTRACTION: Pull the church code directly from the reference (e.g., "AFM725" from "AFM725-OFFERING-...")
+        // 💡 SMART EXTRACTION: Pull the church code directly from the reference
         let finalChurchCode = churchCode;
         if (!finalChurchCode || finalChurchCode === 'UNKNOWN') {
             finalChurchCode = ref.split('-')[0]; 
@@ -145,12 +145,14 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
                 method: 'NETCASH',
                 phone: phone,
                 
-                // 💡 THE FIX: Use Prisma's strict 'connect' syntax to officially link the Church
+                // Link the Church strictly
                 church: {
                     connect: { code: finalChurchCode }
                 },
                 
-                memberId: member ? member.id : null,
+                // 💡 THE FIX: Use Prisma's strict relation syntax for Member, or omit if null
+                ...(member ? { member: { connect: { id: member.id } } } : {}),
+                
                 netcashFee: pricing.netcashFee,
                 platformFee: pricing.platformFee,
                 netSettlement: pricing.netSettlement
