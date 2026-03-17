@@ -121,9 +121,12 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
         // 💰 STEP 2: CALCULATE FEE SPLITS
         const pricing = await calculateTransaction(parseFloat(cleanAmount), 'STANDARD', 'PAYMENT_LINK', false);
         
-        // 💾 STEP 3: GUARANTEE LEDGER RECORD (UPSERT)
+        /// 💾 STEP 3: GUARANTEE LEDGER RECORD (UPSERT)
         // This ensures the webhook can find the transaction when the user pays!
-        const member = await prisma.member.findFirst({ where: { phone: phone, churchCode: churchCode } });
+        const member = await prisma.member.findFirst({ where: { phone: phone } });
+
+        // 💡 THE FIX: Only link a Church if the code is real, otherwise leave it blank
+        const validChurchCode = (churchCode && churchCode !== 'UNKNOWN') ? churchCode : undefined;
 
         await prisma.transaction.upsert({
             where: { reference: ref },
@@ -139,7 +142,7 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
                 status: 'PENDING',
                 method: 'NETCASH',
                 phone: phone,
-                churchCode: churchCode,
+                churchCode: validChurchCode, // Safely handles missing church codes!
                 memberId: member ? member.id : null,
                 netcashFee: pricing.netcashFee,
                 platformFee: pricing.platformFee,
