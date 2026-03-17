@@ -1,4 +1,5 @@
 // routes/link.js
+// VERSION: 4.2 (Strict Prisma Compliance, Fee Splits, Obsolete Routes Removed)
 const express = require('express');
 const router = express.Router();
 const netcash = require('../services/netcash');
@@ -95,9 +96,7 @@ module.exports = (app, { prisma }) => {
                         <div class="input-group">
                             <label>Payer Details</label>
                             <input type="text" name="name" placeholder="Full Name" required style="margin-bottom:10px">
-                            
                             <input type="email" name="email" placeholder="Email Address (For Invoice)" required style="margin-bottom:10px">
-                            
                             <input type="tel" name="phone" placeholder="WhatsApp Number" required>
                         </div>
                         <button type="submit" class="btn">Proceed to Secure Pay</button>
@@ -132,7 +131,7 @@ module.exports = (app, { prisma }) => {
     router.post('/link/:code/process', async (req, res) => {
         try {
             const { code } = req.params;
-            const { amount, type, phone, email } = req.body; // 🚀 Capture Email
+            const { amount, type, phone, email } = req.body; 
             const org = await prisma.church.findUnique({ where: { code: code.toUpperCase() } });
             
             if (!org) return res.status(404).send("Organization not found.");
@@ -140,6 +139,7 @@ module.exports = (app, { prisma }) => {
             // 1. Standardize Phone Number
             let cleanPhone = phone.replace(/\D/g, ''); 
             if (cleanPhone.length === 10 && cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+            if (!cleanPhone.startsWith('+')) cleanPhone = '+' + cleanPhone; // Ensure + is present for consistency
 
             // 2. Pricing Engine Calculation
             const pricing = await calculateTransaction(amount, 'STANDARD', 'DEFAULT', false);
@@ -152,26 +152,34 @@ module.exports = (app, { prisma }) => {
             // 4. Generate Reference
             const ref = `WEB-${code}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
 
-            // 5. Create Pending Transaction
+            // 5. 💡 THE FIX: Use Strict Prisma Syntax & Log Fee Splits!
             await prisma.transaction.create({
                 data: { 
-                    churchCode: org.code, 
-                    phone: cleanPhone, 
-                    memberId: member ? member.id : null, 
-                    type: type, 
-                    amount: pricing.baseAmount, 
                     reference: ref, 
-                    status: 'PENDING' 
+                    amount: pricing.baseAmount, 
+                    type: type, 
+                    status: 'PENDING', 
+                    method: 'NETCASH',
+                    phone: cleanPhone, 
+                    
+                    // Strict Relationships
+                    church: { connect: { code: org.code } },
+                    ...(member ? { member: { connect: { id: member.id } } } : {}),
+
+                    // Store the exact fee splits so Webhooks can settle the account
+                    netcashFee: pricing.netcashFee,
+                    platformFee: pricing.platformFee,
+                    netSettlement: pricing.netSettlement
                 }
             });
 
-            // 6. 🚀 Render Auto-POST Form (Passing Email)
+            // 6. 🚀 Render White-labeled Auto-POST Form
             const htmlForm = netcash.generateAutoPostForm({
                 amount: pricing.totalChargedToUser,
                 reference: ref,
                 description: `Payment to ${org.name} (${type})`,
                 phone: cleanPhone,
-                email: email // 🚀 Pass to Netcash p10
+                email: email
             });
 
             res.send(htmlForm);
@@ -182,34 +190,8 @@ module.exports = (app, { prisma }) => {
         }
     });
 
-    // ==========================================
-    // 3. WHATSAPP LINK BOUNCER (NEW)
-    // ==========================================
-    // Handles links sent via WhatsApp that need to become secure POSTs
-    router.get('/pay/redirect/:ref', async (req, res) => {
-        try {
-            const { ref } = req.params;
-            const amount = req.query.a; 
-            const orgName = req.query.o || 'Seabe Merchant';
-            const phone = req.query.p || '';
-            const email = req.query.e || ''; // 🚀 Capture Email from URL
-
-            if (!amount) return res.send("Invalid Link: Missing Amount");
-
-            const htmlForm = netcash.generateAutoPostForm({
-                amount: amount,
-                reference: ref,
-                description: `Payment to ${orgName}`,
-                phone: phone,
-                email: email // 🚀 Pass to Netcash p10
-            });
-
-            res.send(htmlForm);
-
-        } catch(e) {
-            res.status(500).send("Redirect Error");
-        }
-    });
+    // NOTE: Section 3 (WhatsApp Link Bouncer) was DELETED. 
+    // It is completely replaced by the secure `app.get('/secure-pay/:token')` route in index.js.
 
     app.use('/', router); 
 };
