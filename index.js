@@ -119,6 +119,25 @@ app.get('/secure-pay/:token', async (req, res) => {
     }
 });
 
+// 🛠️ TEMPORARY DATABASE SEED ROUTE (Remove after using)
+app.get('/setup/pricing', async (req, res) => {
+    try {
+        // Upsert creates the record if it doesn't exist, and updates it if it does
+        await prisma.pricing.upsert({
+            where: { code: 'MOD_STANDARD_FLAT' }, // Change 'code' if your schema uses 'key' or 'name'
+            update: { amount: 5.00 },             // Change 'amount' if your schema uses 'value' or 'price'
+            create: {
+                code: 'MOD_STANDARD_FLAT',
+                amount: 5.00
+            }
+        });
+        res.send("<h1>✅ Success!</h1><p>MOD_STANDARD_FLAT (R5.00) has been added to the database.</p>");
+    } catch (error) {
+        console.error("Seed Error:", error);
+        res.status(500).send(`<h1>❌ Error</h1><p>${error.message}</p><p><i>Check your schema.prisma to make sure the table is called 'pricing' and the columns are correct!</i></p>`);
+    }
+});
+
 // A. Special Routes (No Auth / Webhooks)
 app.use('/api/fica', ficaPortalRoutes);
 app.use('/mandate', mandatesRouter);
