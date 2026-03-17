@@ -21,6 +21,45 @@ const formatPhone = (phone) => {
     return '+' + clean;
 };
 
+// 🎨 Reusable CSS & Template for a premium Seabe Pay feel
+const seabeStyles = `
+    :root { --primary: #14b8a6; --danger: #e74c3c; --bg: #f4f7f6; --text: #2c3e50; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; margin: 0; text-align: center; padding: 20px; }
+    .card { background: white; padding: 40px 30px; border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); max-width: 400px; width: 100%; }
+    .icon { font-size: 64px; margin-bottom: 20px; }
+    h1 { margin: 0 0 10px 0; font-size: 24px; font-weight: 800; }
+    p { color: #7f8c8d; line-height: 1.5; margin-bottom: 30px; font-size: 15px; }
+    .btn { background: var(--primary); color: white; border: none; padding: 16px 24px; border-radius: 12px; font-size: 16px; font-weight: bold; width: 100%; cursor: pointer; text-decoration: none; display: inline-block; box-sizing: border-box; }
+    .btn-outline { background: transparent; color: var(--text); border: 2px solid #e0e6ed; margin-top: 10px; }
+    .seabe-brand { font-size: 14px; font-weight: 800; color: #b2bec3; margin-top: 30px; text-transform: uppercase; letter-spacing: 1px; }
+    .seabe-brand span { color: var(--primary); }
+`;
+
+const renderPage = (title, icon, heading, message, isError = false) => `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${title}</title>
+        <style>
+            ${seabeStyles}
+            ${isError ? '.icon { filter: grayscale(100%); } .btn { background: var(--danger); }' : ''}
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <div class="icon">${icon}</div>
+            <h1>${heading}</h1>
+            <p>${message}</p>
+            <a href="https://wa.me/27832182707" class="btn">Return to WhatsApp</a>
+            <button onclick="window.close()" class="btn btn-outline">Close Window</button>
+        </div>
+        <div class="seabe-brand">Secured by Seabe <span>Pay</span></div>
+    </body>
+    </html>
+`;
+
 // ==========================================
 // 🛡️ WEBHOOK: NETCASH SERVER-TO-SERVER
 // ==========================================
@@ -74,7 +113,7 @@ router.get('/payment-success', async (req, res) => {
     const reference = req.query.Reference || req.query.ref || req.query.p2;
     
     if (!reference) {
-        return res.send("<div style='text-align:center;font-family:sans-serif;margin-top:50px;'><h1>Processing...</h1><p>Payment received but waiting on bank confirmation. You will receive a WhatsApp receipt shortly.</p></div>");
+        return res.send(renderPage('Processing', '⏳', 'Processing...', 'Payment received but waiting on bank confirmation. You will receive a WhatsApp receipt shortly.'));
     }
 
     try {
@@ -117,25 +156,32 @@ router.get('/payment-success', async (req, res) => {
                 }
 
                 const orgName = transaction.church ? transaction.church.name : "Seabe Platform";
-                return res.send(`
-                    <div style="text-align:center; font-family:sans-serif; margin-top:50px;">
-                        <h1 style="color:#2ecc71;">✅ Payment Successful!</h1>
-                        <p>Your payment of <b>R${transaction.amount.toFixed(2)}</b> to <b>${orgName}</b> has been securely received.</p>
-                        <p>You may now close this window and return to WhatsApp.</p>
-                    </div>
-                `);
+                return res.send(renderPage(
+                    'Payment Successful', 
+                    '✅', 
+                    'Payment Successful!', 
+                    `Your payment of <b>R${transaction.amount.toFixed(2)}</b> to <b>${orgName}</b> has been securely received.`
+                ));
             }
         }
-        res.send(`
-            <div style="text-align:center; font-family:sans-serif; margin-top:50px;">
-                <h1 style="color:#f39c12;">⏳ Processing...</h1>
-                <p>We are waiting for final confirmation from Netcash. Your receipt will be sent to WhatsApp shortly.</p>
-            </div>
-        `);
+        res.send(renderPage('Processing', '⏳', 'Processing...', 'We are waiting for final confirmation from Netcash. Your receipt will be sent to WhatsApp shortly.'));
     } catch (error) {
         console.error("Browser Redirect Verification Error:", error.message);
-        res.status(500).send("<div style='text-align:center;font-family:sans-serif;margin-top:50px;'><h1>Bank Sync Delay</h1><p>An error occurred verifying with the bank, but your transaction is safe. Please check your WhatsApp for the receipt.</p></div>");
+        res.status(500).send(renderPage('Bank Sync Delay', '⚠️', 'Bank Sync Delay', 'An error occurred verifying with the bank, but your transaction is safe. Please check your WhatsApp for the receipt.', true));
     }
+});
+
+// ==========================================
+// ❌ BROWSER CANCEL REDIRECT (Netcash Cancel URL)
+// ==========================================
+router.get('/payment-failed', (req, res) => {
+    res.send(renderPage(
+        'Payment Cancelled', 
+        '⚠️', 
+        'Payment Incomplete', 
+        'Your transaction was cancelled or declined. No funds were deducted from your account.', 
+        true
+    ));
 });
 
 // ==========================================

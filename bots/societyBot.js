@@ -273,18 +273,6 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                 const link = await gateway.createPaymentLink(pricing.totalChargedToUser, ref, cleanPhone, orgName);
 
                 if (link) {
-                    await prisma.transaction.create({
-                        data: { 
-                            churchCode: orgCode, 
-                            memberId: member.id, 
-                            phone: cleanPhone, 
-                            amount: pricing.baseAmount, 
-                            reference: ref, 
-                            status: 'PENDING', 
-                            type: 'SOCIETY_PREMIUM', 
-                            date: new Date() 
-                        }
-                    });
                     reply = `💳 *Once-Off Payment*\n\nBase Premium: R${pricing.baseAmount.toFixed(2)}\nService Fee: R${pricing.totalFees.toFixed(2)}\n*Total Due: R${pricing.totalChargedToUser.toFixed(2)}*\n\n👉 Pay securely here:\n${link}\n\nReply *0* to go back.`;
                 } else {
                     reply = "⚠️ Payment link error.";

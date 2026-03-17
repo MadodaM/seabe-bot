@@ -4,12 +4,13 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "jest",
+    "test": "jest --detectOpenHandles",
     "start": "node index.js",
     "onboard": "node scripts/onboard.js",
     "add-event": "node scripts/add-event.js",
     "update-news": "node scripts/update-news.js",
     "add-ad": "node scripts/add-ad.js",
+	"postinstall": "npx prisma generate && npx prisma db push",
     "build": "npx prisma generate && npx prisma db push"
   },
   "keywords": [],
@@ -54,7 +55,7 @@
     "eslint": "^10.0.0",
     "globals": "^17.3.0",
     "husky": "^9.1.7",
-    "jest": "^30.2.0",
+    "jest": "^30.3.0",
     "supertest": "^7.2.2",
     "ts-node": "^10.9.1",
     "typescript": "^5.0.0"

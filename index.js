@@ -9,6 +9,8 @@ const multer = require('multer');
 const axios = require('axios'); 
 const sgMail = require('@sendgrid/mail'); 
 const prisma = require('./services/db');
+const netcash = require('./services/netcash');
+//const prisma = require('./services/db'); // or './services/prisma-client' depending on your setup
 //const { PrismaClient } = require('@prisma/client');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
@@ -32,6 +34,12 @@ const webhookRouter = require('./routes/webhooks'); // Yes, this is duplicated i
 
 const app = express();
 app.use(globalLimiter); 
+
+// Route to serve the Credit Passport UI for testing
+app.get('/passport-test', (req, res) => {
+    res.sendFile(path.join(__dirname, 'views', 'credit-passport.html'));
+});
+app.use('/', require('./routes/checkout'));
 //const prisma = new PrismaClient();
 const upload = multer({ dest: 'uploads/' }); 
 
@@ -73,6 +81,43 @@ const syncToHubSpot = async (data) => {
 // ==========================================
 // 3. MOUNT ROUTES
 // ==========================================
+
+// 🛡️ SEABE PAY SECURE CHECKOUT ROUTER
+app.get('/secure-pay/:token', async (req, res) => {
+    try {
+        const secureToken = req.params.token;
+        
+        // 1. Decrypt the token to reveal the true transaction reference
+        const reference = netcash.decryptReference(secureToken);
+        if (!reference) {
+            return res.status(400).send('<h1>Link Expired or Invalid</h1><p>For security, this payment link has been deactivated. Please request a new one.</p>');
+        }
+
+        // 2. Look up the secure transaction in the Ledger
+        const transaction = await prisma.transaction.findUnique({
+            where: { reference: reference }
+        });
+
+        if (!transaction || transaction.status !== 'PENDING') {
+            return res.status(400).send('<h1>Transaction Unavailable</h1><p>This transaction has already been processed or does not exist.</p>');
+        }
+
+        // 3. Generate the white-labeled Seabe Pay Auto-Post HTML
+        const html = netcash.generateAutoPostForm({
+            reference: transaction.reference,
+            amount: transaction.amount,
+            description: `Seabe Digital - ${transaction.type}`,
+            phone: transaction.phone
+        });
+
+        // 4. Serve the screen to the user's phone browser
+        res.send(html);
+
+    } catch (error) {
+        console.error("❌ Checkout Router Error:", error);
+        res.status(500).send('<h1>System Error</h1><p>Please try again later.</p>');
+    }
+});
 
 // A. Special Routes (No Auth / Webhooks)
 app.use('/api/fica', ficaPortalRoutes);

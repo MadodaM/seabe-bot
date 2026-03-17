@@ -239,19 +239,7 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
             if (link) {
                 delete session.selectedEvent;
                 reply = `Tap to securely pay R${amount} via Netcash:\n👉 ${link}`;
-                
-                await prisma.transaction.create({ 
-                    data: { 
-                        churchCode: session.orgCode, 
-                        memberId: member.id, 
-                        phone: cleanPhone, 
-                        type: type, 
-                        amount: parseFloat(amount), 
-                        reference: ref, 
-                        status: 'PENDING', 
-                        date: new Date() 
-                    } 
-                });
+                             
             } else {
                 reply = "⚠️ Payment link error. Please try again later.";
             }

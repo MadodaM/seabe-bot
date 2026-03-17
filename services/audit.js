@@ -2,7 +2,7 @@
 // FICA Centralized Audit Logging Service
 
 const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('./prisma-client');
 
 /**
  * Creates an immutable audit trail for sensitive administrative actions.

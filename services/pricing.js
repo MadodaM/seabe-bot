@@ -2,7 +2,7 @@
 // 💰 Central Pricing Strategy (Self-Healing & Grouped)
 
 const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('./prisma-client');
 
 // 1. 🛡️ Master Default Prices (One single source of truth)
 const DEFAULT_PRICES = {
@@ -34,7 +34,8 @@ const DEFAULT_PRICES = {
     'MOD_LMS_PCT': 0.10,
     'MOD_LMS_MIN': 5.00,
     'MOD_REST_FLAT': 3.00,
-    'MOD_RETAIL_FLAT': 1.50
+    'MOD_RETAIL_FLAT': 1.50,
+	'MOD_STANDARD_FLAT': 5.00 
 };
 
 // In-memory cache
