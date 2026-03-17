@@ -34,7 +34,8 @@ const DEFAULT_PRICES = {
     'MOD_LMS_PCT': 0.10,
     'MOD_LMS_MIN': 5.00,
     'MOD_REST_FLAT': 3.00,
-    'MOD_RETAIL_FLAT': 1.50
+    'MOD_RETAIL_FLAT': 1.50,
+	'MOD_STANDARD_FLAT': 5.00 
 };
 
 // In-memory cache
