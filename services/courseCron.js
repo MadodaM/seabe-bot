@@ -1,7 +1,7 @@
 // services/courseCron.js
 const cron = require('node-cron');
 const { PrismaClient } = require('@prisma/client');
-const prisma = require('./services/prisma-client');
+const prisma = require('./prisma-client');
 
 // Safely initialize Twilio for direct background messaging
 let twilioClient;
