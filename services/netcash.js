@@ -200,7 +200,7 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
         });
 
         // 🚀 STEP 5: GENERATE ENCRYPTED SHORT LINK
-        const BASE_URL = process.env.BASE_URL || 'https://seabe-bot-test.onrender.com';
+        const BASE_URL = process.env.BASE_URL || 'https://seabe.tech';
         
         // Encrypt the reference number
         const secureToken = encryptReference(ref);
