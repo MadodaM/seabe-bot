@@ -1,8 +1,7 @@
 // services/netcash.js
-// VERSION: 12.0 (Fee Segregation + Velocity Checks + Risk Engine Integration)
+// VERSION: 13.1 (White-labeled Seabe Pay Auto-Post UI)
 const axios = require('axios');
-const { PrismaClient } = require('@prisma/client');
-const prisma = require('./prisma-client');
+const prisma = require('./db'); // 🔒 Uses your global encrypted Prisma interceptor
 require('dotenv').config();
 
 // 🚀 Import the Engines
@@ -10,7 +9,7 @@ const { calculateTransaction } = require('./pricingEngine');
 const { runVelocityCheck } = require('./complianceEngine'); 
 
 // 🔑 NETCASH CONFIGURATION
-const PAYNOW_SERVICE_KEY = process.env.NETCASH_PAYNOW_SERVICE_KEY;
+const NETCASH_MASTER_KEY = process.env.NETCASH_MASTER_KEY || process.env.NETCASH_PAYNOW_SERVICE_KEY;
 const PAYNOW_URL = "https://paynow.netcash.co.za/site/paynow.aspx";
 const VENDOR_KEY = process.env.NETCASH_VENDOR_KEY; 
 
@@ -40,24 +39,27 @@ function generateAutoPostForm(txData) {
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Pay via Netcash</title>
+        <title>Seabe Pay Secure Checkout</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
             body { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; background: #f4f7f6; font-family: sans-serif; color: #2c3e50; text-align: center; }
             .loader { border: 4px solid #e0e0e0; border-top: 4px solid #14b8a6; border-radius: 50%; width: 40px; height: 40px; animation: spin 0.8s linear infinite; margin-bottom: 20px; }
             .btn { background-color: #14b8a6; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold; border: none; cursor: pointer; margin-top: 20px; font-size: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: background 0.2s; }
             .btn:hover { background-color: #0d9488; }
+            .seabe-brand { font-size: 24px; font-weight: 900; color: #1e272e; margin-bottom: 10px; letter-spacing: -0.5px; }
+            .seabe-brand span { color: #14b8a6; }
             p { margin: 5px 0; }
             @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         </style>
     </head>
     <body onload="setTimeout(function() { document.forms['netcash_pay'].submit(); }, 1500)">
+        <div class="seabe-brand">Seabe <span>Pay</span></div>
         <div class="loader"></div>
-        <p><strong>Connecting to Netcash...</strong></p>
+        <p><strong>Connecting to secure gateway...</strong></p>
         <p style="font-size:12px; opacity:0.7;">If you are not redirected automatically, click the button below.</p>
         
         <form name="netcash_pay" action="${PAYNOW_URL}" method="POST" target="_top">
-            <input type="hidden" name="M1" value="${PAYNOW_SERVICE_KEY}">
+            <input type="hidden" name="M1" value="${NETCASH_MASTER_KEY}">
             ${vendorInput}
             <input type="hidden" name="p2" value="${txData.reference}">
             <input type="hidden" name="p3" value="${cleanDesc}">
@@ -66,7 +68,7 @@ function generateAutoPostForm(txData) {
             <input type="hidden" name="p10" value="${txData.email || ''}"> 
             <input type="hidden" name="p11" value="${txData.phone || ''}">
             <input type="hidden" name="submit" value="PAY">
-            <button type="submit" class="btn">Click here to Pay R${amount}</button>
+            <button type="submit" class="btn">Proceed to Secure Payment</button>
         </form>
     </body>
     </html>
@@ -74,62 +76,94 @@ function generateAutoPostForm(txData) {
 }
 
 // ==========================================
-// 2. SHORT LINK GENERATOR (Risk & Fee Aware)
+// 2. DIRECT LINK GENERATOR (Risk & Fee Aware)
 // ==========================================
 /**
- * @param {number} finalAmount - The amount user pays
- * @param {string} ref - Transaction reference
- * @param {string} userPhone - Payer's phone
- * @param {string} orgName - Church Name
- * @param {string} churchCode - REQUIRED: Church Code for Compliance Check
+ * Generates a direct Netcash link while guaranteeing the PENDING transaction exists in the DB.
+ * Supports both Positional Arguments (Collections) and Object Signatures (WhatsApp Bot).
  */
-async function createPaymentLink(finalAmount, ref, userPhone, orgName, email = '', churchCode = 'UNKNOWN') {
+async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailArg = '', churchCodeArg = 'UNKNOWN') {
     try {
-        const cleanAmount = sanitizeMoney(finalAmount);
+        // 1. Unpack flexible arguments
+        let amount, ref, phone, orgName, email, churchCode;
+
+        if (typeof amountArg === 'object' && amountArg !== null) {
+            amount = amountArg.amount;
+            ref = amountArg.reference;
+            phone = amountArg.phone || '0000000000';
+            orgName = amountArg.description || 'Seabe Payment';
+            email = amountArg.email || '';
+            churchCode = amountArg.churchCode || 'UNKNOWN';
+        } else {
+            amount = amountArg;
+            ref = refArg;
+            phone = phoneArg || '0000000000';
+            orgName = orgNameArg || 'Seabe Payment';
+            email = emailArg || '';
+            churchCode = churchCodeArg || 'UNKNOWN';
+        }
+
+        const cleanAmount = sanitizeMoney(amount);
         if (cleanAmount == 0) return null;
 
-        if (!PAYNOW_SERVICE_KEY) {
-            console.error("❌ MISSING NETCASH PAYNOW KEY");
+        if (!NETCASH_MASTER_KEY) {
+            console.error("❌ MISSING NETCASH MASTER KEY");
             return null;
         }
 
         // 🛡️ STEP 1: RUN VELOCITY & RISK CHECK
-        // If this returns false, we refuse to generate the link.
-        const complianceCheck = await runVelocityCheck(userPhone, churchCode, parseFloat(cleanAmount));
+        const complianceCheck = await runVelocityCheck(phone, churchCode, parseFloat(cleanAmount));
         if (!complianceCheck.allowed) {
-            console.warn(`⛔ BLOCKED: Velocity Check Failed for ${userPhone}. Reason: ${complianceCheck.reason}`);
-            // Return a special error string the bot can detect
+            console.warn(`⛔ BLOCKED: Velocity Check Failed for ${phone}. Reason: ${complianceCheck.reason}`);
             return `BLOCKED_RISK:${complianceCheck.message}`; 
         }
 
-        // 💰 STEP 2: CALCULATE FEE SPLITS (The Four Pillars)
-        // We calculate this NOW so we can bake it into the token
+        // 💰 STEP 2: CALCULATE FEE SPLITS
         const pricing = await calculateTransaction(parseFloat(cleanAmount), 'STANDARD', 'PAYMENT_LINK', false);
         
-        const host = process.env.HOST_URL || 'https://seabe.tech';
-        
-        // 🚀 STEP 3: CREATE SMART TOKEN
-        // We pack the Fee Splits into the token so the DB write is accurate
-        const payload = JSON.stringify({
-            r: ref,           // Reference
-            a: cleanAmount,   // Gross Amount (R150)
-            p: userPhone,     // Phone
-            o: orgName,       // Org Name
-            c: churchCode,    // Church Code (For DB Link)
-            e: email,         // Email
-            // Baked-in Fee Ledger 🧾
-            nf: pricing.netcashFee,   // Netcash Fee
-            pf: pricing.platformFee,  // Seabe Fee
-            ns: pricing.netSettlement // Church Settlement
+        // 💾 STEP 3: GUARANTEE LEDGER RECORD (UPSERT)
+        // This ensures the webhook can find the transaction when the user pays!
+        const member = await prisma.member.findFirst({ where: { phone: phone, churchCode: churchCode } });
+
+        await prisma.transaction.upsert({
+            where: { reference: ref },
+            update: {
+                netcashFee: pricing.netcashFee,
+                platformFee: pricing.platformFee,
+                netSettlement: pricing.netSettlement
+            },
+            create: {
+                reference: ref,
+                amount: parseFloat(cleanAmount),
+                type: 'INVOICE',
+                status: 'PENDING',
+                method: 'NETCASH',
+                phone: phone,
+                churchCode: churchCode,
+                memberId: member ? member.id : null,
+                netcashFee: pricing.netcashFee,
+                platformFee: pricing.platformFee,
+                netSettlement: pricing.netSettlement
+            }
         });
 
-        // Encode to URL-safe Base64
-        const token = Buffer.from(payload).toString('base64')
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_')
-            .replace(/=+$/, '');
+        // 🚀 STEP 4: GENERATE DIRECT PAYNOW URL
+        const BASE_URL = process.env.BASE_URL || 'https://seabe-bot-test.onrender.com';
+        
+        const params = new URLSearchParams({
+            p1: NETCASH_MASTER_KEY,
+            p2: ref,
+            p3: orgName.substring(0, 50),
+            p4: cleanAmount,
+            Budget: 'N',
+            p10: email,
+            p11: phone,
+            NotifyUrl: `${BASE_URL}/api/core/webhooks/payment`,
+            ReturnUrl: `${BASE_URL}/payment-success`,
+            CancelUrl: `${BASE_URL}/payment-failed`
+        });
 
-        return `${host}/pay/${token}`;
+        return `${PAYNOW_URL}?${params.toString()}`;
 
     } catch (error) {
         console.error("❌ NetCash Link Error:", error.message);
@@ -161,7 +195,6 @@ async function getTransactionHistory(memberId) {
         let historyMessage = "📜 *Your Last 5 Contributions:*\n\n";
         transactions.forEach((tx, index) => {
             const date = new Date(tx.date).toLocaleDateString('en-ZA');
-            // Show the user the GROSS amount, not the net
             historyMessage += `${index + 1}. *R${tx.amount.toFixed(2)}* - ${tx.type || 'Payment'} (${date})\n`;
         });
         return historyMessage;
@@ -179,8 +212,7 @@ async function setupDebitOrderMandate(baseAmount, userPhone, orgName, ref) {
         const pricing = await calculateTransaction(baseAmount, 'STANDARD', 'DEBIT_ORDER', true);
         console.log(`💳 Generating Netcash Mandate for ${userPhone}. Total: R${pricing.totalChargedToUser}`);
 
-        const host = process.env.HOST_URL || 'https://seabe.tech';
-        // We pass the splits here too if needed, but Mandates are usually calculated at batch time
+        const host = process.env.BASE_URL || 'https://seabe.tech';
         const mandateUrl = `${host}/mandate/sign?ref=${ref}&amount=${pricing.totalChargedToUser}&phone=${userPhone}&org=${encodeURIComponent(orgName)}`;
         
         return {
@@ -205,5 +237,3 @@ module.exports = {
     setupDebitOrderMandate,
     listActiveSubscriptions
 };
-
-
