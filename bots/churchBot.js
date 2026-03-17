@@ -238,7 +238,7 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
             
             if (link) {
                 delete session.selectedEvent;
-                reply = `Tap to securely pay R${amount} via Netcash:\n👉 ${link}`;
+                reply = `Tap to securely pay R${amount} to *${church.name}* via Seabe Pay:\n👉 ${link}`;
                              
             } else {
                 reply = "⚠️ Payment link error. Please try again later.";
