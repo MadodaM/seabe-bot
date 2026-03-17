@@ -10,7 +10,7 @@
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken'); // Used for signing the Verifiable Credential
 const { PrismaClient } = require('@prisma/client');
-const prisma = require('./services/prisma-client');
+const prisma = require('./prisma-client');
 
 // In production, this must be a highly secure, rotated key stored in your .env
 const ZK_SIGNING_SECRET = process.env.JWT_SECRET || 'fallback_dev_secret_do_not_use_in_prod';

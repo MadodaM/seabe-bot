@@ -2,7 +2,7 @@
 // VERSION: 12.0 (Fee Segregation + Velocity Checks + Risk Engine Integration)
 const axios = require('axios');
 const { PrismaClient } = require('@prisma/client');
-const prisma = require('./services/prisma-client');
+const prisma = require('./prisma-client');
 require('dotenv').config();
 
 // 🚀 Import the Engines

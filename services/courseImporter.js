@@ -1,6 +1,6 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { PrismaClient } = require('@prisma/client');
-const prisma = require('./services/prisma-client');
+const prisma = require('./prisma-client');
 
 
 async function processAndImportCoursePDF(pdfBuffer, mimeType, churchId, price = 0) {

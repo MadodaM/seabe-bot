@@ -1,7 +1,7 @@
 // services/dripCampaign.js
 const cron = require('node-cron');
 const { PrismaClient } = require('@prisma/client');
-const prisma = require('./services/prisma-client');
+const prisma = require('./prisma-client');
 
 // 🛠️ Modular Import
 const { sendWhatsApp } = require('./twilioClient');

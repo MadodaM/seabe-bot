@@ -1,7 +1,7 @@
 // services/batchCron.js
 const cron = require('node-cron');
 const { PrismaClient } = require('@prisma/client');
-const prisma = require('./services/prisma-client');
+const prisma = require('./prisma-client');
 const axios = require('axios');
 const sgMail = require('@sendgrid/mail');
 const { calculateTransaction } = require('./pricingEngine');
