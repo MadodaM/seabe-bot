@@ -1,7 +1,7 @@
 // services/weeklyReportCron.js
 const cron = require('node-cron');
 const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('./services/prisma-client');
 const sgMail = require('@sendgrid/mail'); 
 const { calculateTransaction } = require('./pricingEngine'); // 🚀 INJECTED PRICING ENGINE
 

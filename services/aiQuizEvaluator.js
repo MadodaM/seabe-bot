@@ -1,7 +1,7 @@
 // services/aiQuizEvaluator.js
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('./services/prisma-client');
 const { sendWhatsAppMedia } = require('./twilioClient');
 const { generateCertificate } = require('./certificateGenerator');
 

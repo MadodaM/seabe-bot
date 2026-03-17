@@ -101,6 +101,18 @@ model Church {
   otpExpires    DateTime?
   createdAt     DateTime  @default(now())
   tosAcceptedAt DateTime? // 👈 Add this so web.js can save the Terms agreement
+  
+  // Compliance Tracking
+  agencyAccepted    Boolean  @default(false)
+  acceptedAt        DateTime?
+  acceptedVersion   String?  // e.g., "v1.0-SARB-DIR1-2007"
+  acceptedByIp      String?  // For audit log forensic proof
+  
+  // --- COMPLIANCE ARCHIVE FIELDS ---
+  deletedAt       DateTime? // If populated, the record is "soft deleted"
+  archived        Boolean  @default(false)
+  retentionExpiry DateTime? // Exactly 5 years from createdAt
+  
 
   // Relations
   admins  Admin[]

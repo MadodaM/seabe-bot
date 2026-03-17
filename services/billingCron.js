@@ -1,7 +1,7 @@
 // services/billingCron.js
 const cron = require('node-cron');
 const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('./services/prisma-client');
 const { sendWhatsApp } = require('./whatsapp'); 
 const netcash = require('./netcash');
 const { calculateTransaction } = require('./pricingEngine'); // 🚀 ADDED PRICING ENGINE

@@ -4,7 +4,7 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const cloudinary = require('cloudinary').v2;
 const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient(); 
+const prisma = require('./services/prisma-client'); 
 const axios = require('axios');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);

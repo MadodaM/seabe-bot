@@ -2,7 +2,7 @@
 // VERSION: 2.0 (Velocity + PEP/Sanctions Risk Engine)
 
 const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('./services/prisma-client');
 
 // 🚩 CONFIGURABLE RISK THRESHOLDS
 const THRESHOLDS = {
