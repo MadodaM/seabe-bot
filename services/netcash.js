@@ -2,6 +2,7 @@
 // VERSION: 13.1 (White-labeled Seabe Pay Auto-Post UI)
 const axios = require('axios');
 const prisma = require('./db'); // 🔒 Uses your global encrypted Prisma interceptor
+const crypto = require('crypto'); // 👈 ADD THIS NATIVE NODE LIBRARY
 require('dotenv').config();
 
 // 🚀 Import the Engines
@@ -12,6 +13,35 @@ const { runVelocityCheck } = require('./complianceEngine');
 const NETCASH_MASTER_KEY = process.env.NETCASH_MASTER_KEY || process.env.NETCASH_PAYNOW_SERVICE_KEY;
 const PAYNOW_URL = "https://paynow.netcash.co.za/site/paynow.aspx";
 const VENDOR_KEY = process.env.NETCASH_VENDOR_KEY; 
+
+// 🔐 AES-256 ENCRYPTION SETUP
+// Must be exactly 32 characters long. We fall back to a hardcoded one for testing, but you MUST add this to your .env
+const ENCRYPTION_KEY = process.env.SEABE_ENCRYPTION_KEY || 'SeabeDigitalSecureKey2026!@#$%^&'; 
+const IV_LENGTH = 16;
+
+function encryptReference(reference) {
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
+    let encrypted = cipher.update(reference);
+    encrypted = Buffer.concat([encrypted, cipher.final()]);
+    // Combine IV and Encrypted data, and convert to a URL-safe Base64 string
+    return Buffer.from(iv.toString('hex') + ':' + encrypted.toString('hex')).toString('base64url');
+}
+
+function decryptReference(secureToken) {
+    try {
+        const text = Buffer.from(secureToken, 'base64url').toString('ascii');
+        let textParts = text.split(':');
+        let iv = Buffer.from(textParts.shift(), 'hex');
+        let encryptedText = Buffer.from(textParts.join(':'), 'hex');
+        let decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
+        let decrypted = decipher.update(encryptedText);
+        decrypted = Buffer.concat([decrypted, decipher.final()]);
+        return decrypted.toString();
+    } catch (error) {
+        return null; // Invalid or tampered token
+    }
+}
 
 // ==========================================
 // 🛠️ HELPER: MONEY SANITIZER
@@ -159,23 +189,14 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
             }
         });
 
-        // 🚀 STEP 4: GENERATE DIRECT PAYNOW URL
+        // 🚀 STEP 4: GENERATE ENCRYPTED SHORT LINK
         const BASE_URL = process.env.BASE_URL || 'https://seabe-bot-test.onrender.com';
         
-        const params = new URLSearchParams({
-            p1: NETCASH_MASTER_KEY,
-            p2: ref,
-            p3: orgName.substring(0, 50),
-            p4: cleanAmount,
-            Budget: 'N',
-            p10: email,
-            p11: phone,
-            NotifyUrl: `${BASE_URL}/api/core/webhooks/payment`,
-            ReturnUrl: `${BASE_URL}/payment-success`,
-            CancelUrl: `${BASE_URL}/payment-failed`
-        });
-
-        return `${PAYNOW_URL}?${params.toString()}`;
+        // Encrypt the reference number
+        const secureToken = encryptReference(ref);
+        
+        // Return a beautiful, short, white-labeled URL
+        return `${BASE_URL}/pay/${secureToken}`;
 
     } catch (error) {
         console.error("❌ NetCash Link Error:", error.message);
@@ -244,6 +265,7 @@ async function listActiveSubscriptions(phone) {
 module.exports = { 
     createPaymentLink, 
     generateAutoPostForm,
+	decryptReference,
     verifyPayment, 
     getTransactionHistory,
     setupDebitOrderMandate,
