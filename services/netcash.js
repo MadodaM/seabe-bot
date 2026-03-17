@@ -151,11 +151,11 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
         // 💰 STEP 2: CALCULATE FEE SPLITS
         const pricing = await calculateTransaction(parseFloat(cleanAmount), 'STANDARD', 'PAYMENT_LINK', false);
         
-        // 💡 STEP 3: SMART EXTRACTION
-        // Pull the church code directly from the reference if it was 'UNKNOWN'
+        // 💡 STEP 3: SMART EXTRACTION (First 6 Characters)
         let finalChurchCode = churchCode;
         if (!finalChurchCode || finalChurchCode === 'UNKNOWN') {
-            finalChurchCode = ref.split('-')[0]; 
+            // Extracts exactly the first 6 characters (e.g., 'BS-001' or 'TES247')
+            finalChurchCode = ref.substring(0, 6); 
         }
         
         // 🛡️ SAFETY CHECK: Ensure the RESOLVED code is perfectly formatted
