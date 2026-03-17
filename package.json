@@ -10,7 +10,7 @@
     "add-event": "node scripts/add-event.js",
     "update-news": "node scripts/update-news.js",
     "add-ad": "node scripts/add-ad.js",
-	"postinstall": "npx prisma generate && npx prisma db push"
+	"postinstall": "npx prisma generate && npx prisma db push",
     "build": "npx prisma generate && npx prisma db push"
   },
   "keywords": [],
