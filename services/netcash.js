@@ -151,51 +151,61 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
         // 💰 STEP 2: CALCULATE FEE SPLITS
         const pricing = await calculateTransaction(parseFloat(cleanAmount), 'STANDARD', 'PAYMENT_LINK', false);
         
-        // 💾 STEP 3: GUARANTEE LEDGER RECORD (UPSERT)
-        const member = await prisma.member.findFirst({ where: { phone: phone } });
-
-        // 💡 SMART EXTRACTION: Pull the church code directly from the reference
+        // 💡 STEP 3: SMART EXTRACTION
+        // Pull the church code directly from the reference if it was 'UNKNOWN'
         let finalChurchCode = churchCode;
         if (!finalChurchCode || finalChurchCode === 'UNKNOWN') {
             finalChurchCode = ref.split('-')[0]; 
         }
+        
+        // 🛡️ SAFETY CHECK: Ensure the RESOLVED code is perfectly formatted
+        if (!finalChurchCode) throw new Error("Missing churchCode in payment link request.");
+        const safeCode = finalChurchCode.toUpperCase().trim();
 
-        await prisma.transaction.upsert({
+        // Check if the church actually exists before trying to connect
+        const orgExists = await prisma.church.findUnique({ where: { code: safeCode } });
+        if (!orgExists) {
+            throw new Error(`The organization code '${safeCode}' does not exist in the database.`);
+        }
+
+        // 💾 STEP 4: GUARANTEE LEDGER RECORD (SINGLE UPSERT)
+        const member = await prisma.member.findFirst({ where: { phone: phone } });
+
+        const transaction = await prisma.transaction.upsert({
             where: { reference: ref },
-            update: {
+            update: { 
+                amount: pricing.baseAmount,
+                status: 'PENDING',
                 netcashFee: pricing.netcashFee,
                 platformFee: pricing.platformFee,
                 netSettlement: pricing.netSettlement
             },
             create: {
                 reference: ref,
-                amount: parseFloat(cleanAmount),
-                type: 'INVOICE',
+                amount: pricing.baseAmount,
+                type: 'PAYMENT_LINK', // 👈 Fixed undefined type variable
                 status: 'PENDING',
                 method: 'NETCASH',
                 phone: phone,
                 
-                // Link the Church strictly
-                church: {
-                    connect: { code: finalChurchCode }
-                },
-                
-                // 💡 THE FIX: Use Prisma's strict relation syntax for Member, or omit if null
+                // Strict relationships
+                church: { connect: { code: safeCode } },
                 ...(member ? { member: { connect: { id: member.id } } } : {}),
                 
+                // Fee splits
                 netcashFee: pricing.netcashFee,
                 platformFee: pricing.platformFee,
                 netSettlement: pricing.netSettlement
             }
         });
 
-        // 🚀 STEP 4: GENERATE ENCRYPTED SHORT LINK
+        // 🚀 STEP 5: GENERATE ENCRYPTED SHORT LINK
         const BASE_URL = process.env.BASE_URL || 'https://seabe-bot-test.onrender.com';
         
         // Encrypt the reference number
         const secureToken = encryptReference(ref);
         
-        // Return a beautiful, short, white-labeled URL (Changed from /pay/ to /secure-pay/)
+        // Return a beautiful, short, white-labeled URL
         return `${BASE_URL}/secure-pay/${secureToken}`;
 
     } catch (error) {
