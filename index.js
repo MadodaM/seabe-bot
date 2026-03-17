@@ -152,6 +152,10 @@ try {
     console.error("❌ CRITICAL: Web routes failed to load!");
     console.error(e); // This will show you exactly why it failed
 }
+try { 
+    require('./routes/adminPricing')(app, { prisma }); 
+    console.log("✅ Pricing Dashboard Loaded");
+} catch (e) { console.error("⚠️ Pricing routes failed:", e.message); }
 
 // D. API & WhatsApp
 app.use('/api/whatsapp', require('./routes/whatsappRouter'));
