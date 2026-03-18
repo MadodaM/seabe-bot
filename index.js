@@ -135,6 +135,69 @@ const syncToHubSpot = async (data) => {
             res.status(500).send("Secure link generation failed.");
         }
     });
+	
+// ============================================================
+    // 🌐 USER BROWSER REDIRECTS (From Netcash back to Seabe)
+    // ============================================================
+
+    // 1. When the user completes payment successfully
+    app.get('/api/netcash/success', (req, res) => {
+        res.send(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Payment Successful</title>
+                <style>
+                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f8fafc; text-align: center; padding: 20px; }
+                    .card { background: white; padding: 40px 20px; border-radius: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); max-width: 400px; width: 100%; border: 1px solid #e2e8f0; }
+                    .icon { font-size: 64px; margin-bottom: 20px; }
+                    h1 { color: #0f172a; margin: 0 0 10px 0; font-size: 24px; font-weight: 800; }
+                    p { color: #64748b; margin: 0 0 30px 0; line-height: 1.5; }
+                    .btn { background: #14b8a6; color: white; text-decoration: none; padding: 14px 24px; border-radius: 12px; font-weight: bold; display: inline-block; width: 80%; box-sizing: border-box; }
+                </style>
+            </head>
+            <body>
+                <div class="card">
+                    <div class="icon">✅</div>
+                    <h1>Payment Successful!</h1>
+                    <p>Thank you. Your transaction has been securely processed. Your receipt has been sent via WhatsApp.</p>
+                    <a href="https://wa.me/27872657872" class="btn">Return to WhatsApp</a>
+                </div>
+            </body>
+            </html>
+        `);
+    });
+
+    // 2. When the user cancels or the card declines
+    app.get('/api/netcash/decline', (req, res) => {
+        res.send(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Payment Cancelled</title>
+                <style>
+                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f8fafc; text-align: center; padding: 20px; }
+                    .card { background: white; padding: 40px 20px; border-radius: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); max-width: 400px; width: 100%; border: 1px solid #e2e8f0; }
+                    .icon { font-size: 64px; margin-bottom: 20px; }
+                    h1 { color: #0f172a; margin: 0 0 10px 0; font-size: 24px; font-weight: 800; }
+                    p { color: #64748b; margin: 0 0 30px 0; line-height: 1.5; }
+                    .btn { background: #64748b; color: white; text-decoration: none; padding: 14px 24px; border-radius: 12px; font-weight: bold; display: inline-block; width: 80%; box-sizing: border-box; }
+                </style>
+            </head>
+            <body>
+                <div class="card">
+                    <div class="icon">⚠️</div>
+                    <h1>Payment Incomplete</h1>
+                    <p>Your transaction was cancelled or declined. No funds were deducted from your account.</p>
+                    <a href="https://wa.me/27100000000" class="btn">Return to WhatsApp</a>
+                </div>
+            </body>
+            </html>
+        `);
+    });	
+	
 
 // A. Special Routes (No Auth / Webhooks)
 app.use('/api/fica', ficaPortalRoutes);
