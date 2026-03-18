@@ -408,6 +408,7 @@ router.post('/', (req, res) => {
                                 lastName: 'Member',
                                 church: { connect: { id: session.churchId } }, 
                                 status: 'PENDING_KYC',
+								kycStatus: 'PENDING',
                                 monthlyPremium: session.monthlyPremium
                             }
                         });
@@ -455,6 +456,7 @@ router.post('/', (req, res) => {
                                     lastName: extractedData.lastName, 
                                     idNumber: extractedData.idNumber, 
                                     isIdVerified: true, 
+									kycStatus: 'APPROVED', // 👈 NEW: Instantly verified on Dashboard
                                     monthlyPremium: session.monthlyPremium,
                                     policyNumber: session.policyNumber
                                 }
