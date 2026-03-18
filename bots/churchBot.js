@@ -235,7 +235,7 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
 
             // For dynamic user input, we take the amount as is (no added fees typically for donations)
             // We add '', church.code, and session.txType as the 5th, 6th, and 7th arguments
-			const link = await gateway.createPaymentLink(amount, ref, cleanPhone, session.orgName, '', church.code, session.txType);
+			const link = await gateway.createPaymentLink(amount, ref, cleanPhone, session.orgName, '', session.churchCode, session.txType);
             
             if (link) {
                 delete session.selectedEvent;
