@@ -26,21 +26,23 @@ async function calculateTransaction(baseAmount, moduleType = 'STANDARD', payment
     }
 
     // 3. Fetch Module Variables from DB (Seabe's Platform Fee)
-    let modPct = 0;
-    let modFlat = await getPrice('MOD_STANDARD_FLAT') || 5.00; // Default R5.00 Seabe fee fallback
+    // 👇 Default to the new 1.0% + R1.00 structure
+    let modPct = await getPrice('MOD_STANDARD_PERCENTAGE') || 0.01; 
+    let modFlat = await getPrice('MOD_STANDARD_FLAT') || 1.00; 
     let modMin = 0;
 
+    // Override defaults ONLY if it's a special module
     if (moduleType === 'LMS_COURSE') {
-        modPct = await getPrice('MOD_LMS_PCT');
-        modMin = await getPrice('MOD_LMS_MIN');
+        modPct = await getPrice('MOD_LMS_PCT') || 0;
+        modMin = await getPrice('MOD_LMS_MIN') || 0;
         modFlat = 0;
     } else if (moduleType === 'RESTAURANT_BILL') {
-        modFlat = await getPrice('MOD_REST_FLAT');
+        modFlat = await getPrice('MOD_REST_FLAT') || 0;
     } else if (moduleType === 'RETAIL_ORDER') {
-        modFlat = await getPrice('MOD_RETAIL_FLAT');
+        modFlat = await getPrice('MOD_RETAIL_FLAT') || 0;
     }
 
-    // 4. Calculate Fees
+    // 4. Calculate Fees (Calculated ONCE, correctly)
     let platformFee = (amount * modPct) + modFlat;
     if (modMin && platformFee < modMin) platformFee = modMin;
 
