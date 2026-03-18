@@ -71,6 +71,7 @@ function renderAdminPage(title, content, error = null) {
                 .tag-church { background:#eefdf5; color:green; border:1px solid green; }
                 .tag-society { background:#eefafc; color:#0984e3; border:1px solid #0984e3; }
                 .tag-npo { background:#fff8e1; color:#f39c12; border:1px solid #f39c12; }
+				.tag-stokvel { background:#fce4ec; color:#e91e63; border:1px solid #e91e63; }
                 .tag-provider { background:#f5eef8; color:#8e44ad; border:1px solid #8e44ad; }
                 .btn { padding: 8px 15px; border-radius: 4px; text-decoration: none; font-size: 13px; font-weight: bold; cursor: pointer; border: none; display: inline-block; transition: 0.2s; }
                 .btn-primary { background: #1e272e; color: white; }
@@ -233,6 +234,7 @@ module.exports = function(app, { prisma }) {
                 if (c.type === 'BURIAL_SOCIETY') badgeClass = 'tag-society';
                 if (c.type === 'NON_PROFIT') badgeClass = 'tag-npo';
                 if (c.type === 'SERVICE_PROVIDER') badgeClass = 'tag-provider';
+				if (c.type === 'STOKVEL_SAVINGS') badgeClass = 'tag-stokvel';
 
                 return `
                 <tr>
@@ -289,6 +291,7 @@ module.exports = function(app, { prisma }) {
                     <select name="type">
                         <option value="CHURCH">Church</option>
                         <option value="BURIAL_SOCIETY">Society</option>
+						<option value="STOKVEL_SAVINGS">Stokvel / Savings Club</option>
                         <option value="NON_PROFIT">NGO</option>
                         <option value="SERVICE_PROVIDER">Service Provider</option> 
                     </select>
@@ -1982,43 +1985,88 @@ module.exports = function(app, { prisma }) {
     });
 
     // ============================================================
-    // 5. USERS
+    // 👥 MEMBER KYC & IDENTITY PORTAL (Upgraded for Stokvels)
     // ============================================================
     app.get('/admin/users', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         const q = req.query.q || '';
+        
         try {
             const members = await prisma.member.findMany({ 
                 where: { 
                     OR: [
                         { phone: { contains: q } }, 
-                        { churchCode: { contains: q, mode: 'insensitive' } }
+                        { churchCode: { contains: q, mode: 'insensitive' } },
+                        { idNumber: { contains: q } }
                     ] 
                 }, 
-                take: 50, 
+                take: 100, 
                 orderBy: { id: 'desc' } 
             });
 
-            const rows = members.map(m => `
+            const rows = members.map(m => {
+                // 🛡️ KYC Badge Logic
+                let kycBadge = `<span class="tag" style="background:#f1f2f6; color:#7f8c8d;">UNVERIFIED</span>`;
+                if (m.kycStatus === 'APPROVED') kycBadge = `<span class="tag" style="background:#e8f5e9; color:#27ae60;">✅ VERIFIED</span>`;
+                if (m.kycStatus === 'PENDING') kycBadge = `<span class="tag" style="background:#fff3e0; color:#e67e22;">⏳ PENDING REVIEW</span>`;
+                if (m.kycStatus === 'REJECTED') kycBadge = `<span class="tag" style="background:#ffebee; color:#c0392b;">❌ REJECTED</span>`;
+
+                return `
                 <tr>
-                    <td>${m.phone}</td>
-                    <td><span class="tag tag-church">${m.churchCode}</span></td>
-                    <td>${m.firstName || 'Unknown'}</td>
+                    <td>
+                        <strong>${m.firstName || 'Unknown'} ${m.lastName || ''}</strong><br>
+                        <span style="font-size:11px; color:#7f8c8d;">${m.phone}</span>
+                    </td>
+                    <td><span style="font-family:monospace; font-size:13px;">${m.idNumber || '<span style="color:#bdc3c7;">Not Provided</span>'}</span></td>
+                    <td><span class="tag tag-church">${m.churchCode || 'ORPHANED'}</span></td>
+                    <td>${kycBadge}</td>
+                    <td style="text-align:right;">
+                        ${m.kycStatus === 'PENDING' ? `
+                            <form action="/admin/users/kyc-approve" method="POST" style="display:inline;">
+                                <input type="hidden" name="memberId" value="${m.id}">
+                                <button class="btn btn-save" style="font-size:11px; padding:6px 10px;">Approve ID</button>
+                            </form>
+                        ` : `
+                            <button class="btn btn-edit" style="font-size:11px; padding:6px 10px;">View Profile</button>
+                        `}
+                    </td>
                 </tr>
-            `).join('');
+            `}).join('');
 
             const content = `
-                <form class="search-bar">
-                    <input name="q" value="${q}" placeholder="Search Phone or Code..." style="padding:10px; width:300px; border:1px solid #ddd; border-radius:4px;">
-                    <button class="btn btn-primary">Search</button>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                    <div>
+                        <h2 style="margin:0; color:#2c3e50;">👥 Member KYC Directory</h2>
+                        <p style="font-size:12px; color:#7f8c8d; margin-top:5px;">Manage Stokvel and Church member identities.</p>
+                    </div>
+                </div>
+                
+                <form class="search-bar" style="background:white; padding:15px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.02);">
+                    <input name="q" value="${q}" placeholder="Search by Phone, ID Number, or Org Code..." style="padding:10px; width:400px; border:1px solid #ddd; border-radius:4px;">
+                    <button class="btn btn-primary" style="padding:10px 20px;">🔍 Search KYC Database</button>
                 </form>
-                <table>
-                    <thead><tr><th>Phone</th><th>Org Code</th><th>Name</th></tr></thead>
-                    <tbody>${rows}</tbody>
+                
+                <table style="margin-top:20px;">
+                    <thead><tr><th>Member Details</th><th>SA ID Number</th><th>Organization</th><th>KYC Status</th><th style="text-align:right;">Action</th></tr></thead>
+                    <tbody>${rows || '<tr><td colspan="5" style="text-align:center; padding:30px; color:#95a5a6;">No members found.</td></tr>'}</tbody>
                 </table>
             `;
-            res.send(renderAdminPage('Manage Users', content));
+            res.send(renderAdminPage('Member KYC Directory', content));
         } catch(e) { res.send(renderAdminPage('Error', '', e.message)); }
+    });
+
+    // 🛡️ API: APPROVE MEMBER KYC
+    app.post('/admin/users/kyc-approve', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        try {
+            await prisma.member.update({
+                where: { id: parseInt(req.body.memberId) },
+                data: { kycStatus: 'APPROVED' }
+            });
+            res.redirect('/admin/users');
+        } catch(e) {
+            res.send(renderAdminPage('KYC Error', '', e.message));
+        }
     });
 
     // ============================================================

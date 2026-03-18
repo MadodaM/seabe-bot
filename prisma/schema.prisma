@@ -28,6 +28,8 @@ model Member {
   idPhotoUrl        String? // Stores encrypted Cloudinary URL
   proofOfAddressUrl String? // Stores encrypted Cloudinary URL
   isIdVerified      Boolean   @default(false)
+  // 🛡️ KYC Pipeline Tracker
+  kycStatus         String    @default("UNVERIFIED") // UNVERIFIED, PENDING, APPROVED, REJECTED
   rejectionReason   String?
   verifiedAt        DateTime?
   consecutiveFailures Int @default(0) // 🛡️ Tracks Clause 8.2 (2 Strikes)
@@ -42,6 +44,10 @@ model Member {
   // Link 2: Burial Society (Optional)
   societyCode String?
   society     Church? @relation("SocietyMembers", fields: [societyCode], references: [code])
+  
+  // 💰 NEW: Link 3: Stokvel Savings Club (Optional)
+  stokvelCode String?
+  stokvel     Church? @relation("StokvelMembers", fields: [stokvelCode], references: [code])
 
   // Society Data
   status       String   @default("ACTIVE")
@@ -117,10 +123,13 @@ model Church {
   // Relations
   admins  Admin[]
   courses Course[]
+  
+  
 
   // Member Relations
   churchMembers  Member[] @relation("ChurchMembers")
   societyMembers Member[] @relation("SocietyMembers")
+  stokvelMembers Member[] @relation("StokvelMembers")
 
   transactions   Transaction[]
   ledgerEntries  TransactionLedger[]
