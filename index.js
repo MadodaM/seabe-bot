@@ -191,7 +191,7 @@ const syncToHubSpot = async (data) => {
                     <div class="icon">⚠️</div>
                     <h1>Payment Incomplete</h1>
                     <p>Your transaction was cancelled or declined. No funds were deducted from your account.</p>
-                    <a href="https://wa.me/27100000000" class="btn">Return to WhatsApp</a>
+                    <a href="https://wa.me/27872657872" class="btn">Return to WhatsApp</a>
                 </div>
             </body>
             </html>
