@@ -52,7 +52,7 @@ if (process.env.SENDGRID_KEY) sgMail.setApiKey(process.env.SENDGRID_KEY);
 // 1. GLOBAL MIDDLEWARES
 // ==========================================
 app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // Required for Twilio
+app.use(express.urlencoded({ extended: true })); // Required for Twilio and Netcash ITN form data
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/public', express.static(path.join(__dirname, 'public')));

@@ -2005,9 +2005,15 @@ module.exports = function(app, { prisma }) {
             });
 
             const rows = members.map(m => {
-                // 🛡️ KYC Badge Logic
+                // 1. Determine Organization Type
+                let orgBadge = `<span class="tag tag-church">${m.churchCode}</span>`;
+                if (m.societyCode) orgBadge = `<span class="tag tag-society">${m.societyCode}</span>`;
+                if (m.stokvelCode) orgBadge = `<span class="tag tag-stokvel">${m.stokvelCode}</span>`;
+                if (!m.churchCode && !m.societyCode && !m.stokvelCode) orgBadge = `<span class="tag" style="background:#eee; color:#666;">ORPHANED</span>`;
+
+                // 2. KYC Badge Logic
                 let kycBadge = `<span class="tag" style="background:#f1f2f6; color:#7f8c8d;">UNVERIFIED</span>`;
-                if (m.kycStatus === 'APPROVED') kycBadge = `<span class="tag" style="background:#e8f5e9; color:#27ae60;">✅ VERIFIED</span>`;
+                if (m.kycStatus === 'APPROVED' || m.isIdVerified) kycBadge = `<span class="tag" style="background:#e8f5e9; color:#27ae60;">✅ VERIFIED</span>`;
                 if (m.kycStatus === 'PENDING') kycBadge = `<span class="tag" style="background:#fff3e0; color:#e67e22;">⏳ PENDING REVIEW</span>`;
                 if (m.kycStatus === 'REJECTED') kycBadge = `<span class="tag" style="background:#ffebee; color:#c0392b;">❌ REJECTED</span>`;
 
@@ -2017,17 +2023,17 @@ module.exports = function(app, { prisma }) {
                         <strong>${m.firstName || 'Unknown'} ${m.lastName || ''}</strong><br>
                         <span style="font-size:11px; color:#7f8c8d;">${m.phone}</span>
                     </td>
-                    <td><span style="font-family:monospace; font-size:13px;">${m.idNumber || '<span style="color:#bdc3c7;">Not Provided</span>'}</span></td>
-                    <td><span class="tag tag-church">${m.churchCode || 'ORPHANED'}</span></td>
+                    <td><span style="font-family:monospace; font-size:13px; color:#bdc3c7;">🔒 Encrypted Vault</span></td>
+                    <td>${orgBadge}</td>
                     <td>${kycBadge}</td>
                     <td style="text-align:right;">
                         ${m.kycStatus === 'PENDING' ? `
                             <form action="/admin/users/kyc-approve" method="POST" style="display:inline;">
                                 <input type="hidden" name="memberId" value="${m.id}">
-                                <button class="btn btn-save" style="font-size:11px; padding:6px 10px;">Approve ID</button>
+                                <button class="btn btn-save" style="font-size:11px; padding:6px 10px;">Review Docs</button>
                             </form>
                         ` : `
-                            <button class="btn btn-edit" style="font-size:11px; padding:6px 10px;">View Profile</button>
+                            <button class="btn btn-edit" style="font-size:11px; padding:6px 10px;">Profile</button>
                         `}
                     </td>
                 </tr>
