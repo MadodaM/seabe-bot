@@ -13,6 +13,7 @@ const { evaluateQuiz } = require('../services/aiQuizEvaluator');
 const { getAISupportReply } = require('../services/aiSupport');
 const { handleSocietyMessage } = require('../bots/societyBot');
 const { handleChurchMessage } = require('../bots/churchBot');
+const { handleStokvelMessage } = require('../bots/stokvelBot');
 const { processTwilioClaim } = require('../services/aiClaimWorker');
 const { calculateTransaction } = require('../services/pricingEngine'); // 🚀 NEW: Pricing Engine
 
@@ -41,7 +42,7 @@ router.post('/', (req, res) => {
             // ================================================
             // 🔄 MULTI-TENANT CONTEXT SWITCHER
             // ================================================
-            const switchKeywords = { 'society': 'BURIAL_SOCIETY', 'amen': 'CHURCH', 'npo': 'NON_PROFIT' };
+            const switchKeywords = { 'society': 'BURIAL_SOCIETY', 'amen': 'CHURCH', 'npo': 'NON_PROFIT', 'stokvel': 'STOKVEL_SAVINGS' };
             let explicitType = switchKeywords[incomingMsg];
             let member;
 
@@ -755,7 +756,9 @@ router.post('/', (req, res) => {
             const mappedMsg = menuKeywords.includes(incomingMsg) ? 'menu' : incomingMsg;
 
             if (!session.mode && member.church) {
-                session.mode = member.church.type === 'BURIAL_SOCIETY' ? 'SOCIETY' : 'CHURCH';
+                if (member.church.type === 'BURIAL_SOCIETY') session.mode = 'SOCIETY';
+                else if (member.church.type === 'STOKVEL_SAVINGS') session.mode = 'STOKVEL';
+                else session.mode = 'CHURCH';
             }
 
             if (session.mode === 'SOCIETY') {
@@ -765,6 +768,11 @@ router.post('/', (req, res) => {
 
             if (session.mode === 'CHURCH') {
                 await handleChurchMessage(cleanPhone, mappedMsg, session, member);
+                return;
+            }
+			
+			if (session.mode === 'STOKVEL') {
+                await handleStokvelMessage(cleanPhone, mappedMsg, session, member);
                 return;
             }
 
