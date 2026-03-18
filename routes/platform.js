@@ -1206,6 +1206,20 @@ module.exports = function(app, { prisma }) {
             const { loadPrices } = require('../services/pricing');
             await loadPrices(); 
 
+            // 👇 1. AUTO-INJECTOR: Force missing variables into the DB so they appear in UI
+            const requiredVariables = [
+                { code: 'MOD_STANDARD_PERCENTAGE', amount: 0.01 },
+                { code: 'MOD_STANDARD_FLAT', amount: 1.00 }
+            ];
+
+            for (const item of requiredVariables) {
+                const exists = await prisma.servicePrice.findUnique({ where: { code: item.code } });
+                if (!exists) {
+                    await prisma.servicePrice.create({ data: item });
+                }
+            }
+            // 👆 END AUTO-INJECTOR
+
             const allPrices = await prisma.servicePrice.findMany({ orderBy: { code: 'asc' } });
             
             const makeRows = (data) => data.map(p => `
