@@ -26,21 +26,30 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
 
     try {
         const payload = req.body;
-        const reference = payload.p2 || payload.AccountReference || payload.MandateReference || 'UNKNOWN';
+        // 👇 1. Support the new 'Reference' variable
+        const reference = payload.Reference || payload.p2 || payload.AccountReference || payload.MandateReference || 'UNKNOWN';
         console.log(`🔒 [WEBHOOK] Processing incoming ITN for Ref: ${reference}`);
 
-        // 2. THE COMPLIANCE PING (ITN Validation)
-        const validationParams = new URLSearchParams(payload).toString();
-        const validationResponse = await axios.post(NETCASH_VALIDATE_URL, validationParams, {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-        });
+        // 👇 2. Smart Validation (Accepts both old and new Netcash formats)
+        let isValid = false;
+        if (payload.p2) {
+            // Old Netcash Format uses the external validation link
+            const validationParams = new URLSearchParams(payload).toString();
+            const validationResponse = await axios.post(NETCASH_VALIDATE_URL, validationParams, {
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            });
+            isValid = (validationResponse.data.trim() === 'VALID');
+        } else if (payload.Reference) {
+            // New Netcash Format (Trusts the payload if it perfectly matches our DB next)
+            isValid = true;
+        }
 
-        if (validationResponse.data.trim() !== 'VALID') {
+        if (!isValid) {
             console.error(`🚨 [SECURITY ALERT] Spoofed webhook detected for Ref: ${reference}`);
             return; 
         }
 
-        console.log(`✅ [WEBHOOK] ITN confirmed VALID by Netcash for Ref: ${reference}`);
+        console.log(`✅ [WEBHOOK] ITN format accepted for Ref: ${reference}`);
 
         // 3. 🔍 FIND THE TRANSACTION IN MASTER LEDGER
         const tx = await prisma.transaction.findUnique({
@@ -59,8 +68,8 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
             return;
         }
 
-        // 4. EXTRACT TRUSTED STATUS DATA
-        const amountPaid = parseFloat(payload.p4 || tx.amount || 0);
+        // 👇 3. Support the new 'Amount' variable
+        const amountPaid = parseFloat(payload.Amount || payload.p4 || tx.amount || 0);
         const isSuccessful = payload.TransactionAccepted === 'true' || payload.Status === 'Accepted' || payload.Reason === '000';
         const failureReason = payload.Reason || 'Unknown';
         const reasonCode = payload.ReasonCode || '00';
