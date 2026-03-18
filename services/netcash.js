@@ -112,10 +112,10 @@ function generateAutoPostForm(txData) {
  * Generates a direct Netcash link while guaranteeing the PENDING transaction exists in the DB.
  * Supports both Positional Arguments (Collections) and Object Signatures (WhatsApp Bot).
  */
-async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailArg = '', churchCodeArg = 'UNKNOWN') {
+async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailArg = '', churchCodeArg = 'UNKNOWN', txTypeArg = 'PAYMENT_LINK') {
     try {
         // 1. Unpack flexible arguments
-        let amount, ref, phone, orgName, email, churchCode;
+        let amount, ref, phone, orgName, email, churchCode, txType;
 
         if (typeof amountArg === 'object' && amountArg !== null) {
             amount = amountArg.amount;
@@ -124,6 +124,7 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
             orgName = amountArg.description || 'Seabe Payment';
             email = amountArg.email || '';
             churchCode = amountArg.churchCode || 'UNKNOWN';
+            txType = amountArg.txType || 'PAYMENT_LINK'; // 👈 Extracts dynamic type from object
         } else {
             amount = amountArg;
             ref = refArg;
@@ -131,6 +132,7 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
             orgName = orgNameArg || 'Seabe Payment';
             email = emailArg || '';
             churchCode = churchCodeArg || 'UNKNOWN';
+            txType = txTypeArg || 'PAYMENT_LINK'; // 👈 Extracts dynamic type from positional arguments
         }
 
         const cleanAmount = sanitizeMoney(amount);
@@ -148,13 +150,12 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
             return `BLOCKED_RISK:${complianceCheck.message}`; 
         }
 
-        // 💰 STEP 2: CALCULATE FEE SPLITS
-        const pricing = await calculateTransaction(parseFloat(cleanAmount), 'STANDARD', 'PAYMENT_LINK', false);
+        // 💰 STEP 2: CALCULATE FEE SPLITS (Now uses the dynamic txType)
+        const pricing = await calculateTransaction(parseFloat(cleanAmount), 'STANDARD', txType, false);
         
         // 💡 STEP 3: SMART EXTRACTION (First 6 Characters)
         let finalChurchCode = churchCode;
         if (!finalChurchCode || finalChurchCode === 'UNKNOWN') {
-            // Extracts exactly the first 6 characters (e.g., 'BS-001' or 'TES247')
             finalChurchCode = ref.substring(0, 6); 
         }
         
@@ -162,7 +163,6 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
         if (!finalChurchCode) throw new Error("Missing churchCode in payment link request.");
         const safeCode = finalChurchCode.toUpperCase().trim();
 
-        // Check if the church actually exists before trying to connect
         const orgExists = await prisma.church.findUnique({ where: { code: safeCode } });
         if (!orgExists) {
             throw new Error(`The organization code '${safeCode}' does not exist in the database.`);
@@ -176,6 +176,7 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
             update: { 
                 amount: pricing.baseAmount,
                 status: 'PENDING',
+                type: txType, // 👈 Updates the type if they clicked the link twice
                 netcashFee: pricing.netcashFee,
                 platformFee: pricing.platformFee,
                 netSettlement: pricing.netSettlement
@@ -183,16 +184,14 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
             create: {
                 reference: ref,
                 amount: pricing.baseAmount,
-                type: 'PAYMENT_LINK', // 👈 Fixed undefined type variable
+                type: txType, // 👈 Saves OFFERING, TITHE, etc. permanently!
                 status: 'PENDING',
                 method: 'NETCASH',
                 phone: phone,
                 
-                // Strict relationships
                 church: { connect: { code: safeCode } },
                 ...(member ? { member: { connect: { id: member.id } } } : {}),
                 
-                // Fee splits
                 netcashFee: pricing.netcashFee,
                 platformFee: pricing.platformFee,
                 netSettlement: pricing.netSettlement
@@ -201,11 +200,7 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
 
         // 🚀 STEP 5: GENERATE ENCRYPTED SHORT LINK
         const BASE_URL = process.env.BASE_URL || 'https://seabe.tech';
-        
-        // Encrypt the reference number
         const secureToken = encryptReference(ref);
-        
-        // Return a beautiful, short, white-labeled URL
         return `${BASE_URL}/secure-pay/${secureToken}`;
 
     } catch (error) {
@@ -213,7 +208,6 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
         return null; 
     }
 }
-
 // ==========================================
 // 3. VERIFY PAYMENT (Deferred to Webhook)
 // ==========================================
