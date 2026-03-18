@@ -82,42 +82,59 @@ const syncToHubSpot = async (data) => {
 // 3. MOUNT ROUTES
 // ==========================================
 
-// 🛡️ SEABE PAY SECURE CHECKOUT ROUTER
-app.get('/secure-pay/:token', async (req, res) => {
-    try {
-        const secureToken = req.params.token;
-        
-        // 1. Decrypt the token to reveal the true transaction reference
-        const reference = netcash.decryptReference(secureToken);
-        if (!reference) {
-            return res.status(400).send('<h1>Link Expired or Invalid</h1><p>For security, this payment link has been deactivated. Please request a new one.</p>');
+// ============================================================
+// 🔒 SECURE AES-256 PAYMENT ROUTER (NETCASH)
+// ============================================================
+    app.get('/secure-pay/:token', async (req, res) => {
+        try {
+            const { decryptReference, generateAutoPostForm } = require('./services/netcash');
+            
+            // 1. Decrypt the military-grade token
+            const reference = decryptReference(req.params.token);
+            if (!reference) {
+                return res.status(400).send("<h1>Link Expired or Invalid</h1><p>Please request a new payment link via WhatsApp.</p>");
+            }
+
+            // 2. Fetch the Ledger Record
+            const transaction = await prisma.transaction.findUnique({
+                where: { reference: reference },
+                include: { church: true, member: true }
+            });
+
+            if (!transaction) return res.status(404).send("Transaction not found in ledger.");
+            
+            // Prevent double payments
+            if (transaction.status === 'SUCCESS') {
+                return res.send("<h1>Payment Already Received</h1><p>This transaction has already been settled successfully.</p>");
+            }
+
+            // 3. 🏷️ DYNAMIC BRANDING & DESCRIPTION
+            const churchName = transaction.church ? transaction.church.name : 'Seabe Digital';
+            
+            // Format the type cleanly (e.g., converts "DEBIT_ORDER" to "DEBIT ORDER", or "TITHE" to "TITHE")
+            const txType = transaction.type ? transaction.type.replace(/_/g, ' ') : 'Payment';
+            
+            const userEmail = transaction.member ? transaction.member.email : '';
+
+            // 4. Build the payload for Netcash
+            const txData = {
+                reference: transaction.reference,
+                amount: transaction.amount,
+                // ✨ THE MAGIC: Passes "Org Name - Type" (e.g., "Grace Community - TITHE") to Netcash p3
+                description: `${churchName} - ${txType}`, 
+                phone: transaction.phone || '',
+                email: userEmail || ''
+            };
+
+            // 5. Generate and send the Auto-Post loading screen
+            const html = generateAutoPostForm(txData);
+            res.send(html);
+
+        } catch (error) {
+            console.error("Secure Link Error:", error);
+            res.status(500).send("Secure link generation failed.");
         }
-
-        // 2. Look up the secure transaction in the Ledger
-        const transaction = await prisma.transaction.findUnique({
-            where: { reference: reference }
-        });
-
-        if (!transaction || transaction.status !== 'PENDING') {
-            return res.status(400).send('<h1>Transaction Unavailable</h1><p>This transaction has already been processed or does not exist.</p>');
-        }
-
-        // 3. Generate the white-labeled Seabe Pay Auto-Post HTML
-        const html = netcash.generateAutoPostForm({
-            reference: transaction.reference,
-            amount: transaction.amount,
-            description: `Seabe Digital - ${transaction.type}`,
-            phone: transaction.phone
-        });
-
-        // 4. Serve the screen to the user's phone browser
-        res.send(html);
-
-    } catch (error) {
-        console.error("❌ Checkout Router Error:", error);
-        res.status(500).send('<h1>System Error</h1><p>Please try again later.</p>');
-    }
-});
+    });
 
 // A. Special Routes (No Auth / Webhooks)
 app.use('/api/fica', ficaPortalRoutes);
