@@ -20,7 +20,7 @@ const NETCASH_VALIDATE_URL = "https://paynow.netcash.co.za/site/validate.aspx";
  * Handles real-time payment notifications with bank-grade validation.
  */
 router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true }), async (req, res) => {
-    
+    console.log("🕵️‍♂️ RAW NETCASH PAYLOAD:", req.body);
     // 1. Immediately acknowledge receipt to Netcash to prevent redundant retries
     res.status(200).send(); 
 
