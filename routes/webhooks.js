@@ -1,17 +1,16 @@
 // routes/webhooks.js
-// VERSION: 4.2 (ITN Validated + Four-Pillar Ledger + FICA Risk Engine + PASA Compliance + Full Routing)
+// VERSION: 4.3 (ITN Validated + Four-Pillar Ledger + FICA Risk + PDF Receipts)
 // BANK-GRADE SECURITY COMPLIANT (2026)
 const express = require('express');
 const router = express.Router();
-//const { PrismaClient } = require('@prisma/client');
 const prisma = require('../services/db');
-//const prisma = new PrismaClient();
 const axios = require('axios');
 
 // 🚀 Import Seabe Engines
 const { calculateTransaction } = require('../services/pricingEngine');
 const { screenUserForRisk } = require('../services/complianceEngine');
 const { sendWhatsApp } = require('../services/whatsapp'); 
+const { generateReceiptPDF } = require('../services/receiptGenerator'); // 📄 NEW: PDF Engine
 
 // Netcash Validation Endpoint
 const NETCASH_VALIDATE_URL = "https://paynow.netcash.co.za/site/validate.aspx";
@@ -23,7 +22,6 @@ const NETCASH_VALIDATE_URL = "https://paynow.netcash.co.za/site/validate.aspx";
 router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true }), async (req, res) => {
     
     // 1. Immediately acknowledge receipt to Netcash to prevent redundant retries
-    // This is required by Netcash to signal that the server is alive.
     res.status(200).send(); 
 
     try {
@@ -32,8 +30,6 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
         console.log(`🔒 [WEBHOOK] Processing incoming ITN for Ref: ${reference}`);
 
         // 2. THE COMPLIANCE PING (ITN Validation)
-        // We re-post the entire payload back to Netcash to verify authenticity.
-        // This prevents "Replay Attacks" or spoofed successful payments.
         const validationParams = new URLSearchParams(payload).toString();
         const validationResponse = await axios.post(NETCASH_VALIDATE_URL, validationParams, {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
@@ -57,7 +53,7 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
             return;
         }
 
-        // Idempotency: Prevent double-processing if Netcash sends the same ITN twice.
+        // Idempotency: Prevent double-processing
         if (tx.status === 'SUCCESS') {
             console.log(`ℹ️ [WEBHOOK] Ref ${reference} already marked SUCCESS. Skipping logic.`);
             return;
@@ -84,7 +80,6 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
                     }
                 });
 
-                // 🛡️ CLAUSE 5.5 COMPLIANCE NOTIFICATION (Full Template Restored)
                 const confirmMsg = `✅ *Mandate Confirmation*\n\n` +
                                    `This confirms your electronic mandate setup:\n` +
                                    `👤 Payer: ${tx.member?.firstName} ${tx.member?.lastName}\n` +
@@ -112,11 +107,9 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
             console.log(`✅ [LEDGER] Payment cleared for ${reference}. Segregating funds...`);
 
             // 💰 STEP 1: CALCULATE THE FOUR-PILLAR LEDGER SPLITS
-            // This pulls dynamic fees from DB to calculate Platform Profit and Church Settlement.
             const pricing = await calculateTransaction(amountPaid, 'STANDARD', 'PAYMENT_LINK', false);
 
             // 🛡️ STEP 2: RUN FICA PEP & SANCTIONS SCANNER
-            // This satisfies FICA Schedule 3 requirements.
             const riskData = await screenUserForRisk(
                 tx.member?.firstName || 'Walk-in', 
                 tx.member?.lastName || 'User', 
@@ -125,7 +118,6 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
 
             // 💾 STEP 3: ATOMIC DATABASE TRANSACTION (All or Nothing)
             await prisma.$transaction([
-                // Update Master Ledger with actual fee segregation
                 prisma.transaction.update({
                     where: { id: tx.id },
                     data: { 
@@ -134,10 +126,10 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
                         platformFee: pricing.platformFee,
                         netSettlement: pricing.netSettlement,
                         method: 'NETCASH_ITN_VALIDATED',
-                        date: new Date()
+                        date: new Date(),
+                        amount: amountPaid // Ensures DB perfectly matches the gateway
                     }
                 }),
-                // Generate Compliance Audit Log for the Risk Dashboard
                 prisma.complianceLog.create({
                     data: {
                         transactionId: tx.id,
@@ -164,7 +156,7 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
                 });
             }
             
-            // 2. Burial Society Premiums (Restored lastPaymentDate)
+            // 2. Burial Society Premiums 
             else if (reference.includes('-PREM-')) {
                  if (tx.memberId) {
                      await prisma.member.update({
@@ -178,14 +170,25 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
                  }
             }
 
-            // 💬 STEP 5: SEND AUTOMATED RECEIPT (Restored Full Text)
+            // 📄 STEP 5: GENERATE PDF RECEIPT
+            let pdfUrl = null;
+            try {
+                // Ensure we pass the fully updated transaction with the church details
+                pdfUrl = await generateReceiptPDF(tx, tx.church);
+                console.log(`📄 [PDF] Official Receipt Generated: ${pdfUrl}`);
+            } catch (pdfErr) {
+                console.error("⚠️ [WEBHOOK] Failed to generate PDF receipt:", pdfErr.message);
+            }
+
+            // 💬 STEP 6: SEND AUTOMATED RECEIPT
             const orgName = tx.church?.name || "Our Organization";
             const msg = `✅ *Payment Successful*\n\n` +
                         `Thank you! We have received your payment of *R${amountPaid.toFixed(2)}* for ${orgName}.\n\n` +
                         `🧾 Ref: ${reference}\n\n` +
-                        `_Your digital record has been updated. Reply Menu for dashboard._`;
+                        `_Your official receipt is attached below. Reply Menu for dashboard._`;
             
-            await sendWhatsApp(tx.phone, msg);
+            // Send the WhatsApp! If PDF generation worked, it will attach perfectly.
+            await sendWhatsApp(tx.phone, msg, pdfUrl);
 
         } else {
             // ====================================================
@@ -193,7 +196,6 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
             // ====================================================
             
             // 🛑 IMMEDIATE STOP CODES (Clause 12.1 - Account Closed/Frozen/Deceased)
-            // If the bank says the account is closed, we MUST stop future debits.
             const stopCodes = ['04', '12', '16', '06', '18', '26', '30', '32', '34'];
             
             if (stopCodes.includes(reasonCode) && tx.memberId) {
@@ -243,7 +245,6 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
 
     } catch (error) {
         console.error("❌ [WEBHOOK] Critical System Error:", error.message);
-        // Do not return error code to Netcash so they retry later if it's a temp DB crash
     }
 });
 
