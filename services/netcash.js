@@ -112,7 +112,7 @@ function generateAutoPostForm(txData) {
  * Generates a direct Netcash link while guaranteeing the PENDING transaction exists in the DB.
  * Supports both Positional Arguments (Collections) and Object Signatures (WhatsApp Bot).
  */
-async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailArg = '', churchCodeArg = 'UNKNOWN', txTypeArg = 'PAYMENT_LINK') {
+async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailArg = '', churchCodeArg = 'UNKNOWN', txTypeArg = 'SEABE_RELAY') {
     try {
         // 1. Unpack flexible arguments
         let amount, ref, phone, orgName, email, churchCode, txType;
@@ -124,7 +124,7 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
             orgName = amountArg.description || 'Seabe Payment';
             email = amountArg.email || '';
             churchCode = amountArg.churchCode || 'UNKNOWN';
-            txType = amountArg.txType || 'PAYMENT_LINK'; // 👈 Extracts dynamic type from object
+            txType = amountArg.txType || 'SEABE_RELAY'; // 👈 Extracts dynamic type from object
         } else {
             amount = amountArg;
             ref = refArg;
@@ -132,7 +132,7 @@ async function createPaymentLink(amountArg, refArg, phoneArg, orgNameArg, emailA
             orgName = orgNameArg || 'Seabe Payment';
             email = emailArg || '';
             churchCode = churchCodeArg || 'UNKNOWN';
-            txType = txTypeArg || 'PAYMENT_LINK'; // 👈 Extracts dynamic type from positional arguments
+            txType = txTypeArg || 'SEABE_RELAY'; // 👈 Extracts dynamic type from positional arguments
         }
 
         const cleanAmount = sanitizeMoney(amount);

@@ -107,7 +107,7 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
             console.log(`✅ [LEDGER] Payment cleared for ${reference}. Segregating funds...`);
 
             // 💰 STEP 1: CALCULATE THE FOUR-PILLAR LEDGER SPLITS
-            const pricing = await calculateTransaction(amountPaid, 'STANDARD', tx.type || 'PAYMENT_LINK', false);
+            const pricing = await calculateTransaction(amountPaid, 'STANDARD', tx.type || 'SEABE_RELAY', false);
 
             // 🛡️ STEP 2: RUN FICA PEP & SANCTIONS SCANNER
             const riskData = await screenUserForRisk(
