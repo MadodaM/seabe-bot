@@ -141,7 +141,7 @@ const syncToHubSpot = async (data) => {
     // ============================================================
 
     // 1. When the user completes payment successfully
-    app.get('/api/netcash/success', (req, res) => {
+    app.all('/api/netcash/success', (req, res) => {
         res.send(`
             <!DOCTYPE html>
             <html lang="en">
@@ -162,7 +162,7 @@ const syncToHubSpot = async (data) => {
                     <div class="icon">✅</div>
                     <h1>Payment Successful!</h1>
                     <p>Thank you. Your transaction has been securely processed. Your receipt has been sent via WhatsApp.</p>
-                    <a href="https://wa.me/27872657872" class="btn">Return to WhatsApp</a>
+                    <a href="https://wa.me/27100000000" class="btn">Return to WhatsApp</a>
                 </div>
             </body>
             </html>
@@ -170,7 +170,7 @@ const syncToHubSpot = async (data) => {
     });
 
     // 2. When the user cancels or the card declines
-    app.get('/api/netcash/decline', (req, res) => {
+    app.all('/api/netcash/decline', (req, res) => {
         res.send(`
             <!DOCTYPE html>
             <html lang="en">
@@ -197,7 +197,6 @@ const syncToHubSpot = async (data) => {
             </html>
         `);
     });	
-	
 
 // A. Special Routes (No Auth / Webhooks)
 app.use('/api/fica', ficaPortalRoutes);
