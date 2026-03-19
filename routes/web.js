@@ -285,6 +285,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                                 <select name="type" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none bg-gray-50">
                                     <option value="BURIAL_SOCIETY">Burial Society</option>
                                     <option value="CHURCH">Church</option>
+									<option value="STOKVEL_SAVINGS">Stokvel / Savings Club</option>
                                     <option value="NON_PROFIT">NPO / NGO</option>
                                 </select>
                             </div>
@@ -334,6 +335,14 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     // ==========================================
     app.post('/register-church', uploadCloud.fields([{ name: 'idDoc', maxCount: 1 }, { name: 'bankDoc', maxCount: 1 }]), async (req, res) => {
         const { churchName, email, tos, type } = req.body;
+		console.log("📥 [REGISTRATION PAYLOAD]:", req.body);
+        
+        const { churchName, email, tos, type } = req.body;
+        
+        if (!type) {
+            console.warn("⚠️ WARNING: The frontend form did not send a 'type' variable!");
+        }
+		
         if (!tos) return res.send("⚠️ You must accept the Terms.");
 
         try {
