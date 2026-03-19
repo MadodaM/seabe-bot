@@ -311,24 +311,50 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/churches/add', async (req, res) => {
-        const prefix = req.body.name.replace(/[^a-zA-Z]/g, '').substring(0,3).toUpperCase();
-        const code = prefix + Math.floor(100 + Math.random()*900);
+        // 1. Security Check (From Block 2)
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        
         try {
-            await prisma.church.create({ 
-                data: { 
-                    name: req.body.name, 
-                    email: req.body.email, 
-                    code: code, 
-                    type: req.body.type, 
-                    adminPhone: req.body.adminPhone,
-                    defaultPremium: parseFloat(req.body.defaultPremium), 
-                    subscriptionFee: parseFloat(req.body.subscriptionFee), 
-                    subaccountCode: req.body.subaccount || '' 
-                } 
+            // 2. Destructure ALL incoming data (Merged from both blocks)
+            const { 
+                name, type, adminPhone, email, 
+                defaultPremium, subscriptionFee, subaccount,
+                bankName, accountName, accountNumber, branchCode, accountType 
+            } = req.body;
+
+            // 3. Auto-generate the Organization Code (From Block 1)
+            const prefix = name.replace(/[^a-zA-Z]/g, '').substring(0,3).toUpperCase();
+            const generatedCode = prefix + Math.floor(100 + Math.random()*900);
+
+            // 4. 🚀 PRISMA NESTED WRITE
+            await prisma.church.create({
+                data: {
+                    name: name,
+                    code: generatedCode, // Auto-assigned here
+                    type: type,
+                    adminPhone: adminPhone,
+                    email: email,
+                    // Parse floats safely to prevent NaN errors if left blank
+                    defaultPremium: parseFloat(defaultPremium) || 0, 
+                    subscriptionFee: parseFloat(subscriptionFee) || 0, 
+                    subaccountCode: subaccount || '', 
+                    
+                    // 👇 The magic nested Bank Details link (From Block 2)
+                    bankDetail: {
+                        create: {
+                            bankName: bankName,
+                            accountName: accountName || name, // Default to Org name if empty
+                            accountNumber: accountNumber,
+                            branchCode: branchCode,
+                            accountType: accountType || 'CURRENT'
+                        }
+                    }
+                }
             });
+
             res.redirect('/admin/churches');
-        } catch(e) { 
-            res.send(renderAdminPage('Error', '', e.message)); 
+        } catch (e) {
+            res.send(renderAdminPage('Error', '', `Failed to create Organization: ${e.message}`));
         }
     });
 
@@ -2161,6 +2187,36 @@ module.exports = function(app, { prisma }) {
         } catch (error) {
             console.error("AI Policy Save Error:", error);
             res.status(500).json({ success: false, error: error.message });
+        }
+    });
+	
+	// ==========================================
+    // 🏦 ADMIN: VERIFY BANK ACCOUNT
+    // ==========================================
+    app.post('/admin/bank/verify', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        
+        try {
+            const { bankDetailId } = req.body;
+            
+            await prisma.bankDetail.update({
+                where: { id: parseInt(bankDetailId) },
+                data: { accountstatus: true }
+            });
+
+            // Optional: Log the compliance action
+            await logAction({
+                actorId: 'admin',
+                role: 'SUPER_ADMIN',
+                action: 'VERIFIED_BANK_ACCOUNT',
+                entity: 'BankDetail',
+                entityId: bankDetailId,
+                ipAddress: req.ip
+            });
+
+            res.redirect('/admin/churches'); // Or redirect to a specific org view
+        } catch (e) {
+            res.send(renderAdminPage('Verification Error', '', e.message));
         }
     });
 	
