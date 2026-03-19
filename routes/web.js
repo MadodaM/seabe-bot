@@ -331,57 +331,63 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
         `);
     });
 
-    // ==========================================
-    // 3. REGISTRATION HANDLER (Bulletproof Uploads)
+// ==========================================
+    // 3. REGISTRATION HANDLER (With X-Ray Logging)
     // ==========================================
     const kybUploads = uploadCloud.fields([{ name: 'idDoc', maxCount: 1 }, { name: 'bankDoc', maxCount: 1 }]);
 
     app.post('/register-church', (req, res) => {
-        // 🛡️ FIX: Wrap the upload in a callback to catch Cloudinary crashes!
+        console.log("\n=========================================");
+        console.log("🚀 [STEP 1] /register-church POST route hit!");
+        console.log("🔍 [DIAGNOSTICS] Checking Cloudinary Keys:");
+        console.log("   Cloud Name:", process.env.CLOUDINARY_CLOUD_NAME ? "✅ SET" : "❌ MISSING");
+        console.log("   API Key:", process.env.CLOUDINARY_API_KEY ? "✅ SET" : "❌ MISSING");
+        console.log("   API Secret:", process.env.CLOUDINARY_API_SECRET ? "✅ SET" : "❌ MISSING");
+        console.log("=========================================\n");
+
+        // Force Multer to try and parse the files
         kybUploads(req, res, async (uploadError) => {
+            console.log("🚀 [STEP 2] Multer streaming attempt finished.");
+
             if (uploadError) {
-                console.error("❌ CLOUDINARY UPLOAD CRASH:", uploadError);
+                console.error("❌ [FATAL CRASH IN STEP 2]:", uploadError);
                 return res.send(`
                     <div style="text-align:center; padding:50px; font-family:sans-serif;">
-                        <h1 style="color:#e74c3c;">File Vault Error</h1>
-                        <p>The server could not connect to the secure file vault (Cloudinary).</p>
-                        <p style="color:#7f8c8d; font-size:12px;">${uploadError.message}</p>
+                        <h1 style="color:#e74c3c;">Cloudinary Upload Failed</h1>
+                        <p>The server failed to stream the files to the secure vault.</p>
+                        <p style="color:#7f8c8d; font-size:12px;">Error: ${uploadError.message}</p>
                     </div>
                 `);
             }
 
-            console.log("📥 [REGISTRATION PAYLOAD]:", req.body);
-            
+            console.log("✅ [STEP 3] Files and Form Data parsed successfully.");
+            console.log("📥 [BODY PAYLOAD]:", req.body);
+            console.log("📁 [FILES UPLOADED]:", req.files ? Object.keys(req.files) : "None detected!");
+
             const { churchName, email, tos, type, adminPhone } = req.body;
             
             if (!type) console.warn("⚠️ WARNING: Form did not send 'type'!");
             if (!tos) return res.send("⚠️ You must accept the Terms.");
 
             try {
-                // 🛡️ CRASH-PROOF: Safely check if files exist before reading them
                 const idDocUrl = (req.files && req.files['idDoc']) ? req.files['idDoc'][0].path : null;
                 const bankDocUrl = (req.files && req.files['bankDoc']) ? req.files['bankDoc'][0].path : null;
                 const mimeType = (req.files && req.files['bankDoc']) ? req.files['bankDoc'][0].mimetype : 'image/jpeg';
 
                 if (!idDocUrl || !bankDocUrl) {
-                    return res.send("❌ Error: Documents failed to upload. Please check your file sizes.");
+                    return res.send("❌ Error: Documents missing from upload payload.");
                 }
 
                 const prefix = churchName.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
                 const newCode = `${prefix}${Math.floor(100 + Math.random() * 900)}`;
 
-                // =========================================================
-                // 🤖 GEMINI 2.5 BANK DOCUMENT OCR
-                // =========================================================
+                console.log(`⏳ [STEP 4] Sending Bank Document to Gemini 2.5...`);
+                
                 let extractedBank = {
-                    bankName: "Pending Review",
-                    accountName: churchName,
-                    accountNumber: "PENDING",
-                    branchCode: "PENDING",
-                    accountType: "CURRENT"
+                    bankName: "Pending Review", accountName: churchName,
+                    accountNumber: "PENDING", branchCode: "PENDING", accountType: "CURRENT"
                 };
 
-                console.log(`⏳ [KYB] Processing Bank Document for ${churchName} via Gemini 2.5...`);
                 try {
                     const fileResponse = await axios.get(bankDocUrl, { responseType: 'arraybuffer' });
                     const base64Data = Buffer.from(fileResponse.data).toString('base64');
@@ -394,56 +400,41 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                     Format: {"bankName": "FNB", "accountName": "Stokvel Savings", "accountNumber": "62000000000", "branchCode": "250655", "accountType": "CURRENT"}`;
 
                     const result = await model.generateContent([
-                        prompt, 
-                        { inlineData: { data: base64Data, mimeType: mimeType } }
+                        prompt, { inlineData: { data: base64Data, mimeType: mimeType } }
                     ]);
                     
                     const cleanJson = result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim();
                     extractedBank = JSON.parse(cleanJson);
-                    console.log("✅ [KYB] Data successfully extracted:", extractedBank.accountNumber);
+                    console.log("✅ [STEP 5] AI Extraction Success:", extractedBank.accountNumber);
                 } catch (aiError) {
-                    console.error("⚠️ [KYB] AI could not confidently read the document.", aiError.message);
+                    console.error("⚠️ [AI ERROR] Could not read document:", aiError.message);
                 }
 
-                // =========================================================
-                // 💾 ATOMIC DB WRITE
-                // =========================================================
+                console.log("💾 [STEP 6] Saving Organization to Prisma DB...");
                 await prisma.church.create({ 
                     data: { 
-                        name: churchName, 
-                        code: newCode, 
-                        email: email, 
+                        name: churchName, code: newCode, email: email, 
                         adminPhone: adminPhone || '0000000000', 
-                        subaccountCode: 'PENDING_KYC', 
-                        tosAcceptedAt: new Date(), 
-                        type: type || 'CHURCH',
-                        ficaStatus: 'LEVEL_1_PENDING',
+                        subaccountCode: 'PENDING_KYC', tosAcceptedAt: new Date(), 
+                        type: type || 'CHURCH', ficaStatus: 'LEVEL_1_PENDING',
                         bankDetail: {
                             create: {
-                                bankName: extractedBank.bankName,
-                                accountName: extractedBank.accountName,
-                                accountNumber: String(extractedBank.accountNumber),
-                                branchCode: String(extractedBank.branchCode),      
-                                accountType: extractedBank.accountType || 'CURRENT',
-                                accountstatus: false 
+                                bankName: extractedBank.bankName, accountName: extractedBank.accountName,
+                                accountNumber: String(extractedBank.accountNumber), branchCode: String(extractedBank.branchCode),      
+                                accountType: extractedBank.accountType || 'CURRENT', accountstatus: false 
                             }
                         }
                     } 
                 });
 
-                // =========================================================
-                // 📧 SENDGRID NOTIFICATIONS
-                // =========================================================
+                console.log("✅ [STEP 7] Registration Complete! Sending emails...");
+                
                 if (process.env.SENDGRID_KEY) {
                     await sgMail.send({ 
                         to: EMAIL_FROM, from: EMAIL_FROM, 
                         subject: `📝 NEW FICA UPLOAD: ${churchName}`, 
-                        html: `<h2>New Application</h2><p><strong>Name:</strong> ${churchName}</p><p><strong>Type:</strong> ${type}</p><hr><h3>🛡️ Secure FICA Vault</h3><ul><li><a href="${idDocUrl}">📄 View Leader ID</a></li><li><a href="${bankDocUrl}">🏦 View Bank Proof</a></li></ul>` 
-                    });
-                    await sgMail.send({
-                        to: email, from: EMAIL_FROM, subject: 'Verification Received | Seabe Digital',
-                        html: `<div style="${emailStyle}"><div style="${headerStyle}"><h1 style="margin:0;">SEABE.</h1></div><div style="padding: 30px; background: #fff;"><h2>Documents Received</h2><p>We have securely vaulted your FICA documents for <strong>${churchName}</strong>. Our compliance team will review them within 24 hours.</p></div></div>`
-                    });
+                        html: `<h2>New Application</h2><p><strong>Name:</strong> ${churchName}</p><hr><ul><li><a href="${idDocUrl}">📄 View Leader ID</a></li><li><a href="${bankDocUrl}">🏦 View Bank Proof</a></li></ul>` 
+                    }).catch(e => console.error("Email Error:", e.response.body));
                 }
                 
                 res.send(`
@@ -459,7 +450,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 `);
 
             } catch (e) { 
-                console.error("❌ REGISTRATION CRASH:", e);
+                console.error("❌ [FATAL CRASH IN DB/LOGIC]:", e);
                 res.send(`
                     <div style="text-align:center; padding:50px; font-family:sans-serif;">
                         <h1 style="color:#e74c3c;">System Error</h1>
@@ -468,7 +459,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                     </div>
                 `); 
             }
-        }); // <-- Don't forget to close the kybUploads wrapper!
+        }); 
     });
 
     // ==========================================
