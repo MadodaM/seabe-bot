@@ -542,7 +542,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
         }
     });
 
-    /// ==========================================
+   // ==========================================
     // 9. PROCESS THE MANDATE (Triggers Bank USSD)
     // ==========================================
     app.post('/api/mandates/process', express.urlencoded({ extended: true }), async (req, res) => {
@@ -553,15 +553,17 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             
             if (!member) return res.send("Member not found.");
 
-            // 1. In a production environment, this is where you send the XML payload to the Netcash DebiCheck API.
-            // Netcash will then instantly trigger the USSD prompt on the member's phone.
-            console.log(`📡 [NETCASH API] Sending DebiCheck Mandate Request for Member ${member.firstName}...`);
+            console.log(`📡 [NETCASH API] Sending DebiCheck Request for ${member.firstName}...`);
             console.log(`   Bank: ${bankName} | Acc: ${accountNumber}`);
 
-            // 🚀 FIX: Removed the Prisma update for 'mandateStatus' since it's not in the schema yet.
-            // When you are ready to track these, you can add `mandateStatus String?` to your schema.prisma file!
+            // ✅ THE FIX IS NOW ACTIVE: Update the Database!
+            await prisma.member.update({
+                where: { id: parseInt(memberId) },
+                data: { 
+                    mandateStatus: 'PENDING_USSD_APPROVAL'
+                }
+            });
 
-            // 2. Show Success Page
             res.send(`
                 <!DOCTYPE html>
                 <html><head>${sharedHead}</head><body class="bg-seabe-light flex items-center justify-center h-screen">
