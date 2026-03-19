@@ -82,6 +82,61 @@ const syncToHubSpot = async (data) => {
 // 3. MOUNT ROUTES
 // ==========================================
 
+// A. Special Routes (No Auth / Webhooks)
+app.use('/api/fica', ficaPortalRoutes);
+app.use('/mandate', mandatesRouter);
+app.use(webhookRouter); // Netcash Webhooks
+app.get('/ping', (req, res) => res.status(200).send("Heartbeat received. Seabe Engine is awake."));
+
+// B. Static Legal Pages
+app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacy.html')));
+app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
+
+// C. MAIN SYSTEM MODULES
+// We wrap these in try/catch so one module crash doesn't kill the server,
+// BUT we log the error loudly so you know if it failed.
+
+// 1. Platform (Internal)
+try { 
+    require('./routes/platform')(app, { prisma }); 
+} catch (e) { console.error("⚠️ Platform routes failed:", e.message); }
+
+// 2. Admin Dashboard
+try { 
+    require('./routes/admin')(app, { prisma }); 
+} catch (e) { console.error("⚠️ Admin routes failed:", e.message); }
+
+// 3. PUBLIC WEBSITE (The one giving you 404)
+try { 
+    // We must pass syncToHubSpot here
+    require('./routes/web')(app, upload, { prisma, syncToHubSpot }); 
+    console.log("✅ Web Routes Loaded (Home, Register, Pay)");
+} catch (e) { 
+    console.error("❌ CRITICAL: Web routes failed to load!");
+    console.error(e); // This will show you exactly why it failed
+}
+try { 
+    require('./routes/adminPricing')(app, { prisma }); 
+    console.log("✅ Pricing Dashboard Loaded");
+} catch (e) { console.error("⚠️ Pricing routes failed:", e.message); }
+
+// D. API & WhatsApp
+app.use('/api/whatsapp', require('./routes/whatsappRouter'));
+app.use('/api/public', require('./routes/quoteGenerator')); 
+
+// E. Legacy / Specific Features
+try { app.use('/kyc', require('./routes/kyc').router); } catch(e){}
+try { app.use('/api/surepol', require('./routes/surepol')); } catch(e){}
+try { app.use('/api/prospect', require('./routes/prospectKYC')); } catch(e){}
+try { require('./routes/link')(app, { prisma }); } catch (e) {}
+try { require('./routes/collectionbot')(app, { prisma }); } catch (e) {}
+
+// F. Catch-Alls (Must be last)
+app.use('/', blastEngineRoute);
+app.use('/', webhooksRoute);
+app.use('/', crmClaimsRoute);
+try { app.use('/', require('./routes/paymentRoutes')); } catch(e){}
+
 // ============================================================
 // 🔒 SECURE AES-256 PAYMENT ROUTER (NETCASH)
 // ============================================================
@@ -197,61 +252,6 @@ const syncToHubSpot = async (data) => {
             </html>
         `);
     });	
-
-// A. Special Routes (No Auth / Webhooks)
-app.use('/api/fica', ficaPortalRoutes);
-app.use('/mandate', mandatesRouter);
-app.use(webhookRouter); // Netcash Webhooks
-app.get('/ping', (req, res) => res.status(200).send("Heartbeat received. Seabe Engine is awake."));
-
-// B. Static Legal Pages
-app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacy.html')));
-app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
-
-// C. MAIN SYSTEM MODULES
-// We wrap these in try/catch so one module crash doesn't kill the server,
-// BUT we log the error loudly so you know if it failed.
-
-// 1. Platform (Internal)
-try { 
-    require('./routes/platform')(app, { prisma }); 
-} catch (e) { console.error("⚠️ Platform routes failed:", e.message); }
-
-// 2. Admin Dashboard
-try { 
-    require('./routes/admin')(app, { prisma }); 
-} catch (e) { console.error("⚠️ Admin routes failed:", e.message); }
-
-// 3. PUBLIC WEBSITE (The one giving you 404)
-try { 
-    // We must pass syncToHubSpot here
-    require('./routes/web')(app, upload, { prisma, syncToHubSpot }); 
-    console.log("✅ Web Routes Loaded (Home, Register, Pay)");
-} catch (e) { 
-    console.error("❌ CRITICAL: Web routes failed to load!");
-    console.error(e); // This will show you exactly why it failed
-}
-try { 
-    require('./routes/adminPricing')(app, { prisma }); 
-    console.log("✅ Pricing Dashboard Loaded");
-} catch (e) { console.error("⚠️ Pricing routes failed:", e.message); }
-
-// D. API & WhatsApp
-app.use('/api/whatsapp', require('./routes/whatsappRouter'));
-app.use('/api/public', require('./routes/quoteGenerator')); 
-
-// E. Legacy / Specific Features
-try { app.use('/kyc', require('./routes/kyc').router); } catch(e){}
-try { app.use('/api/surepol', require('./routes/surepol')); } catch(e){}
-try { app.use('/api/prospect', require('./routes/prospectKYC')); } catch(e){}
-try { require('./routes/link')(app, { prisma }); } catch (e) {}
-try { require('./routes/collectionbot')(app, { prisma }); } catch (e) {}
-
-// F. Catch-Alls (Must be last)
-app.use('/', blastEngineRoute);
-app.use('/', webhooksRoute);
-app.use('/', crmClaimsRoute);
-try { app.use('/', require('./routes/paymentRoutes')); } catch(e){}
 
 // ==========================================
 // 4. CRON & SERVER INIT
