@@ -4,6 +4,9 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+// 🚀 PRICING ENGINE IMPORT
+const { calculateTransaction } = require('../services/pricingEngine');
+
 // Twilio Setup
 let client;
 if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
@@ -33,6 +36,13 @@ const seabeStyles = `
     .btn-outline { background: transparent; color: var(--text); border: 2px solid #e0e6ed; margin-top: 10px; }
     .seabe-brand { font-size: 14px; font-weight: 800; color: #b2bec3; margin-top: 30px; text-transform: uppercase; letter-spacing: 1px; }
     .seabe-brand span { color: var(--primary); }
+    /* Dynamic Inputs */
+    .input-group { text-align: left; margin-bottom: 20px; }
+    .input-group label { font-size: 12px; font-weight: bold; color: #95a5a6; text-transform: uppercase; }
+    .currency-wrapper { display: flex; align-items: center; margin-top: 5px; }
+    .currency-wrapper span { background: #eee; padding: 15px; border-radius: 8px 0 0 8px; font-weight: bold; color: #333; border: 1px solid #ccc; border-right: none; }
+    .currency-wrapper input { flex: 1; padding: 15px; border: 1px solid #ccc; border-radius: 0 8px 8px 0; font-size: 18px; font-weight: bold; outline: none; }
+    .tag { background: #fce4ec; color: #e91e63; padding: 5px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; text-transform: uppercase; display: inline-block; margin-bottom: 15px; }
 `;
 
 const renderPage = (title, icon, heading, message, isError = false) => `
@@ -60,32 +70,144 @@ const renderPage = (title, icon, heading, message, isError = false) => `
     </html>
 `;
 
+// ============================================================
+// 💰 PUBLIC PAYMENT PORTAL (Web Interface for Stokvels & Open Payments)
+// ============================================================
+
+// 1. Render the Payment Input Screen
+router.get('/pay', async (req, res) => {
+    try {
+        const memberId = parseInt(req.query.memberId);
+        const code = req.query.code;
+
+        if (!memberId || !code) return res.send(renderPage('Error', '⚠️', 'Invalid Link', 'This payment link is invalid or has expired.', true));
+
+        const member = await prisma.member.findUnique({
+            where: { id: memberId },
+            include: { church: true }
+        });
+
+        if (!member || !member.church) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Organization or member not found.', true));
+
+        const org = member.church;
+        const defaultAmount = org.type === 'STOKVEL_SAVINGS' ? '' : (member.monthlyPremium || '');
+
+        res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <title>Pay ${org.name}</title>
+                <style>${seabeStyles}</style>
+            </head>
+            <body>
+                <div class="card">
+                    <div class="tag">${org.type.replace('_', ' ')}</div>
+                    <h2>${org.name}</h2>
+                    <p style="margin-bottom: 20px;">Secure Contribution Portal</p>
+                    
+                    <form action="/pay/process" method="POST">
+                        <input type="hidden" name="memberId" value="${member.id}">
+                        <input type="hidden" name="code" value="${org.code}">
+                        
+                        <div class="input-group">
+                            <label>Amount to Contribute</label>
+                            <div class="currency-wrapper">
+                                <span>ZAR</span>
+                                <input type="number" name="amount" step="0.01" min="10" placeholder="e.g. 250.00" value="${defaultAmount}" required>
+                            </div>
+                        </div>
+                        
+                        <button type="submit" class="btn">Continue to Secure Payment</button>
+                    </form>
+                    
+                    <div style="margin-top: 15px; font-size: 11px; color: #95a5a6;">🔒 Secured by Netcash & Capitec Pay</div>
+                </div>
+                <div class="seabe-brand">Secured by Seabe <span>Pay</span></div>
+            </body>
+            </html>
+        `);
+    } catch (error) {
+        res.send(renderPage('Error', '⚠️', 'Server Error', error.message, true));
+    }
+});
+
+// 2. Process the Payment and Auto-Redirect to Netcash
+router.post('/pay/process', express.urlencoded({ extended: true }), async (req, res) => {
+    try {
+        const { memberId, code, amount } = req.body;
+        const contributionAmount = parseFloat(amount);
+
+        const org = await prisma.church.findUnique({ where: { code: code } });
+        if (!org || !org.netcashPayNowKey) {
+            return res.send(renderPage('Setup Incomplete', '⚠️', 'Action Required', 'This organization has not finished setting up their Netcash Gateway.', true));
+        }
+
+        const fees = await calculateTransaction(contributionAmount, 'STANDARD', 'PAYMENT_LINK', true);
+        const reference = `STK-${memberId}-${Date.now().toString().slice(-6)}`;
+
+        await prisma.transaction.create({
+            data: {
+                reference: reference,
+                amount: fees.totalChargedToUser,
+                netcashFee: fees.netcashFee,
+                platformFee: fees.platformFee,
+                netSettlement: fees.netSettlement,
+                status: 'PENDING',
+                type: 'CONTRIBUTION',
+                churchCode: org.code,
+                phone: memberId.toString(),
+                memberId: parseInt(memberId)
+            }
+        });
+
+        const htmlForm = `
+            <html>
+            <body onload="document.forms['netcashForm'].submit()">
+                <div style="text-align:center; font-family:-apple-system, sans-serif; margin-top:50px; color:#2c3e50;">
+                    <h2>Redirecting to Secure Gateway... 🔒</h2>
+                    <p style="color:#7f8c8d;">Please wait, do not close this window.</p>
+                </div>
+                <form name="netcashForm" action="https://paynow.netcash.co.za/site/paynow.aspx" method="post" style="display:none;">
+                    <input type="hidden" name="p2" value="${org.netcashPayNowKey}">
+                    <input type="hidden" name="p3" value="${reference}">
+                    <input type="hidden" name="p4" value="${fees.totalChargedToUser.toFixed(2)}">
+                    <input type="hidden" name="Budget" value="Y">
+                </form>
+            </body>
+            </html>
+        `;
+
+        res.send(htmlForm);
+    } catch (error) {
+        console.error("Payment Process Error:", error);
+        res.send(renderPage('Error', '⚠️', 'Gateway Error', 'An error occurred generating your payment link.', true));
+    }
+});
+
+
 // ==========================================
 // 🛡️ WEBHOOK: NETCASH SERVER-TO-SERVER
 // ==========================================
 router.post('/netcash/webhook', async (req, res) => {
     try {
-        // Netcash typically sends data via POST body.
         const reference = req.body.Reference || req.body.p2; 
         const isSuccess = req.body.TransactionAccepted === 'true' || req.body.Reason === '00'; 
 
         if (!reference) return res.status(400).send("Missing reference");
 
         if (isSuccess) {
-            // 🚀 THE MULTI-TENANT FIX: We find the transaction EXACTLY by its unique reference!
             const transaction = await prisma.transaction.findUnique({ 
                 where: { reference: reference },
                 include: { member: true, church: true }
             });
 
             if (transaction && transaction.status === 'PENDING') {
-                // 1. Update Transaction to Success
                 await prisma.transaction.update({
                     where: { id: transaction.id },
                     data: { status: 'SUCCESS' }
                 });
 
-                // 2. Send the Official Receipt via WhatsApp
                 if (client) {
                     const targetPhone = transaction.member ? transaction.member.phone : transaction.phone;
                     const orgName = transaction.church ? transaction.church.name : "Seabe Platform";
@@ -109,7 +231,6 @@ router.post('/netcash/webhook', async (req, res) => {
 // 💳 BROWSER SUCCESS REDIRECT (Netcash Return URL)
 // ==========================================
 router.get('/payment-success', async (req, res) => {
-    // Netcash usually appends the reference parameter to the return URL
     const reference = req.query.Reference || req.query.ref || req.query.p2;
     
     if (!reference) {
@@ -117,12 +238,10 @@ router.get('/payment-success', async (req, res) => {
     }
 
     try {
-        // Double check the status directly with Netcash (Anti-Fraud)
         const verifyData = await netcash.verifyPayment(reference);
 
         if (verifyData && (verifyData.status === 'Complete' || verifyData.status === 'success' || verifyData.TransactionAccepted)) {
             
-            // 🚀 MULTI-TENANT FIX: Lookup strictly by reference, NOT phone!
             const transaction = await prisma.transaction.findUnique({
                 where: { reference: reference },
                 include: { member: true, church: true } 
@@ -194,7 +313,6 @@ router.get('/admin/sync-payments', async (req, res) => {
 
         for (const tx of pendingTransactions) {
             try {
-                // Check Netcash for status updates on pending transactions
                 const verifyData = await netcash.verifyPayment(tx.reference);
                 if (verifyData && (verifyData.status === 'Complete' || verifyData.status === 'success' || verifyData.TransactionAccepted)) {
                     await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'SUCCESS' } });
