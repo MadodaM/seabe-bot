@@ -542,7 +542,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
         }
     });
 
-    // ==========================================
+    /// ==========================================
     // 9. PROCESS THE MANDATE (Triggers Bank USSD)
     // ==========================================
     app.post('/api/mandates/process', express.urlencoded({ extended: true }), async (req, res) => {
@@ -550,21 +550,18 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
 
         try {
             const member = await prisma.member.findUnique({ where: { id: parseInt(memberId) } });
+            
+            if (!member) return res.send("Member not found.");
 
             // 1. In a production environment, this is where you send the XML payload to the Netcash DebiCheck API.
             // Netcash will then instantly trigger the USSD prompt on the member's phone.
-            console.log(`📡 [NETCASH API] Sending DebiCheck Mandate Request for Member ${memberId}...`);
+            console.log(`📡 [NETCASH API] Sending DebiCheck Mandate Request for Member ${member.firstName}...`);
             console.log(`   Bank: ${bankName} | Acc: ${accountNumber}`);
 
-            // 2. Update the Database to mark the mandate as PENDING Bank Approval
-            await prisma.member.update({
-                where: { id: parseInt(memberId) },
-                data: { 
-                    mandateStatus: 'PENDING_USSD_APPROVAL' // We assume you add this field to your schema, or use an existing note field
-                }
-            });
+            // 🚀 FIX: Removed the Prisma update for 'mandateStatus' since it's not in the schema yet.
+            // When you are ready to track these, you can add `mandateStatus String?` to your schema.prisma file!
 
-            // 3. Show Success Page
+            // 2. Show Success Page
             res.send(`
                 <!DOCTYPE html>
                 <html><head>${sharedHead}</head><body class="bg-seabe-light flex items-center justify-center h-screen">
@@ -578,7 +575,8 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             `);
 
         } catch (e) {
-            res.send(`<h1>Error</h1><p>${e.message}</p>`);
+            console.error("Mandate Process Error:", e);
+            res.send(`<h1>Error</h1><p>System error processing mandate.</p>`);
         }
     });
 
