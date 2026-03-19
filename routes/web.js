@@ -332,24 +332,26 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     });
 
     // ==========================================
-    // 3. REGISTRATION HANDLER (With Gemini 2.5 KYB OCR)
+    // 3. REGISTRATION HANDLER (Crash-Proof Version)
     // ==========================================
     app.post('/register-church', uploadCloud.fields([{ name: 'idDoc', maxCount: 1 }, { name: 'bankDoc', maxCount: 1 }]), async (req, res) => {
         
-		const { churchName, email, tos, type } = req.body;
-		console.log("📥 [REGISTRATION PAYLOAD]:", req.body);
+        console.log("📥 [REGISTRATION PAYLOAD]:", req.body);
         
-        if (!type) {
-            console.warn("⚠️ WARNING: The frontend form did not send a 'type' variable!");
-        }
-		
+        const { churchName, email, tos, type } = req.body;
+        
+        if (!type) console.warn("⚠️ WARNING: Form did not send 'type'!");
         if (!tos) return res.send("⚠️ You must accept the Terms.");
 
         try {
-            const idDocUrl = req.files['idDoc'] ? req.files['idDoc'][0].path : null;
-            const bankDocUrl = req.files['bankDoc'] ? req.files['bankDoc'][0].path : null;
+            // 🛡️ CRASH-PROOF: Safely check if files exist before reading them
+            const idDocUrl = (req.files && req.files['idDoc']) ? req.files['idDoc'][0].path : null;
+            const bankDocUrl = (req.files && req.files['bankDoc']) ? req.files['bankDoc'][0].path : null;
+            const mimeType = (req.files && req.files['bankDoc']) ? req.files['bankDoc'][0].mimetype : 'image/jpeg';
 
-            if (!idDocUrl || !bankDocUrl) return res.send("❌ Error: Documents failed to upload.");
+            if (!idDocUrl || !bankDocUrl) {
+                return res.send("❌ Error: Documents failed to upload to the secure vault. Please check your file sizes and try again.");
+            }
 
             const prefix = churchName.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
             const newCode = `${prefix}${Math.floor(100 + Math.random() * 900)}`;
@@ -367,11 +369,9 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
 
             console.log(`⏳ [KYB] Processing Bank Document for ${churchName} via Gemini 2.5...`);
             try {
-                // Fetch the uploaded image from Cloudinary/Cloud Storage
-                const response = await fetch(bankDocUrl);
-                const arrayBuffer = await response.arrayBuffer();
-                const base64Data = Buffer.from(arrayBuffer).toString('base64');
-                const mimeType = req.files['bankDoc'][0].mimetype || 'image/jpeg';
+                // 🛡️ CRASH-PROOF: Use Axios instead of Fetch (Compatible with all Node versions)
+                const fileResponse = await axios.get(bankDocUrl, { responseType: 'arraybuffer' });
+                const base64Data = Buffer.from(fileResponse.data).toString('base64');
 
                 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
                 const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
@@ -390,7 +390,6 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 console.log("✅ [KYB] Data successfully extracted:", extractedBank.accountNumber);
             } catch (aiError) {
                 console.error("⚠️ [KYB] AI could not confidently read the document.", aiError.message);
-                // Falls back to "PENDING" defaults to not break registration
             }
 
             // =========================================================
@@ -405,15 +404,14 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                     tosAcceptedAt: new Date(), 
                     type: type || 'CHURCH',
                     ficaStatus: 'LEVEL_1_PENDING',
-                    // 👇 NESTED WRITE: Locks the AI data securely
                     bankDetail: {
                         create: {
                             bankName: extractedBank.bankName,
                             accountName: extractedBank.accountName,
-                            accountNumber: String(extractedBank.accountNumber), // Force string
-                            branchCode: String(extractedBank.branchCode),       // Force string
+                            accountNumber: String(extractedBank.accountNumber),
+                            branchCode: String(extractedBank.branchCode),      
                             accountType: extractedBank.accountType || 'CURRENT',
-                            accountstatus: false // 🛑 STRICTLY LOCKED
+                            accountstatus: false 
                         }
                     }
                 } 
@@ -447,8 +445,14 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             `);
 
         } catch (e) { 
-            console.error(e);
-            res.send(`<h1>System Error</h1><p>${e.message}</p>`); 
+            console.error("❌ REGISTRATION CRASH:", e);
+            res.send(`
+                <div style="text-align:center; padding:50px; font-family:sans-serif;">
+                    <h1 style="color:#e74c3c;">System Error</h1>
+                    <p>Something went wrong processing your documents.</p>
+                    <p style="color:#7f8c8d; font-size:12px;">${e.message}</p>
+                </div>
+            `); 
         }
     });
 
