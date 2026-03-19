@@ -1587,7 +1587,13 @@ module.exports = (app, { prisma }) => {
             </div>
 
             <div class="card" style="border-top: 4px solid #00d2d3;">
-                <h2 style="margin-top:0;">${member.firstName} ${member.lastName}</h2>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                    <h2 style="margin:0;">${member.firstName} ${member.lastName}</h2>
+                    <button onclick="requestDebiCheck(${member.id})" class="btn" style="background:#f59e0b; width:auto; font-size:12px; padding:8px 15px; border:none;">
+                        🔄 Request DebiCheck
+                    </button>
+                </div>
+
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:20px;">
                     <div style="background:#f8f9fa; padding:15px; border-radius:6px;">
                         <span style="font-size:11px; color:#7f8c8d; text-transform:uppercase;">Contact</span><br>
@@ -1621,12 +1627,34 @@ module.exports = (app, { prisma }) => {
                         <div style="display:flex; gap:10px; margin-top:10px;">
                             <button name="action" value="approve" class="btn" style="flex:1; background:#27ae60; padding:15px; font-size:16px;">✅ Approve KYC</button> 
                             <button name="action" value="reject" class="btn" style="flex:1; background:#e74c3c; padding:15px; font-size:16px;">❌ Reject Documents</button>
-                                                                                                                                                
                         </div>
                     </form>
                 </div>
                 ` : ''}
             </div>
+
+            <script>
+                async function requestDebiCheck(memberId) {
+                    if(!confirm('Send a secure DebiCheck setup link to this member via WhatsApp?')) return;
+                    
+                    try {
+                        const res = await fetch('/admin/members/request-mandate', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ memberId: memberId })
+                        });
+                        
+                        const data = await res.json();
+                        if (data.success) {
+                            alert('✅ ' + data.message);
+                        } else {
+                            alert('❌ Failed: ' + data.error);
+                        }
+                    } catch (e) {
+                        alert('❌ System Error: Could not connect to server.');
+                    }
+                }
+            </script>
         `));
     });
 
