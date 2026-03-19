@@ -1447,25 +1447,40 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-    app.post('/admin/payouts/process', async (req, res) => {
+	app.post('/admin/payouts/process', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         
         try {
             const { churchCode, amount, txCount } = req.body;
             const payoutAmount = parseFloat(amount);
-            const payoutRef = `PAY-${churchCode}-${Date.now().toString().slice(-6)}`;
+            const payoutRef = `PAY-${churchCode}-${Date.now().toString().slice(-4)}`;
 
+            // 1. Fetch the Organization to get their banking details
+            const org = await prisma.church.findUnique({ where: { code: churchCode } });
+            if (!org) throw new Error("Organization not found.");
+
+            // 2. 🏦 FIRE THE ACTUAL BANK TRANSFER VIA NETCASH
+            const { executeBankTransfer } = require('../services/netcash');
+            const bankResult = await executeBankTransfer(org, payoutAmount, payoutRef);
+
+            if (!bankResult.success) {
+                // If the bank rejects it, we HALT everything. We do not update the DB!
+                throw new Error(bankResult.error);
+            }
+
+            // 3. Log the successful payout in the DB using the REAL Bank Reference
             const payoutLog = await prisma.payoutLog.create({
                 data: {
                     churchCode: churchCode,
                     amount: payoutAmount,
                     txCount: parseInt(txCount),
-                    reference: payoutRef,
+                    reference: bankResult.bankReference || payoutRef, 
                     status: 'COMPLETED',
-                    adminId: 'admin'
+                    adminId: 'admin' 
                 }
             });
 
+            // 4. Lock the individual transactions so they can never be paid out twice
             await prisma.transaction.updateMany({
                 where: { 
                     churchCode: churchCode,
@@ -1477,18 +1492,28 @@ module.exports = function(app, { prisma }) {
                 }
             });
 
+            // 5. Audit Log (Bank-Grade Compliance)
             await logAction({
                 actorId: 'admin',
                 role: 'SUPER_ADMIN',
                 action: 'PROCESS_PAYOUT',
                 entity: 'PayoutLog',
                 entityId: String(payoutLog.id),
-                metadata: { churchCode, amount: payoutAmount, reference: payoutRef },
+                metadata: { churchCode, amount: payoutAmount, bankRef: bankResult.bankReference },
                 ipAddress: req.ip
             });
 
-            // 👉 Trigger WhatsApp Remittance Blast to Treasurer
-            sendRemittanceAdvice(payoutLog.id);
+            // 6. 📱 Trigger YOUR Original WhatsApp Remittance Blast
+            if (typeof sendRemittanceAdvice === 'function') {
+                sendRemittanceAdvice(payoutLog.id);
+            } else {
+                // Fallback message just in case
+                const msg = `💸 *Payout Initiated*\n\nGreat news! We have just transferred *R${payoutAmount.toFixed(2)}* to your bank account.\n\nBank Ref: ${bankResult.bankReference || payoutRef}\nTransactions Cleared: ${txCount}\n\nPlease allow up to 48 hours for the funds to reflect.`;
+                let cleanPhone = org.adminPhone.replace(/\D/g, '');
+                if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+                const { sendWhatsApp } = require('../services/whatsapp'); 
+                await sendWhatsApp(cleanPhone, msg);
+            }
 
             res.redirect('/admin/payouts');
         } catch (e) {

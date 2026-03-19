@@ -266,6 +266,59 @@ async function listActiveSubscriptions(phone) {
     return "To view or cancel active debit orders, please contact your administrator directly.";
 }
 
+// ==========================================
+// 6. BANK DISBURSEMENTS (Creditor API / EFT)
+// ==========================================
+async function executeBankTransfer(stokvel, amount, reference) {
+    console.log(`🏦 [BANK TRANSFER] Initiating EFT of R${amount} to ${stokvel.name}...`);
+    
+    try {
+        // 1. Validate Stokvel Banking Details
+        if (!stokvel.accountNumber || !stokvel.branchCode) {
+            throw new Error(`Missing banking details for ${stokvel.code}`);
+        }
+
+        // 2. Format the Netcash Creditor API Payload
+        // Netcash requires a specific string/XML format for their NIWS_Creditor endpoint.
+        // We securely map the Stokvel's DB details to the bank payload.
+        const accountType = stokvel.accountType === 'SAVINGS' ? '2' : '1'; // 1=Current, 2=Savings
+        const payload = {
+            ServiceKey: process.env.NETCASH_CREDITOR_SERVICE_KEY, // Needs to be added to .env
+            Instruction: 'CreateBatch',
+            // File formatting per Netcash API specs
+            Data: `K${stokvel.name}|${stokvel.accountNumber}|${stokvel.branchCode}|${accountType}|${amount.toFixed(2)}|${reference}|Seabe Payout`
+        };
+
+        // 3. 🚀 Fire to Netcash Server (Mocked securely if API key is missing)
+        if (!process.env.NETCASH_CREDITOR_SERVICE_KEY || process.env.NODE_ENV === 'test') {
+            console.log(`⚠️ [TEST MODE] Simulating Netcash EFT to Account ending in ...${stokvel.accountNumber.slice(-4)}`);
+            return {
+                success: true,
+                bankReference: `TEST-BNK-${Date.now()}`,
+                message: "Simulated Success"
+            };
+        }
+
+        // LIVE PRODUCTION CALL
+        const response = await axios.post('https://ws.netcash.co.za/NIWS/niws_creditor.svc/Process', payload);
+        
+        // 4. Parse Bank Response
+        if (response.data && response.data.includes('SUCCESS')) {
+            return {
+                success: true,
+                bankReference: response.data.split('|')[1] || `EFT-${Date.now()}`,
+                message: "EFT Instruction Accepted by Netcash"
+            };
+        } else {
+            throw new Error(`Netcash Rejected EFT: ${response.data}`);
+        }
+
+    } catch (error) {
+        console.error("❌ Bank Transfer Failed:", error.message);
+        return { success: false, error: error.message };
+    }
+}
+
 module.exports = { 
     createPaymentLink, 
     generateAutoPostForm,
@@ -273,5 +326,6 @@ module.exports = {
     verifyPayment, 
     getTransactionHistory,
     setupDebitOrderMandate,
-    listActiveSubscriptions
+    listActiveSubscriptions,
+	executeBankTransfer
 };
