@@ -183,48 +183,6 @@ router.post('/pay/process', express.urlencoded({ extended: true }), async (req, 
     }
 });
 
-
-// ==========================================
-// 🛡️ WEBHOOK: NETCASH SERVER-TO-SERVER
-// ==========================================
-router.post('/netcash/webhook', async (req, res) => {
-    try {
-        const reference = req.body.Reference || req.body.p2; 
-        const isSuccess = req.body.TransactionAccepted === 'true' || req.body.Reason === '00'; 
-
-        if (!reference) return res.status(400).send("Missing reference");
-
-        if (isSuccess) {
-            const transaction = await prisma.transaction.findUnique({ 
-                where: { reference: reference },
-                include: { member: true, church: true }
-            });
-
-            if (transaction && transaction.status === 'PENDING') {
-                await prisma.transaction.update({
-                    where: { id: transaction.id },
-                    data: { status: 'SUCCESS' }
-                });
-
-                if (client) {
-                    const targetPhone = transaction.member ? transaction.member.phone : transaction.phone;
-                    const orgName = transaction.church ? transaction.church.name : "Seabe Platform";
-                    
-                    await client.messages.create({
-                        from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '')}`,
-                        to: `whatsapp:${formatPhone(targetPhone)}`,
-                        body: `✅ *Receipt: Payment Received*\n\n🏛️ *Org:* ${orgName}\nRef: ${reference}\nAmount: R${transaction.amount}\n\nThank you for your contribution! 🙏`
-                    });
-                }
-            }
-        }
-        res.sendStatus(200);
-    } catch (e) {
-        console.error("Netcash Webhook Error:", e);
-        res.sendStatus(500);
-    }
-});
-
 // ==========================================
 // 💳 BROWSER SUCCESS REDIRECT (Netcash Return URL)
 // ==========================================
