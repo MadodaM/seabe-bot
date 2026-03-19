@@ -132,20 +132,22 @@ router.get('/pay', async (req, res) => {
     }
 });
 
-// 2. Process the Payment and Auto-Redirect to Netcash
+// 2. Process the Payment and Auto-Redirect via netcash.js
 router.post('/pay/process', express.urlencoded({ extended: true }), async (req, res) => {
     try {
         const { memberId, code, amount } = req.body;
         const contributionAmount = parseFloat(amount);
 
         const org = await prisma.church.findUnique({ where: { code: code } });
-        if (!org || !org.netcashPayNowKey) {
-            return res.send(renderPage('Setup Incomplete', '⚠️', 'Action Required', 'This organization has not finished setting up their Netcash Gateway.', true));
+        if (!org) {
+            return res.send(renderPage('Error', '⚠️', 'Not Found', 'Organization not found.', true));
         }
 
+        // 1. Calculate precise fees
         const fees = await calculateTransaction(contributionAmount, 'STANDARD', 'PAYMENT_LINK', true);
         const reference = `STK-${memberId}-${Date.now().toString().slice(-6)}`;
 
+        // 2. Safely log the PENDING transaction
         await prisma.transaction.create({
             data: {
                 reference: reference,
@@ -161,27 +163,23 @@ router.post('/pay/process', express.urlencoded({ extended: true }), async (req, 
             }
         });
 
-        const htmlForm = `
-            <html>
-            <body onload="document.forms['netcashForm'].submit()">
-                <div style="text-align:center; font-family:-apple-system, sans-serif; margin-top:50px; color:#2c3e50;">
-                    <h2>Redirecting to Secure Gateway... 🔒</h2>
-                    <p style="color:#7f8c8d;">Please wait, do not close this window.</p>
-                </div>
-                <form name="netcashForm" action="https://paynow.netcash.co.za/site/paynow.aspx" method="post" style="display:none;">
-                    <input type="hidden" name="p2" value="${org.netcashPayNowKey}">
-                    <input type="hidden" name="p3" value="${reference}">
-                    <input type="hidden" name="p4" value="${fees.totalChargedToUser.toFixed(2)}">
-                    <input type="hidden" name="Budget" value="Y">
-                </form>
-            </body>
-            </html>
-        `;
+        // 3. 🚀 THE FIX: Tell netcash.js to generate the exact compliant form
+        const txData = {
+            reference: reference,
+            amount: fees.totalChargedToUser,
+            description: `Contribution to ${org.name}`,
+            email: org.email || '', 
+            phone: memberId.toString()
+        };
 
+        const htmlForm = netcash.generateAutoPostForm(txData);
+
+        // 4. Send the auto-submitting Netcash loader to the user's phone
         res.send(htmlForm);
+
     } catch (error) {
         console.error("Payment Process Error:", error);
-        res.send(renderPage('Error', '⚠️', 'Gateway Error', 'An error occurred generating your payment link.', true));
+        res.send(renderPage('Error', '⚠️', 'Gateway Error', 'An error occurred connecting to Netcash.', true));
     }
 });
 
