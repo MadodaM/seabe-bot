@@ -334,10 +334,9 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     // 3. REGISTRATION HANDLER (With Gemini 2.5 KYB OCR)
     // ==========================================
     app.post('/register-church', uploadCloud.fields([{ name: 'idDoc', maxCount: 1 }, { name: 'bankDoc', maxCount: 1 }]), async (req, res) => {
-        const { churchName, email, tos, type } = req.body;
-		console.log("📥 [REGISTRATION PAYLOAD]:", req.body);
         
-        const { churchName, email, tos, type } = req.body;
+		const { churchName, email, tos, type } = req.body;
+		console.log("📥 [REGISTRATION PAYLOAD]:", req.body);
         
         if (!type) {
             console.warn("⚠️ WARNING: The frontend form did not send a 'type' variable!");
