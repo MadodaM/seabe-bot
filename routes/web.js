@@ -467,31 +467,36 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     // ==========================================
     app.get('/mandate/:memberId', async (req, res) => {
         try {
-            // Find the member and their organization
+            // 🚀 FIX: Fetch member, then fetch the org safely using churchCode
             const member = await prisma.member.findUnique({
-                where: { id: parseInt(req.params.memberId) },
-                include: { organization: true }
+                where: { id: parseInt(req.params.memberId) }
             });
 
             if (!member) return res.status(404).send("Link expired or invalid.");
+
+            const org = await prisma.church.findUnique({
+                where: { code: member.churchCode }
+            });
+
+            const orgName = org ? org.name : 'Seabe Digital';
 
             res.send(`
                 <!DOCTYPE html>
                 <html lang="en">
                 <head>
-                    <title>Authorize DebiCheck | Seabe Digital</title>
+                    <title>Authorize DebiCheck | ${orgName}</title>
                     ${sharedHead}
                 </head>
                 <body class="bg-seabe-light min-h-screen flex flex-col items-center justify-center p-6">
                     <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-gray-100">
                         <div class="text-center mb-6">
                             <h2 class="text-2xl font-bold text-seabe-navy">Setup Monthly Contribution</h2>
-                            <p class="text-gray-500 text-sm mt-2">Authorize a secure DebiCheck mandate for <strong>${member.organization.name}</strong>.</p>
+                            <p class="text-gray-500 text-sm mt-2">Authorize a secure DebiCheck mandate for <strong>${orgName}</strong>.</p>
                         </div>
 
                         <div class="bg-blue-50 border border-blue-100 p-4 rounded-lg mb-6">
                             <p class="text-xs text-blue-800 font-semibold mb-1">🏦 How DebiCheck Works:</p>
-                            <p class="text-xs text-blue-600">Once you submit this form, your bank will send a secure pop-up to your banking app or via USSD (SMS) asking you to approve the monthly deduction.</p>
+                            <p class="text-xs text-blue-600">Once you submit this form, your bank will send a secure pop-up to your banking app or via SMS asking you to approve the monthly deduction.</p>
                         </div>
 
                         <form action="/api/mandates/process" method="POST" class="space-y-4">
@@ -532,6 +537,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 </html>
             `);
         } catch (e) {
+            console.error("Mandate Page Error:", e);
             res.send("Error loading mandate page.");
         }
     });

@@ -2002,9 +2002,10 @@ module.exports = (app, { prisma }) => {
     router.post('/admin/:code/request-mandate', checkSession, async (req, res) => {
         const { memberId } = req.body;
         try {
+            // 🚀 FIX: Removed the invalid 'include' statement. 
+            // We already have the org details in req.org!
             const member = await prisma.member.findUnique({ 
-                where: { id: parseInt(memberId) },
-                include: { organization: true }
+                where: { id: parseInt(memberId) }
             });
 
             if (!member) return res.json({ success: false, error: "Member not found." });
@@ -2015,6 +2016,8 @@ module.exports = (app, { prisma }) => {
             if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
                 const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
                 const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+                
+                // 🚀 FIX: Using req.org.name instead of member.organization.name
                 const msg = `🔒 *Monthly Contribution Setup*\n\nHi ${member.firstName}, please click the secure link below to authorize your monthly DebiCheck contribution for *${req.org.name}*.\n\n👉 ${mandateLink}`;
 
                 await twilioClient.messages.create({
@@ -2027,6 +2030,7 @@ module.exports = (app, { prisma }) => {
                 return res.json({ success: false, error: "WhatsApp service missing keys." });
             }
         } catch (error) {
+            console.error("DebiCheck Trigger Error:", error);
             res.json({ success: false, error: error.message });
         }
     });
