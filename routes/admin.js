@@ -1555,7 +1555,6 @@ module.exports = (app, { prisma }) => {
         const member = await prisma.member.findUnique({ where: { id: parseInt(req.params.id) } });
         if (!member) return res.send("Not Found");
 
-        // 🛠️ Smarter Decryptor: Ignores legacy plain-text data
         const safeDecrypt = (data) => {
             if (!data) return null;
             if (typeof data === 'string' && data.includes(':') && data.length > 30) {
@@ -1582,7 +1581,7 @@ module.exports = (app, { prisma }) => {
 
         res.send(renderPage(req.org, 'members', `
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-                <a href="/admin/${req.params.code}/verifications" style="color:#7f8c8d; text-decoration:none; font-weight:bold;">← Back to Queue</a>
+                <a href="/admin/${req.params.code}/members" style="color:#7f8c8d; text-decoration:none; font-weight:bold;">← Back to Members</a>
                 ${member.isIdVerified ? '<span class="badge" style="background:#27ae60; padding:6px 12px; font-size:14px;">✅ Fully Verified</span>' : '<span class="badge" style="background:#f39c12; padding:6px 12px; font-size:14px;">Pending Review</span>'}
             </div>
 
@@ -1604,14 +1603,9 @@ module.exports = (app, { prisma }) => {
                         <strong>${idNum}</strong>
                     </div>
                 </div>
-                <div style="background:#f8f9fa; padding:15px; border-radius:6px; margin-bottom:20px;">
-                    <span style="font-size:11px; color:#7f8c8d; text-transform:uppercase;">Physical Address</span><br>
-                    <strong>${address}</strong>
-                </div>
 
                 <hr style="border:0; border-top:1px solid #eee; margin:20px 0;">
                 <h3 style="color:#2c3e50;">Uploaded Documents</h3>
-                
                 ${renderDoc(idPhoto, 'ID / Passport Document')}
                 ${renderDoc(addressPhoto, 'Proof of Address')}
 
@@ -1620,39 +1614,28 @@ module.exports = (app, { prisma }) => {
                     <h3 style="margin-top:0; color:#b45309;">Review Decision</h3>
                     <form action="/admin/${req.params.code}/verifications/action" method="POST">
                         <input type="hidden" name="memberId" value="${member.id}">
-                        
-                        <label style="color:#b45309;">Rejection Reason (Only sent if rejecting)</label>
-                        <textarea name="reason" placeholder="e.g. The photo of your ID is blurry, please retake it in good lighting." style="background:white; border-color:#fcd34d;"></textarea>
-                        
+                        <label style="color:#b45309;">Rejection Reason</label>
+                        <textarea name="reason" placeholder="Blurry photo..." style="background:white; border-color:#fcd34d;"></textarea>
                         <div style="display:flex; gap:10px; margin-top:10px;">
-                            <button name="action" value="approve" class="btn" style="flex:1; background:#27ae60; padding:15px; font-size:16px;">✅ Approve KYC</button> 
-                            <button name="action" value="reject" class="btn" style="flex:1; background:#e74c3c; padding:15px; font-size:16px;">❌ Reject Documents</button>
+                            <button name="action" value="approve" class="btn" style="flex:1; background:#27ae60;">✅ Approve KYC</button> 
+                            <button name="action" value="reject" class="btn" style="flex:1; background:#e74c3c;">❌ Reject</button>
                         </div>
                     </form>
-                </div>
-                ` : ''}
+                </div>` : ''}
             </div>
 
             <script>
                 async function requestDebiCheck(memberId) {
-                    if(!confirm('Send a secure DebiCheck setup link to this member via WhatsApp?')) return;
-                    
+                    if(!confirm('Send a secure DebiCheck setup link via WhatsApp?')) return;
                     try {
-                        const res = await fetch(`/admin/${req.params.code}/request-mandate`, {
+                        const res = await fetch('/admin/${req.params.code}/request-mandate', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ memberId: memberId })
                         });
-                        
                         const data = await res.json();
-                        if (data.success) {
-                            alert('✅ ' + data.message);
-                        } else {
-                            alert('❌ Failed: ' + data.error);
-                        }
-                    } catch (e) {
-                        alert('❌ System Error: Could not connect to server.');
-                    }
+                        alert(data.success ? '✅ ' + data.message : '❌ ' + data.error);
+                    } catch (e) { alert('❌ Server Connection Error'); }
                 }
             </script>
         `));
@@ -1739,48 +1722,6 @@ module.exports = (app, { prisma }) => {
     });
 	
 	// ==========================================
-    // 📲 ADMIN: SEND DEBICHECK SETUP LINK
-    // ==========================================
-    router.post('/admin/:code/request-mandate', checkSession, async (req, res) => {
-        const { memberId } = req.body;
-
-        try {
-            const member = await prisma.member.findUnique({ 
-                where: { id: parseInt(memberId) },
-                include: { organization: true }
-            });
-
-            if (!member) return res.json({ success: false, error: "Member not found." });
-
-            // Construct the secure public link
-            const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
-            const mandateLink = `${host}/mandate/${member.id}`;
-
-            // Send via Twilio WhatsApp
-            if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
-                const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
-                const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
-                
-                const msg = `🔒 *Monthly Contribution Setup*\n\nHi ${member.firstName}, please click the secure link below to authorize your monthly DebiCheck contribution for *${req.org.name}*.\n\n👉 ${mandateLink}\n\n_Powered by Seabe Digital_`;
-
-                await twilioClient.messages.create({
-                    from: `whatsapp:${cleanTwilioNumber}`,
-                    to: `whatsapp:${member.phone}`,
-                    body: msg
-                });
-                
-                return res.json({ success: true, message: "Mandate link sent via WhatsApp!" });
-            } else {
-                return res.json({ success: false, error: "WhatsApp service not configured (Missing Keys)." });
-            }
-
-        } catch (error) {
-            console.error("DebiCheck Trigger Error:", error);
-            res.json({ success: false, error: error.message });
-        }
-    });
-
-    // ==========================================
     // 📢 2. API: Send WhatsApp Broadcast
     // ==========================================
     router.post('/api/crm/broadcast/:code', express.json(), async (req, res) => {
@@ -2046,4 +1987,39 @@ module.exports = (app, { prisma }) => {
     });
 
     app.use('/', router);
+	
+	// ==========================================
+    // 📲 ADMIN: SEND DEBICHECK SETUP LINK
+    // ==========================================
+    router.post('/admin/:code/request-mandate', checkSession, async (req, res) => {
+        const { memberId } = req.body;
+        try {
+            const member = await prisma.member.findUnique({ 
+                where: { id: parseInt(memberId) },
+                include: { organization: true }
+            });
+
+            if (!member) return res.json({ success: false, error: "Member not found." });
+
+            const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+            const mandateLink = `${host}/mandate/${member.id}`;
+
+            if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
+                const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+                const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+                const msg = `🔒 *Monthly Contribution Setup*\n\nHi ${member.firstName}, please click the secure link below to authorize your monthly DebiCheck contribution for *${req.org.name}*.\n\n👉 ${mandateLink}`;
+
+                await twilioClient.messages.create({
+                    from: `whatsapp:${cleanTwilioNumber}`,
+                    to: `whatsapp:${member.phone}`,
+                    body: msg
+                });
+                return res.json({ success: true, message: "Mandate link sent!" });
+            } else {
+                return res.json({ success: false, error: "WhatsApp service missing keys." });
+            }
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
 };
