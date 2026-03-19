@@ -338,7 +338,8 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
         
         console.log("📥 [REGISTRATION PAYLOAD]:", req.body);
         
-        const { churchName, email, tos, type } = req.body;
+        // 🛠️ FIX 1: Removed duplicate, and ADDED adminPhone so Prisma doesn't crash!
+        const { churchName, email, tos, type, adminPhone } = req.body;
         
         if (!type) console.warn("⚠️ WARNING: Form did not send 'type'!");
         if (!tos) return res.send("⚠️ You must accept the Terms.");
@@ -369,7 +370,6 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
 
             console.log(`⏳ [KYB] Processing Bank Document for ${churchName} via Gemini 2.5...`);
             try {
-                // 🛡️ CRASH-PROOF: Use Axios instead of Fetch (Compatible with all Node versions)
                 const fileResponse = await axios.get(bankDocUrl, { responseType: 'arraybuffer' });
                 const base64Data = Buffer.from(fileResponse.data).toString('base64');
 
@@ -400,6 +400,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                     name: churchName, 
                     code: newCode, 
                     email: email, 
+                    adminPhone: adminPhone || '0000000000', // 🛠️ FIX 2: Safely pass it to the DB!
                     subaccountCode: 'PENDING_KYC', 
                     tosAcceptedAt: new Date(), 
                     type: type || 'CHURCH',
