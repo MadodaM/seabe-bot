@@ -492,18 +492,38 @@ router.post('/', (req, res) => {
             if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ADDRESS') {
                 const addressUrl = req.body.MediaUrl0;
                 try {
+                    // 1. Fetch member AND include the Church relation to know the org type
                     const memberRecord = await prisma.member.findFirst({ 
                         where: { phone: cleanPhone, churchCode: session.churchCode },
-                        orderBy: { id: 'desc' }
+                        orderBy: { id: 'desc' },
+                        include: { church: true } // 👈 NEW: Include the organization details
                     });
                     
                     if (memberRecord) {
                         const newStatus = memberRecord.isIdVerified ? 'ACTIVE' : 'PENDING_KYC';
+                        const orgName = memberRecord.church?.name || "the organization";
+                        const orgType = memberRecord.church?.type || "CHURCH";
                         
-                        const welcomeMsg = memberRecord.isIdVerified 
-                            ? `🎉 *REGISTRATION COMPLETE & POLICY ACTIVE!*\n\nPolicy Number: *${memberRecord.policyNumber || 'N/A'}*\nMonthly Premium: *R${(memberRecord.monthlyPremium || 0).toFixed(2)}*\n\nYour policy is now fully active. You can reply with *Menu* at any time to view your policy details or make a payment.`
-                            : "✅ *Documents Received!*\n\nYour Proof of Address and ID have been vaulted for Admin Review. You will receive a WhatsApp notification as soon as your policy is officially activated!";
+                        let welcomeMsg = "";
 
+                        // 2. DYNAMIC WELCOME MESSAGES
+                        if (memberRecord.isIdVerified) {
+                            if (orgType === 'BURIAL_SOCIETY') {
+                                welcomeMsg = `🎉 *REGISTRATION COMPLETE & POLICY ACTIVE!*\n\nPolicy Number: *${memberRecord.policyNumber || 'N/A'}*\nMonthly Premium: *R${(memberRecord.monthlyPremium || 0).toFixed(2)}*\n\nYour policy is now fully active. You can reply with *Menu* at any time to view your policy details or make a payment.`;
+                            } else if (orgType === 'STOKVEL_SAVINGS') {
+                                welcomeMsg = `🎉 *STOKVEL REGISTRATION COMPLETE!*\n\nWelcome to *${orgName}*. Your savings profile is now fully active and verified.\n\nReply *Stokvel* or *Menu* at any time to view your contributions, access your digital card, or make a payment.`;
+                            } else if (orgType === 'NON_PROFIT') {
+                                welcomeMsg = `🎉 *REGISTRATION COMPLETE!*\n\nWelcome to *${orgName}*. Your member profile is now fully active and verified.\n\nReply *NPO* or *Menu* at any time to access your dashboard.`;
+                            } else {
+                                welcomeMsg = `🎉 *REGISTRATION COMPLETE!*\n\nWelcome to *${orgName}*. Your member profile is now fully active and verified.\n\nReply *Amen* or *Menu* at any time to access your dashboard and courses.`;
+                            }
+                        } else {
+                            // 3. DYNAMIC PENDING MESSAGES (If AI failed and manual review is needed)
+                            const accountLabel = orgType === 'BURIAL_SOCIETY' ? 'policy' : (orgType === 'STOKVEL_SAVINGS' ? 'savings profile' : 'account');
+                            welcomeMsg = `✅ *Documents Received!*\n\nYour Proof of Address and ID have been securely vaulted for Admin Review. You will receive a WhatsApp notification as soon as your ${accountLabel} is officially activated!`;
+                        }
+
+                        // 4. Update the Database
                         await prisma.member.update({
                             where: { id: memberRecord.id },
                             data: { 
@@ -513,6 +533,7 @@ router.post('/', (req, res) => {
                                 ...(memberRecord.isIdVerified && { verifiedAt: new Date() }) 
                             }
                         });
+                        
                         clearSessionFlag = true; 
                         await sendWhatsApp(cleanPhone, welcomeMsg);
                     }
