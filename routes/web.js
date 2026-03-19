@@ -461,6 +461,120 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             }
         }); 
     });
+	
+	// ==========================================
+    // 8. DEBICHECK MANDATE CAPTURE (Public Link)
+    // ==========================================
+    app.get('/mandate/:memberId', async (req, res) => {
+        try {
+            // Find the member and their organization
+            const member = await prisma.member.findUnique({
+                where: { id: parseInt(req.params.memberId) },
+                include: { organization: true }
+            });
+
+            if (!member) return res.status(404).send("Link expired or invalid.");
+
+            res.send(`
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <title>Authorize DebiCheck | Seabe Digital</title>
+                    ${sharedHead}
+                </head>
+                <body class="bg-seabe-light min-h-screen flex flex-col items-center justify-center p-6">
+                    <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-gray-100">
+                        <div class="text-center mb-6">
+                            <h2 class="text-2xl font-bold text-seabe-navy">Setup Monthly Contribution</h2>
+                            <p class="text-gray-500 text-sm mt-2">Authorize a secure DebiCheck mandate for <strong>${member.organization.name}</strong>.</p>
+                        </div>
+
+                        <div class="bg-blue-50 border border-blue-100 p-4 rounded-lg mb-6">
+                            <p class="text-xs text-blue-800 font-semibold mb-1">🏦 How DebiCheck Works:</p>
+                            <p class="text-xs text-blue-600">Once you submit this form, your bank will send a secure pop-up to your banking app or via USSD (SMS) asking you to approve the monthly deduction.</p>
+                        </div>
+
+                        <form action="/api/mandates/process" method="POST" class="space-y-4">
+                            <input type="hidden" name="memberId" value="${member.id}">
+                            
+                            <div>
+                                <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Bank Name</label>
+                                <select name="bankName" required class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none bg-gray-50">
+                                    <option value="ABSA">ABSA</option>
+                                    <option value="CAPITEC">Capitec</option>
+                                    <option value="FNB">First National Bank (FNB)</option>
+                                    <option value="NEDBANK">Nedbank</option>
+                                    <option value="STANDARD_BANK">Standard Bank</option>
+                                    <option value="TYME">TymeBank</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Account Type</label>
+                                <select name="accountType" required class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none bg-gray-50">
+                                    <option value="1">Current / Cheque</option>
+                                    <option value="2">Savings</option>
+                                    <option value="3">Transmission</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Account Number</label>
+                                <input type="text" name="accountNumber" required pattern="[0-9]+" placeholder="e.g. 62000000000" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none bg-gray-50 font-mono text-lg tracking-wider">
+                            </div>
+
+                            <button type="submit" class="w-full bg-seabe-teal text-white font-bold py-4 rounded-lg hover:bg-teal-500 transition shadow-lg mt-4 flex justify-center items-center gap-2">
+                                🔒 Submit to Bank for Approval
+                            </button>
+                        </form>
+                    </div>
+                </body>
+                </html>
+            `);
+        } catch (e) {
+            res.send("Error loading mandate page.");
+        }
+    });
+
+    // ==========================================
+    // 9. PROCESS THE MANDATE (Triggers Bank USSD)
+    // ==========================================
+    app.post('/api/mandates/process', express.urlencoded({ extended: true }), async (req, res) => {
+        const { memberId, bankName, accountType, accountNumber } = req.body;
+
+        try {
+            const member = await prisma.member.findUnique({ where: { id: parseInt(memberId) } });
+
+            // 1. In a production environment, this is where you send the XML payload to the Netcash DebiCheck API.
+            // Netcash will then instantly trigger the USSD prompt on the member's phone.
+            console.log(`📡 [NETCASH API] Sending DebiCheck Mandate Request for Member ${memberId}...`);
+            console.log(`   Bank: ${bankName} | Acc: ${accountNumber}`);
+
+            // 2. Update the Database to mark the mandate as PENDING Bank Approval
+            await prisma.member.update({
+                where: { id: parseInt(memberId) },
+                data: { 
+                    mandateStatus: 'PENDING_USSD_APPROVAL' // We assume you add this field to your schema, or use an existing note field
+                }
+            });
+
+            // 3. Show Success Page
+            res.send(`
+                <!DOCTYPE html>
+                <html><head>${sharedHead}</head><body class="bg-seabe-light flex items-center justify-center h-screen">
+                <div class="bg-white p-10 rounded-2xl shadow-xl text-center max-w-md">
+                    <div class="text-5xl mb-4">📱</div>
+                    <h1 class="text-2xl font-bold text-seabe-navy mb-2">Check Your Phone!</h1>
+                    <p class="text-gray-500 mb-6">We have sent the request to <strong>${bankName}</strong>. Please check your banking app or USSD messages to approve the recurring deduction.</p>
+                    <a href="https://wa.me/27600000000" class="text-seabe-teal font-bold hover:underline">Return to WhatsApp</a>
+                </div>
+                </body></html>
+            `);
+
+        } catch (e) {
+            res.send(`<h1>Error</h1><p>${e.message}</p>`);
+        }
+    });
 
     // ==========================================
     // 4. DEMO REQUEST

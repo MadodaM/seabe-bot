@@ -1555,8 +1555,16 @@ module.exports = (app, { prisma }) => {
         const member = await prisma.member.findUnique({ where: { id: parseInt(req.params.id) } });
         if (!member) return res.send("Not Found");
 
+        // 🛠️ Smarter Decryptor: Ignores URLs and legacy plain-text data
         const safeDecrypt = (data) => {
             if (!data) return null;
+            
+            // 🛑 STOP: If it's a web link, it's definitely not encrypted!
+            if (typeof data === 'string' && data.startsWith('http')) {
+                return data;
+            }
+
+            // Otherwise, if it has a colon and is long, try to decrypt
             if (typeof data === 'string' && data.includes(':') && data.length > 30) {
                 try { return decrypt ? decrypt(data) : data; } catch (e) { return data; }
             }
