@@ -11,6 +11,7 @@ const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
 const netcash = require('../services/netcash'); // Required for Payment Redirect
 require('dotenv').config();
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const EMAIL_FROM = process.env.EMAIL_FROM;
 if (process.env.SENDGRID_KEY) sgMail.setApiKey(process.env.SENDGRID_KEY);
@@ -329,7 +330,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     });
 
     // ==========================================
-    // 3. REGISTRATION HANDLER
+    // 3. REGISTRATION HANDLER (With Gemini 2.5 KYB OCR)
     // ==========================================
     app.post('/register-church', uploadCloud.fields([{ name: 'idDoc', maxCount: 1 }, { name: 'bankDoc', maxCount: 1 }]), async (req, res) => {
         const { churchName, email, tos, type } = req.body;
@@ -343,16 +344,75 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
 
             const prefix = churchName.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
             const newCode = `${prefix}${Math.floor(100 + Math.random() * 900)}`;
-            
+
+            // =========================================================
+            // 🤖 GEMINI 2.5 BANK DOCUMENT OCR
+            // =========================================================
+            let extractedBank = {
+                bankName: "Pending Review",
+                accountName: churchName,
+                accountNumber: "PENDING",
+                branchCode: "PENDING",
+                accountType: "CURRENT"
+            };
+
+            console.log(`⏳ [KYB] Processing Bank Document for ${churchName} via Gemini 2.5...`);
+            try {
+                // Fetch the uploaded image from Cloudinary/Cloud Storage
+                const response = await fetch(bankDocUrl);
+                const arrayBuffer = await response.arrayBuffer();
+                const base64Data = Buffer.from(arrayBuffer).toString('base64');
+                const mimeType = req.files['bankDoc'][0].mimetype || 'image/jpeg';
+
+                const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+                const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+                const prompt = `You are a strict financial compliance AI. Extract the banking details from this Proof of Bank Account / Confirmation Letter. 
+                Return ONLY a raw JSON object with no markdown formatting. 
+                Format: {"bankName": "FNB", "accountName": "Stokvel Savings", "accountNumber": "62000000000", "branchCode": "250655", "accountType": "CURRENT"}`;
+
+                const result = await model.generateContent([
+                    prompt, 
+                    { inlineData: { data: base64Data, mimeType: mimeType } }
+                ]);
+                
+                const cleanJson = result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim();
+                extractedBank = JSON.parse(cleanJson);
+                console.log("✅ [KYB] Data successfully extracted:", extractedBank.accountNumber);
+            } catch (aiError) {
+                console.error("⚠️ [KYB] AI could not confidently read the document.", aiError.message);
+                // Falls back to "PENDING" defaults to not break registration
+            }
+
+            // =========================================================
+            // 💾 ATOMIC DB WRITE
+            // =========================================================
             await prisma.church.create({ 
                 data: { 
-                    name: churchName, code: newCode, email: email, 
+                    name: churchName, 
+                    code: newCode, 
+                    email: email, 
                     subaccountCode: 'PENDING_KYC', 
-                    tosAcceptedAt: new Date(), type: type || 'CHURCH',
-                    ficaStatus: 'LEVEL_1_PENDING'
+                    tosAcceptedAt: new Date(), 
+                    type: type || 'CHURCH',
+                    ficaStatus: 'LEVEL_1_PENDING',
+                    // 👇 NESTED WRITE: Locks the AI data securely
+                    bankDetail: {
+                        create: {
+                            bankName: extractedBank.bankName,
+                            accountName: extractedBank.accountName,
+                            accountNumber: String(extractedBank.accountNumber), // Force string
+                            branchCode: String(extractedBank.branchCode),       // Force string
+                            accountType: extractedBank.accountType || 'CURRENT',
+                            accountstatus: false // 🛑 STRICTLY LOCKED
+                        }
+                    }
                 } 
             });
 
+            // =========================================================
+            // 📧 SENDGRID NOTIFICATIONS
+            // =========================================================
             if (process.env.SENDGRID_KEY) {
                 await sgMail.send({ 
                     to: EMAIL_FROM, from: EMAIL_FROM, 

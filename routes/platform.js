@@ -358,20 +358,80 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-    // 🚀 EDIT ORGANIZATION (With QR Code Generator & AI Scanner)
+    // 🚀 EDIT ORGANIZATION (With QR Code Generator, AI Scanner & KYB Bank Vault)
     app.get('/admin/churches/edit/:code', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         
         try {
-            const c = await prisma.church.findUnique({ where: { code: req.params.code } });
+            // 👇 1. UPDATE: Tell Prisma to fetch the linked Bank Details too!
+            const c = await prisma.church.findUnique({ 
+                where: { code: req.params.code },
+                include: { bankDetail: true } 
+            });
             if (!c) throw new Error("Organization not found.");
 
             const qrImage = await generatePaymentQR(c.code);
 
+            // 👇 2. BUILD THE BANK UI COMPONENT
+            const bank = c.bankDetail || {};
+            const statusBadge = bank.accountstatus 
+                ? `<span style="background:#e8f5e9; color:#27ae60; padding:5px 10px; border-radius:12px; font-weight:bold; font-size:12px;">✅ VERIFIED & ACTIVE</span>`
+                : `<span style="background:#ffebee; color:#c0392b; padding:5px 10px; border-radius:12px; font-weight:bold; font-size:12px;">🛑 UNVERIFIED (PAYOUTS LOCKED)</span>`;
+
+            const bankHtmlSection = `
+                <div class="card-form" style="border-top: 5px solid #2980b9; margin-top: 20px; max-width:100%;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <h3 style="margin: 0; color:#2980b9;">🏦 Automated KYB Banking Details</h3>
+                        ${statusBadge}
+                    </div>
+                    
+                    <p style="font-size: 12px; color: #7f8c8d;">Data extracted via AI. For security, these fields are immutable (Read-Only).</p>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div>
+                            <label style="font-size:12px; font-weight:bold; color:#95a5a6;">Bank Name</label>
+                            <input type="text" value="${bank.bankName || 'N/A'}" readonly style="width:100%; padding:10px; border:1px solid #ddd; border-radius:4px; background:#f8f9fa; color:#2c3e50; cursor:not-allowed; box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="font-size:12px; font-weight:bold; color:#95a5a6;">Account Name</label>
+                            <input type="text" value="${bank.accountName || 'N/A'}" readonly style="width:100%; padding:10px; border:1px solid #ddd; border-radius:4px; background:#f8f9fa; color:#2c3e50; cursor:not-allowed; box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="font-size:12px; font-weight:bold; color:#95a5a6;">Account Number</label>
+                            <input type="text" value="${bank.accountNumber || 'N/A'}" readonly style="width:100%; padding:10px; border:1px solid #ddd; border-radius:4px; background:#f8f9fa; font-family:monospace; font-size:16px; font-weight:bold; color:#2c3e50; cursor:not-allowed; box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="font-size:12px; font-weight:bold; color:#95a5a6;">Branch Code</label>
+                            <input type="text" value="${bank.branchCode || 'N/A'}" readonly style="width:100%; padding:10px; border:1px solid #ddd; border-radius:4px; background:#f8f9fa; font-family:monospace; font-size:16px; color:#2c3e50; cursor:not-allowed; box-sizing:border-box;">
+                        </div>
+                    </div>
+
+                    ${bank.id ? `
+                        <div style="margin-top: 25px; padding-top: 15px; border-top: 1px solid #eee; text-align: right;">
+                            <form action="/admin/bank/toggle-status" method="POST" style="margin:0;">
+                                <input type="hidden" name="bankId" value="${bank.id}">
+                                <input type="hidden" name="currentStatus" value="${bank.accountstatus}">
+                                <input type="hidden" name="orgCode" value="${c.code}">
+                                
+                                ${bank.accountstatus ? `
+                                    <button type="submit" class="btn btn-danger" style="padding:10px 20px; font-weight:bold;">
+                                        🔒 Revoke Account Access
+                                    </button>
+                                ` : `
+                                    <button type="submit" class="btn btn-primary" style="background:#27ae60; padding:10px 20px; font-weight:bold;">
+                                        ✅ Approve & Unlock Payouts
+                                    </button>
+                                `}
+                            </form>
+                        </div>
+                    ` : '<p style="color:#e74c3c; font-size:13px; margin-top:10px;">⚠️ No bank details linked yet.</p>'}
+                </div>
+            `;
+
+            // 👇 3. INJECT INTO MAIN CONTENT
             const content = `
                 <div style="display:flex; flex-wrap:wrap; gap:30px; align-items:start;">
                     
-                    <!-- LEFT: ORG DETAILS FORM -->
                     <div style="flex:2; min-width:300px;">
                         <form action="/admin/churches/update" method="POST" class="card-form" style="max-width:100%;">
                             <input type="hidden" name="code" value="${c.code}">
@@ -407,18 +467,18 @@ module.exports = function(app, { prisma }) {
                             
                             <button class="btn btn-primary" style="padding:12px; width:100%;">Update Organization Details</button>
                         </form>
-						<!-- 🔒 NEW SECURITY & ACCESS CARD -->
+
                         <div class="card-form" style="border-top: 5px solid #e74c3c; margin-top: 20px; max-width:100%;">
                             <h3 style="margin-top:0; color:#c0392b;">🔒 Security & Access</h3>
                             <p style="font-size:12px; color:#7f8c8d;">Resetting access will wipe the client's current password and MFA, and send them a new WhatsApp onboarding link.</p>
                             <button type="button" onclick="resetClientAccess('${c.code}')" class="btn btn-danger" style="width:100%; padding:12px;">Reset Password & MFA</button>
                         </div>
+
+                        ${bankHtmlSection}
                     </div>
 
-                    <!-- RIGHT: TOOLS (QR & SCANNERS) -->
                     <div style="flex:1; min-width:300px;">
                         
-                        <!-- 📲 QR CODE TOOL -->
                         <div class="card-form" style="text-align:center; margin-bottom: 20px;">
                             <h3 style="margin-top:0; color:#2c3e50;">📲 Scan to Pay</h3>
                             <p style="font-size:12px; color:#95a5a6; margin-bottom:15px;">Official payment portal for <strong>${c.code}</strong></p>
@@ -431,7 +491,6 @@ module.exports = function(app, { prisma }) {
                             </div>
                         </div>
 
-                        <!-- ✨ AI MAGIC SCANNER TOOL -->
                         <div class="card-form" style="border-top: 5px solid #8e44ad;">
                             <h3 style="margin-top:0; color:#8e44ad;">✨ AI Magic Scanner</h3>
                             <p style="font-size:12px; color:#7f8c8d;">Upload a flyer or policy document. Gemini AI will extract plans and events automatically.</p>
@@ -449,8 +508,7 @@ module.exports = function(app, { prisma }) {
                 </div>
 
                 <script>
-				
-					async function resetClientAccess(code) {
+                    async function resetClientAccess(code) {
                         if(!confirm("⚠️ Are you sure? This will lock the client out until they complete the new MFA setup.")) return;
                         try {
                             const res = await fetch('/api/admin/churches/reset-access', {
@@ -468,12 +526,11 @@ module.exports = function(app, { prisma }) {
                             alert("Network error.");
                         }
                     }
-					
+                    
                     async function submitOverriddenEvent(churchCode) {
                         const title = document.getElementById('aiEventTitle').value;
                         const date = document.getElementById('aiEventDate').value;
                         const price = document.getElementById('aiEventPrice').value;
-                        
                         saveExtractedEventToDB({ eventName: title, date: date, price: price, churchCode: churchCode });
                     }
 
@@ -483,9 +540,7 @@ module.exports = function(app, { prisma }) {
                             const name = document.getElementById('planName_'+i).value;
                             const price = document.getElementById('planPrice_'+i).value;
                             const benefitsStr = document.getElementById('planBenefits_'+i).value;
-                            // Convert comma string back to array
                             const benefits = benefitsStr.split(',').map(b => b.trim()).filter(b => b);
-                            
                             plans.push({ name, price, benefits });
                         }
                         saveExtractedPolicyToDB(churchCode, plans);
@@ -613,6 +668,29 @@ module.exports = function(app, { prisma }) {
             res.send(renderAdminPage(`Manage: ${c.name}`, content));
         } catch(e) {
             res.send(renderAdminPage('Error', '', e.message));
+        }
+    });
+
+    // ==========================================
+    // 🛡️ ADMIN: TOGGLE BANK ACCOUNT STATUS
+    // ==========================================
+    app.post('/admin/bank/toggle-status', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        
+        try {
+            // 👇 Expect 'orgCode' instead of 'orgId'
+            const { bankId, currentStatus, orgCode } = req.body; 
+            const newStatus = currentStatus === 'true' ? false : true; 
+            
+            await prisma.bankDetail.update({
+                where: { id: parseInt(bankId) },
+                data: { accountstatus: newStatus }
+            });
+
+            // Redirect smoothly back using the code!
+            res.redirect(`/admin/churches/edit/${orgCode}`);
+        } catch (e) {
+            res.send(renderAdminPage('Status Toggle Error', '', e.message));
         }
     });
 
