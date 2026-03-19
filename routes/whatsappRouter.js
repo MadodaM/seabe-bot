@@ -55,10 +55,14 @@ router.post('/', (req, res) => {
 
                 if (member) {
                     session.churchCode = member.churchCode;
-                    session.mode = explicitType === 'BURIAL_SOCIETY' ? 'SOCIETY' : 'CHURCH';
+                    // 👇 FIX 1: Correctly assign STOKVEL mode
+                    if (explicitType === 'BURIAL_SOCIETY') session.mode = 'SOCIETY';
+                    else if (explicitType === 'STOKVEL_SAVINGS') session.mode = 'STOKVEL';
+                    else session.mode = 'CHURCH';
                     session.step = null; 
                 } else {
-                    const labels = { 'BURIAL_SOCIETY': 'Burial Society', 'CHURCH': 'Church', 'NON_PROFIT': 'Non-Profit' };
+                    // 👇 FIX 2: Add Stokvel to the error labels so it doesn't say "undefined"
+                    const labels = { 'BURIAL_SOCIETY': 'Burial Society', 'CHURCH': 'Church', 'NON_PROFIT': 'Non-Profit', 'STOKVEL_SAVINGS': 'Stokvel / Savings Club' };
                     await sendWhatsApp(cleanPhone, `⚠️ You are not currently linked to a ${labels[explicitType]}.\n\nReply *Join* to search for one.`);
                     return;
                 }
@@ -752,8 +756,9 @@ router.post('/', (req, res) => {
             // 🏛️ BRANCH ROUTING (CHURCH, NPO, PROVIDERS)
             // ================================================
             
-            const menuKeywords = ['society', 'amen', 'hi', 'hello', 'menu', 'dashboard', 'npo'];
-            const mappedMsg = menuKeywords.includes(incomingMsg) ? 'menu' : incomingMsg;
+            // 👇 FIX 3: Add 'stokvel' to the array
+			const menuKeywords = ['society', 'amen', 'hi', 'hello', 'menu', 'dashboard', 'npo', 'stokvel'];
+			const mappedMsg = menuKeywords.includes(incomingMsg) ? 'menu' : incomingMsg;
 
             if (!session.mode && member.church) {
                 if (member.church.type === 'BURIAL_SOCIETY') session.mode = 'SOCIETY';
