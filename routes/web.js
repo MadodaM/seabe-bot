@@ -332,129 +332,143 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     });
 
     // ==========================================
-    // 3. REGISTRATION HANDLER (Crash-Proof Version)
+    // 3. REGISTRATION HANDLER (Bulletproof Uploads)
     // ==========================================
-    app.post('/register-church', uploadCloud.fields([{ name: 'idDoc', maxCount: 1 }, { name: 'bankDoc', maxCount: 1 }]), async (req, res) => {
-        
-        console.log("📥 [REGISTRATION PAYLOAD]:", req.body);
-        
-        // 🛠️ FIX 1: Removed duplicate, and ADDED adminPhone so Prisma doesn't crash!
-        const { churchName, email, tos, type, adminPhone } = req.body;
-        
-        if (!type) console.warn("⚠️ WARNING: Form did not send 'type'!");
-        if (!tos) return res.send("⚠️ You must accept the Terms.");
+    const kybUploads = uploadCloud.fields([{ name: 'idDoc', maxCount: 1 }, { name: 'bankDoc', maxCount: 1 }]);
 
-        try {
-            // 🛡️ CRASH-PROOF: Safely check if files exist before reading them
-            const idDocUrl = (req.files && req.files['idDoc']) ? req.files['idDoc'][0].path : null;
-            const bankDocUrl = (req.files && req.files['bankDoc']) ? req.files['bankDoc'][0].path : null;
-            const mimeType = (req.files && req.files['bankDoc']) ? req.files['bankDoc'][0].mimetype : 'image/jpeg';
-
-            if (!idDocUrl || !bankDocUrl) {
-                return res.send("❌ Error: Documents failed to upload to the secure vault. Please check your file sizes and try again.");
+    app.post('/register-church', (req, res) => {
+        // 🛡️ FIX: Wrap the upload in a callback to catch Cloudinary crashes!
+        kybUploads(req, res, async (uploadError) => {
+            if (uploadError) {
+                console.error("❌ CLOUDINARY UPLOAD CRASH:", uploadError);
+                return res.send(`
+                    <div style="text-align:center; padding:50px; font-family:sans-serif;">
+                        <h1 style="color:#e74c3c;">File Vault Error</h1>
+                        <p>The server could not connect to the secure file vault (Cloudinary).</p>
+                        <p style="color:#7f8c8d; font-size:12px;">${uploadError.message}</p>
+                    </div>
+                `);
             }
 
-            const prefix = churchName.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
-            const newCode = `${prefix}${Math.floor(100 + Math.random() * 900)}`;
-
-            // =========================================================
-            // 🤖 GEMINI 2.5 BANK DOCUMENT OCR
-            // =========================================================
-            let extractedBank = {
-                bankName: "Pending Review",
-                accountName: churchName,
-                accountNumber: "PENDING",
-                branchCode: "PENDING",
-                accountType: "CURRENT"
-            };
-
-            console.log(`⏳ [KYB] Processing Bank Document for ${churchName} via Gemini 2.5...`);
-            try {
-                const fileResponse = await axios.get(bankDocUrl, { responseType: 'arraybuffer' });
-                const base64Data = Buffer.from(fileResponse.data).toString('base64');
-
-                const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-                const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
-                const prompt = `You are a strict financial compliance AI. Extract the banking details from this Proof of Bank Account / Confirmation Letter. 
-                Return ONLY a raw JSON object with no markdown formatting. 
-                Format: {"bankName": "FNB", "accountName": "Stokvel Savings", "accountNumber": "62000000000", "branchCode": "250655", "accountType": "CURRENT"}`;
-
-                const result = await model.generateContent([
-                    prompt, 
-                    { inlineData: { data: base64Data, mimeType: mimeType } }
-                ]);
-                
-                const cleanJson = result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim();
-                extractedBank = JSON.parse(cleanJson);
-                console.log("✅ [KYB] Data successfully extracted:", extractedBank.accountNumber);
-            } catch (aiError) {
-                console.error("⚠️ [KYB] AI could not confidently read the document.", aiError.message);
-            }
-
-            // =========================================================
-            // 💾 ATOMIC DB WRITE
-            // =========================================================
-            await prisma.church.create({ 
-                data: { 
-                    name: churchName, 
-                    code: newCode, 
-                    email: email, 
-                    adminPhone: adminPhone || '0000000000', // 🛠️ FIX 2: Safely pass it to the DB!
-                    subaccountCode: 'PENDING_KYC', 
-                    tosAcceptedAt: new Date(), 
-                    type: type || 'CHURCH',
-                    ficaStatus: 'LEVEL_1_PENDING',
-                    bankDetail: {
-                        create: {
-                            bankName: extractedBank.bankName,
-                            accountName: extractedBank.accountName,
-                            accountNumber: String(extractedBank.accountNumber),
-                            branchCode: String(extractedBank.branchCode),      
-                            accountType: extractedBank.accountType || 'CURRENT',
-                            accountstatus: false 
-                        }
-                    }
-                } 
-            });
-
-            // =========================================================
-            // 📧 SENDGRID NOTIFICATIONS
-            // =========================================================
-            if (process.env.SENDGRID_KEY) {
-                await sgMail.send({ 
-                    to: EMAIL_FROM, from: EMAIL_FROM, 
-                    subject: `📝 NEW FICA UPLOAD: ${churchName}`, 
-                    html: `<h2>New Application</h2><p><strong>Name:</strong> ${churchName}</p><p><strong>Type:</strong> ${type}</p><hr><h3>🛡️ Secure FICA Vault</h3><ul><li><a href="${idDocUrl}">📄 View Leader ID</a></li><li><a href="${bankDocUrl}">🏦 View Bank Proof</a></li></ul>` 
-                });
-                await sgMail.send({
-                    to: email, from: EMAIL_FROM, subject: 'Verification Received | Seabe Digital',
-                    html: `<div style="${emailStyle}"><div style="${headerStyle}"><h1 style="margin:0;">SEABE.</h1></div><div style="padding: 30px; background: #fff;"><h2>Documents Received</h2><p>We have securely vaulted your FICA documents for <strong>${churchName}</strong>. Our compliance team will review them within 24 hours.</p></div></div>`
-                });
-            }
+            console.log("📥 [REGISTRATION PAYLOAD]:", req.body);
             
-            res.send(`
-                <!DOCTYPE html>
-                <html><head>${sharedHead}</head><body class="bg-seabe-light flex items-center justify-center h-screen">
-                <div class="bg-white p-10 rounded-2xl shadow-xl text-center max-w-md">
-                    <div class="text-5xl mb-4">🎉</div>
-                    <h1 class="text-2xl font-bold text-seabe-navy mb-2">Application Received</h1>
-                    <p class="text-gray-500 mb-6">We have securely vaulted your FICA documents. Check your email (<strong>${email}</strong>) for next steps.</p>
-                    <a href="/" class="text-seabe-teal font-bold hover:underline">Return Home</a>
-                </div>
-                </body></html>
-            `);
+            const { churchName, email, tos, type, adminPhone } = req.body;
+            
+            if (!type) console.warn("⚠️ WARNING: Form did not send 'type'!");
+            if (!tos) return res.send("⚠️ You must accept the Terms.");
 
-        } catch (e) { 
-            console.error("❌ REGISTRATION CRASH:", e);
-            res.send(`
-                <div style="text-align:center; padding:50px; font-family:sans-serif;">
-                    <h1 style="color:#e74c3c;">System Error</h1>
-                    <p>Something went wrong processing your documents.</p>
-                    <p style="color:#7f8c8d; font-size:12px;">${e.message}</p>
-                </div>
-            `); 
-        }
+            try {
+                // 🛡️ CRASH-PROOF: Safely check if files exist before reading them
+                const idDocUrl = (req.files && req.files['idDoc']) ? req.files['idDoc'][0].path : null;
+                const bankDocUrl = (req.files && req.files['bankDoc']) ? req.files['bankDoc'][0].path : null;
+                const mimeType = (req.files && req.files['bankDoc']) ? req.files['bankDoc'][0].mimetype : 'image/jpeg';
+
+                if (!idDocUrl || !bankDocUrl) {
+                    return res.send("❌ Error: Documents failed to upload. Please check your file sizes.");
+                }
+
+                const prefix = churchName.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
+                const newCode = `${prefix}${Math.floor(100 + Math.random() * 900)}`;
+
+                // =========================================================
+                // 🤖 GEMINI 2.5 BANK DOCUMENT OCR
+                // =========================================================
+                let extractedBank = {
+                    bankName: "Pending Review",
+                    accountName: churchName,
+                    accountNumber: "PENDING",
+                    branchCode: "PENDING",
+                    accountType: "CURRENT"
+                };
+
+                console.log(`⏳ [KYB] Processing Bank Document for ${churchName} via Gemini 2.5...`);
+                try {
+                    const fileResponse = await axios.get(bankDocUrl, { responseType: 'arraybuffer' });
+                    const base64Data = Buffer.from(fileResponse.data).toString('base64');
+
+                    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+                    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+                    const prompt = `You are a strict financial compliance AI. Extract the banking details from this Proof of Bank Account / Confirmation Letter. 
+                    Return ONLY a raw JSON object with no markdown formatting. 
+                    Format: {"bankName": "FNB", "accountName": "Stokvel Savings", "accountNumber": "62000000000", "branchCode": "250655", "accountType": "CURRENT"}`;
+
+                    const result = await model.generateContent([
+                        prompt, 
+                        { inlineData: { data: base64Data, mimeType: mimeType } }
+                    ]);
+                    
+                    const cleanJson = result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim();
+                    extractedBank = JSON.parse(cleanJson);
+                    console.log("✅ [KYB] Data successfully extracted:", extractedBank.accountNumber);
+                } catch (aiError) {
+                    console.error("⚠️ [KYB] AI could not confidently read the document.", aiError.message);
+                }
+
+                // =========================================================
+                // 💾 ATOMIC DB WRITE
+                // =========================================================
+                await prisma.church.create({ 
+                    data: { 
+                        name: churchName, 
+                        code: newCode, 
+                        email: email, 
+                        adminPhone: adminPhone || '0000000000', 
+                        subaccountCode: 'PENDING_KYC', 
+                        tosAcceptedAt: new Date(), 
+                        type: type || 'CHURCH',
+                        ficaStatus: 'LEVEL_1_PENDING',
+                        bankDetail: {
+                            create: {
+                                bankName: extractedBank.bankName,
+                                accountName: extractedBank.accountName,
+                                accountNumber: String(extractedBank.accountNumber),
+                                branchCode: String(extractedBank.branchCode),      
+                                accountType: extractedBank.accountType || 'CURRENT',
+                                accountstatus: false 
+                            }
+                        }
+                    } 
+                });
+
+                // =========================================================
+                // 📧 SENDGRID NOTIFICATIONS
+                // =========================================================
+                if (process.env.SENDGRID_KEY) {
+                    await sgMail.send({ 
+                        to: EMAIL_FROM, from: EMAIL_FROM, 
+                        subject: `📝 NEW FICA UPLOAD: ${churchName}`, 
+                        html: `<h2>New Application</h2><p><strong>Name:</strong> ${churchName}</p><p><strong>Type:</strong> ${type}</p><hr><h3>🛡️ Secure FICA Vault</h3><ul><li><a href="${idDocUrl}">📄 View Leader ID</a></li><li><a href="${bankDocUrl}">🏦 View Bank Proof</a></li></ul>` 
+                    });
+                    await sgMail.send({
+                        to: email, from: EMAIL_FROM, subject: 'Verification Received | Seabe Digital',
+                        html: `<div style="${emailStyle}"><div style="${headerStyle}"><h1 style="margin:0;">SEABE.</h1></div><div style="padding: 30px; background: #fff;"><h2>Documents Received</h2><p>We have securely vaulted your FICA documents for <strong>${churchName}</strong>. Our compliance team will review them within 24 hours.</p></div></div>`
+                    });
+                }
+                
+                res.send(`
+                    <!DOCTYPE html>
+                    <html><head>${sharedHead}</head><body class="bg-seabe-light flex items-center justify-center h-screen">
+                    <div class="bg-white p-10 rounded-2xl shadow-xl text-center max-w-md">
+                        <div class="text-5xl mb-4">🎉</div>
+                        <h1 class="text-2xl font-bold text-seabe-navy mb-2">Application Received</h1>
+                        <p class="text-gray-500 mb-6">We have securely vaulted your FICA documents. Check your email (<strong>${email}</strong>) for next steps.</p>
+                        <a href="/" class="text-seabe-teal font-bold hover:underline">Return Home</a>
+                    </div>
+                    </body></html>
+                `);
+
+            } catch (e) { 
+                console.error("❌ REGISTRATION CRASH:", e);
+                res.send(`
+                    <div style="text-align:center; padding:50px; font-family:sans-serif;">
+                        <h1 style="color:#e74c3c;">System Error</h1>
+                        <p>Something went wrong processing your documents.</p>
+                        <p style="color:#7f8c8d; font-size:12px;">${e.message}</p>
+                    </div>
+                `); 
+            }
+        }); // <-- Don't forget to close the kybUploads wrapper!
     });
 
     // ==========================================
