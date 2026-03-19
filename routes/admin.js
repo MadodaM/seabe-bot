@@ -1638,7 +1638,7 @@ module.exports = (app, { prisma }) => {
                     if(!confirm('Send a secure DebiCheck setup link to this member via WhatsApp?')) return;
                     
                     try {
-                        const res = await fetch('/admin/members/request-mandate', {
+                        const res = await fetch(`/admin/${req.params.code}/request-mandate`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ memberId: memberId })
@@ -1736,6 +1736,48 @@ module.exports = (app, { prisma }) => {
             ></iframe>
         `;
         res.send(renderPage(req.org, 'broadcast', content));
+    });
+	
+	// ==========================================
+    // 📲 ADMIN: SEND DEBICHECK SETUP LINK
+    // ==========================================
+    router.post('/admin/:code/request-mandate', checkSession, async (req, res) => {
+        const { memberId } = req.body;
+
+        try {
+            const member = await prisma.member.findUnique({ 
+                where: { id: parseInt(memberId) },
+                include: { organization: true }
+            });
+
+            if (!member) return res.json({ success: false, error: "Member not found." });
+
+            // Construct the secure public link
+            const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+            const mandateLink = `${host}/mandate/${member.id}`;
+
+            // Send via Twilio WhatsApp
+            if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
+                const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+                const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+                
+                const msg = `🔒 *Monthly Contribution Setup*\n\nHi ${member.firstName}, please click the secure link below to authorize your monthly DebiCheck contribution for *${req.org.name}*.\n\n👉 ${mandateLink}\n\n_Powered by Seabe Digital_`;
+
+                await twilioClient.messages.create({
+                    from: `whatsapp:${cleanTwilioNumber}`,
+                    to: `whatsapp:${member.phone}`,
+                    body: msg
+                });
+                
+                return res.json({ success: true, message: "Mandate link sent via WhatsApp!" });
+            } else {
+                return res.json({ success: false, error: "WhatsApp service not configured (Missing Keys)." });
+            }
+
+        } catch (error) {
+            console.error("DebiCheck Trigger Error:", error);
+            res.json({ success: false, error: error.message });
+        }
     });
 
     // ==========================================
