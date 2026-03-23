@@ -343,10 +343,10 @@ module.exports = function(app, { prisma }) {
                     // 👇 The magic nested Bank Details link (From Block 2)
                     bankDetail: {
                         create: {
-                            bankName: bankName,
+                            bankName: bankName || "Pending Bank",
                             accountName: accountName || name, // Default to Org name if empty
-                            accountNumber: accountNumber,
-                            branchCode: branchCode,
+                            accountNumber: accountNumber || "0000000000",
+                            branchCode: branchCode || "000000",
                             accountType: accountType || 'CURRENT'
                         }
                     }
