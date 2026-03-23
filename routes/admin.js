@@ -668,48 +668,41 @@ module.exports = (app, { prisma }) => {
         }
     });
 	
-	// ==========================================
+// ==========================================
     // 📅 MERCHANT DASHBOARD: APPOINTMENTS
     // ==========================================
     router.get('/admin/:code/appointments', async (req, res) => {
         const orgCode = req.params.code.toUpperCase();
 
         try {
-            // 1. Verify the organization exists
             const org = await prisma.church.findUnique({ where: { code: orgCode } });
             if (!org) return res.send("Organization not found.");
 
-            // 2. Fetch all appointments with the Client and Service data attached
             const appointments = await prisma.appointment.findMany({
                 where: { churchId: org.id },
                 include: { 
-                    member: true,   // Get the client's name & phone
-                    product: true   // Get the service name & price
+                    member: true,   
+                    product: true   
                 },
-                orderBy: { bookingDate: 'desc' } // Newest first
+                orderBy: { bookingDate: 'desc' }
             });
 
-            // 3. Render the UI
             let rowsHtml = '';
             
             if (appointments.length === 0) {
                 rowsHtml = `<tr><td colspan="5" class="p-6 text-center text-gray-500">No appointments booked yet.</td></tr>`;
             } else {
                 appointments.forEach(appt => {
-                    // Format the date nicely
                     const dateObj = new Date(appt.bookingDate);
                     const formattedDate = dateObj.toLocaleDateString('en-ZA', { weekday: 'short', month: 'short', day: 'numeric' });
                     const formattedTime = dateObj.toLocaleTimeString('en-ZA', { hour: '2-digit', minute:'2-digit' });
 
-                    // Status Badges
                     let statusBadge = `<span class="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs font-bold">${appt.status}</span>`;
                     if (appt.status === 'COMPLETED') statusBadge = `<span class="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-bold">COMPLETED</span>`;
                     if (appt.status === 'CANCELLED') statusBadge = `<span class="px-2 py-1 bg-red-100 text-red-800 rounded-full text-xs font-bold">CANCELLED</span>`;
 
-                    const depositBadge = appt.depositPaid 
-                        ? `<span class="text-green-600 font-bold">✅ Paid</span>` 
-                        : `<span class="text-red-500 font-bold">❌ Pending</span>`;
-
+                    const basePrice = appt.product.price.toFixed(2);
+                    
                     rowsHtml += `
                         <tr class="border-b hover:bg-gray-50">
                             <td class="p-4">
@@ -722,27 +715,23 @@ module.exports = (app, { prisma }) => {
                             </td>
                             <td class="p-4">
                                 <div class="font-bold text-gray-800">${appt.product.name}</div>
-                                <div class="text-sm text-gray-500">R${appt.product.price.toFixed(2)}</div>
+                                <div class="text-sm text-gray-500">R${basePrice}</div>
                             </td>
-                            <td class="p-4">${statusBadge}<br><div class="text-xs mt-1">Deposit: ${depositBadge}</div></td>
+                            <td class="p-4">${statusBadge}</td>
                             <td class="p-4 text-right">
-                                ${appt.status !== 'COMPLETED' && appt.status !== 'CANCELLED' ? `
-                                <form action="/admin/${org.code}/appointments/${appt.id}/status" method="POST" class="inline">
-                                    <input type="hidden" name="status" value="COMPLETED">
-                                    <button type="submit" class="bg-seabe-navy text-white px-3 py-1 rounded shadow hover:bg-gray-800 text-sm mr-2">Complete</button>
-                                </form>
-                                <form action="/admin/${org.code}/appointments/${appt.id}/status" method="POST" class="inline">
-                                    <input type="hidden" name="status" value="CANCELLED">
-                                    <button type="submit" class="text-red-500 hover:underline text-sm font-bold">Cancel</button>
-                                </form>
-                                ` : '-'}
+                                ${appt.status === 'CONFIRMED' ? `
+                                <button onclick="openCheckoutModal(${appt.id}, '${appt.member.firstName}', '${appt.product.name}', ${basePrice})" class="bg-seabe-teal text-white px-3 py-1 rounded shadow hover:bg-teal-600 text-sm font-bold">
+                                    💳 Send Bill
+                                </button>
+                                ` : ''}
+                                ${appt.status === 'PENDING_PAYMENT' ? `<span class="text-orange-500 font-bold text-sm">⏳ Awaiting Payment</span>` : ''}
+                                ${appt.status === 'COMPLETED' ? `<span class="text-green-600 font-bold text-sm">✅ Paid In Full</span>` : ''}
                             </td>
                         </tr>
                     `;
                 });
             }
 
-            // A simple shared head snippet (assuming you have Tailwind via CDN like in your other views)
             const html = `
             <!DOCTYPE html>
             <html lang="en">
@@ -784,6 +773,36 @@ module.exports = (app, { prisma }) => {
                         </table>
                     </div>
                 </div>
+
+                <div id="checkoutModal" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden flex items-center justify-center z-50">
+                    <div class="bg-white rounded-xl p-6 max-w-sm w-full shadow-2xl">
+                        <h3 class="text-xl font-bold text-seabe-navy mb-2">Checkout: <span id="clientNameDisplay"></span></h3>
+                        <p class="text-sm text-gray-500 mb-4 border-b pb-4">Base Service: <span id="serviceDisplay" class="font-bold"></span></p>
+                        
+                        <form id="checkoutForm" method="POST">
+                            <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Add Products/Extras Used</label>
+                            <input type="text" name="addedItems" placeholder="e.g. Beard Oil, Color Dye" class="w-full p-2 border rounded mb-4 focus:ring-2 focus:ring-seabe-teal">
+                            
+                            <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Final Total Amount (R)</label>
+                            <input type="number" name="finalAmount" id="finalAmountInput" step="0.01" required class="w-full p-3 border rounded text-lg font-bold mb-6 focus:ring-2 focus:ring-seabe-teal">
+                            
+                            <div class="flex justify-end space-x-3">
+                                <button type="button" onclick="document.getElementById('checkoutModal').classList.add('hidden')" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
+                                <button type="submit" class="bg-seabe-navy text-white px-4 py-2 rounded font-bold shadow hover:bg-gray-800">Send Payment Link 📱</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <script>
+                    function openCheckoutModal(id, clientName, serviceName, basePrice) {
+                        document.getElementById('clientNameDisplay').innerText = clientName;
+                        document.getElementById('serviceDisplay').innerText = serviceName + ' (R' + basePrice + ')';
+                        document.getElementById('finalAmountInput').value = basePrice;
+                        document.getElementById('checkoutForm').action = '/admin/${org.code}/appointments/' + id + '/send-bill';
+                        document.getElementById('checkoutModal').classList.remove('hidden');
+                    }
+                </script>
             </body>
             </html>
             `;
@@ -795,8 +814,49 @@ module.exports = (app, { prisma }) => {
             res.status(500).send("System Error Loading Schedule");
         }
     });
-	
-	// ==========================================
+
+    // ==========================================
+    // 💳 MERCHANT DASHBOARD: SEND BILL VIA WHATSAPP
+    // ==========================================
+    router.post('/admin/:code/appointments/:id/send-bill', express.urlencoded({ extended: true }), async (req, res) => {
+        const { id, code } = req.params;
+        const { addedItems, finalAmount } = req.body;
+
+        try {
+            const appointment = await prisma.appointment.update({
+                where: { id: parseInt(id) },
+                data: { 
+                    addedItems: addedItems || null,
+                    finalAmount: parseFloat(finalAmount),
+                    status: 'PENDING_PAYMENT' 
+                },
+                include: { member: true, church: true, product: true }
+            });
+
+            const host = process.env.HOST_URL || 'https://seabe.tech';
+            const payLink = `${host}/pay?apptId=${appointment.id}&amount=${finalAmount}`;
+
+            const extrasText = addedItems ? `\n➕ *Extras:* ${addedItems}` : '';
+            const msg = `🧾 *${appointment.church.name} - Invoice*\n\nHi ${appointment.member.firstName}, your grooming session is complete!\n\n✂️ *Service:* ${appointment.product.name}${extrasText}\n💰 *Total Due:* R${parseFloat(finalAmount).toFixed(2)}\n\nPlease click the secure link below to complete your payment via Card or Instant EFT:\n👉 ${payLink}\n\n_Thank you for your business!_`;
+
+            const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+            const botPhone = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+            
+            await twilioClient.messages.create({
+                from: `whatsapp:${botPhone}`,
+                to: `whatsapp:${appointment.member.phone}`,
+                body: msg
+            });
+
+            res.redirect(`/admin/${code}/appointments`);
+
+        } catch (e) {
+            console.error("Send Bill Error:", e);
+            res.status(500).send("Error sending bill to customer.");
+        }
+    });
+
+    // ==========================================
     // 📅 MERCHANT DASHBOARD: UPDATE STATUS
     // ==========================================
     router.post('/admin/:code/appointments/:id/status', express.urlencoded({ extended: true }), async (req, res) => {
@@ -808,14 +868,13 @@ module.exports = (app, { prisma }) => {
                 where: { id: parseInt(id) },
                 data: { status: status }
             });
-            // Redirect back to the calendar view to see the updated badge
             res.redirect(`/admin/${code}/appointments`);
         } catch (e) {
             console.error("Update Error:", e);
             res.status(500).send("Error updating appointment.");
         }
     });
-
+	
     // ============================================================
     // 📅 ORGANIZATION EVENTS MANAGEMENT
     // ============================================================

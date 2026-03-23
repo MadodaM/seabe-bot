@@ -636,6 +636,8 @@ model Appointment {
   bookingDate    DateTime     // The exact date and time of the appointment
   status         ApptStatus   @default(PENDING)
   depositPaid    Boolean      @default(false)
+  finalAmount    Float?       // The total price after adding products
+  addedItems     String?      // e.g., "Beard Oil, Black Dye"
   notes          String?      // Optional notes from the client or barber
   
   createdAt      DateTime     @default(now())
