@@ -294,6 +294,7 @@ module.exports = function(app, { prisma }) {
 						<option value="STOKVEL_SAVINGS">Stokvel / Savings Club</option>
                         <option value="NON_PROFIT">NGO</option>
                         <option value="SERVICE_PROVIDER">Service Provider</option> 
+						<option value="PERSONAL_CARE">Salon / Barbershop</option>
                     </select>
                 </div>
                 <div class="form-group"><label>Name</label><input name="name" required></div>
