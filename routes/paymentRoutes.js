@@ -71,62 +71,116 @@ const renderPage = (title, icon, heading, message, isError = false) => `
 `;
 
 // ============================================================
-// 💰 PUBLIC PAYMENT PORTAL (Web Interface for Stokvels & Open Payments)
+// 💰 PUBLIC PAYMENT PORTAL (Smart Context-Aware Checkout)
 // ============================================================
 
 // 1. Render the Payment Input Screen
 router.get('/pay', async (req, res) => {
     try {
-        const memberId = parseInt(req.query.memberId);
-        const code = req.query.code;
+        const { memberId, code, apptId, amount } = req.query;
 
-        if (!memberId || !code) return res.send(renderPage('Error', '⚠️', 'Invalid Link', 'This payment link is invalid or has expired.', true));
+        // ----------------------------------------------------
+        // SCENARIO A: SALON / APPOINTMENT DEPOSIT
+        // ----------------------------------------------------
+        if (apptId) {
+            const appointment = await prisma.appointment.findUnique({
+                where: { id: parseInt(apptId) },
+                include: { church: true, product: true, member: true }
+            });
 
-        const member = await prisma.member.findUnique({
-            where: { id: memberId },
-            include: { church: true }
-        });
+            if (!appointment) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Appointment not found.', true));
 
-        if (!member || !member.church) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Organization or member not found.', true));
+            const org = appointment.church;
+            // Use the amount passed in the URL (from the bot), or calculate 25% fallback
+            const depositAmount = amount || (appointment.product.price * 0.25).toFixed(2);
 
-        const org = member.church;
-        const defaultAmount = org.type === 'STOKVEL_SAVINGS' ? '' : (member.monthlyPremium || '');
-
-        res.send(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta name="viewport" content="width=device-width, initial-scale=1">
-                <title>Pay ${org.name}</title>
-                <style>${seabeStyles}</style>
-            </head>
-            <body>
-                <div class="card">
-                    <div class="tag">${org.type.replace('_', ' ')}</div>
-                    <h2>${org.name}</h2>
-                    <p style="margin-bottom: 20px;">Secure Contribution Portal</p>
-                    
-                    <form action="/pay/process" method="POST">
-                        <input type="hidden" name="memberId" value="${member.id}">
-                        <input type="hidden" name="code" value="${org.code}">
+            return res.send(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <title>Deposit - ${org.name}</title>
+                    <style>${seabeStyles}</style>
+                </head>
+                <body>
+                    <div class="card">
+                        <div class="tag">SECURE DEPOSIT</div>
+                        <h2>${org.name}</h2>
+                        <p style="margin-bottom: 20px;">Lock in your appointment for: <br><b>${appointment.product.name}</b></p>
                         
-                        <div class="input-group">
-                            <label>Amount to Contribute</label>
-                            <div class="currency-wrapper">
-                                <span>ZAR</span>
-                                <input type="number" name="amount" step="0.01" min="10" placeholder="e.g. 250.00" value="${defaultAmount}" required>
+                        <form action="/pay/process" method="POST">
+                            <input type="hidden" name="apptId" value="${appointment.id}">
+                            
+                            <div class="input-group">
+                                <label>Deposit Amount</label>
+                                <div class="currency-wrapper">
+                                    <span>ZAR</span>
+                                    <input type="number" name="amount" step="0.01" value="${depositAmount}" readonly style="background:#f8f9fa; color:#7f8c8d;">
+                                </div>
                             </div>
-                        </div>
+                            
+                            <button type="submit" class="btn">Pay Deposit via Netcash</button>
+                        </form>
+                        <div style="margin-top: 15px; font-size: 11px; color: #95a5a6;">🔒 Secured by Netcash & Capitec Pay</div>
+                    </div>
+                    <div class="seabe-brand">Secured by Seabe <span>Pay</span></div>
+                </body>
+                </html>
+            `);
+        }
+
+        // ----------------------------------------------------
+        // SCENARIO B: STOKVEL / SOCIETY CONTRIBUTION
+        // ----------------------------------------------------
+        if (memberId && code) {
+            const member = await prisma.member.findUnique({
+                where: { id: parseInt(memberId) },
+                include: { church: true }
+            });
+
+            if (!member || !member.church) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Organization or member not found.', true));
+
+            const org = member.church;
+            const defaultAmount = org.type === 'STOKVEL_SAVINGS' ? '' : (member.monthlyPremium || '');
+
+            return res.send(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <title>Pay ${org.name}</title>
+                    <style>${seabeStyles}</style>
+                </head>
+                <body>
+                    <div class="card">
+                        <div class="tag">${org.type.replace('_', ' ')}</div>
+                        <h2>${org.name}</h2>
+                        <p style="margin-bottom: 20px;">Secure Contribution Portal</p>
                         
-                        <button type="submit" class="btn">Continue to Secure Payment</button>
-                    </form>
-                    
-                    <div style="margin-top: 15px; font-size: 11px; color: #95a5a6;">🔒 Secured by Netcash & Capitec Pay</div>
-                </div>
-                <div class="seabe-brand">Secured by Seabe <span>Pay</span></div>
-            </body>
-            </html>
-        `);
+                        <form action="/pay/process" method="POST">
+                            <input type="hidden" name="memberId" value="${member.id}">
+                            <input type="hidden" name="code" value="${org.code}">
+                            
+                            <div class="input-group">
+                                <label>Amount to Contribute</label>
+                                <div class="currency-wrapper">
+                                    <span>ZAR</span>
+                                    <input type="number" name="amount" step="0.01" min="10" placeholder="e.g. 250.00" value="${defaultAmount}" required>
+                                </div>
+                            </div>
+                            
+                            <button type="submit" class="btn">Continue to Secure Payment</button>
+                        </form>
+                        <div style="margin-top: 15px; font-size: 11px; color: #95a5a6;">🔒 Secured by Netcash & Capitec Pay</div>
+                    </div>
+                    <div class="seabe-brand">Secured by Seabe <span>Pay</span></div>
+                </body>
+                </html>
+            `);
+        }
+
+        return res.send(renderPage('Error', '⚠️', 'Invalid Link', 'This payment link is invalid or has expired.', true));
+
     } catch (error) {
         res.send(renderPage('Error', '⚠️', 'Server Error', error.message, true));
     }
@@ -135,17 +189,46 @@ router.get('/pay', async (req, res) => {
 // 2. Process the Payment and Auto-Redirect via netcash.js
 router.post('/pay/process', express.urlencoded({ extended: true }), async (req, res) => {
     try {
-        const { memberId, code, amount } = req.body;
-        const contributionAmount = parseFloat(amount);
+        const { memberId, code, amount, apptId } = req.body;
+        const payAmount = parseFloat(amount);
 
-        const org = await prisma.church.findUnique({ where: { code: code } });
-        if (!org) {
-            return res.send(renderPage('Error', '⚠️', 'Not Found', 'Organization not found.', true));
+        let org, reference, txType, description, phone, dbMemberId;
+
+        // ----------------------------------------------------
+        // SCENARIO A: SALON / APPOINTMENT DEPOSIT
+        // ----------------------------------------------------
+        if (apptId) {
+            const appointment = await prisma.appointment.findUnique({
+                where: { id: parseInt(apptId) },
+                include: { church: true, member: true, product: true }
+            });
+            if (!appointment) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Appointment not found.', true));
+
+            org = appointment.church;
+            reference = `APPT-${appointment.id}`; // 👈 THIS EXACTLY MATCHES YOUR WEBHOOK!
+            txType = 'APPOINTMENT_DEPOSIT';
+            description = `Deposit: ${appointment.product.name}`;
+            phone = appointment.member.phone;
+            dbMemberId = appointment.memberId;
+        } 
+        // ----------------------------------------------------
+        // SCENARIO B: STOKVEL / SOCIETY CONTRIBUTION
+        // ----------------------------------------------------
+        else if (memberId && code) {
+            org = await prisma.church.findUnique({ where: { code: code } });
+            if (!org) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Organization not found.', true));
+
+            reference = `STK-${memberId}-${Date.now().toString().slice(-6)}`;
+            txType = 'CONTRIBUTION';
+            description = `Contribution to ${org.name}`;
+            phone = memberId.toString();
+            dbMemberId = parseInt(memberId);
+        } else {
+            return res.send(renderPage('Error', '⚠️', 'Invalid Request', 'Missing payment parameters.', true));
         }
 
         // 1. Calculate precise fees
-        const fees = await calculateTransaction(contributionAmount, 'STANDARD', 'PAYMENT_LINK', true);
-        const reference = `STK-${memberId}-${Date.now().toString().slice(-6)}`;
+        const fees = await calculateTransaction(payAmount, 'STANDARD', 'PAYMENT_LINK', true);
 
         // 2. Safely log the PENDING transaction
         await prisma.transaction.create({
@@ -156,20 +239,20 @@ router.post('/pay/process', express.urlencoded({ extended: true }), async (req, 
                 platformFee: fees.platformFee,
                 netSettlement: fees.netSettlement,
                 status: 'PENDING',
-                type: 'CONTRIBUTION',
+                type: txType,
                 churchCode: org.code,
-                phone: memberId.toString(),
-                memberId: parseInt(memberId)
+                phone: phone,
+                memberId: dbMemberId
             }
         });
 
-        // 3. 🚀 THE FIX: Tell netcash.js to generate the exact compliant form
+        // 3. Tell netcash.js to generate the exact compliant form
         const txData = {
             reference: reference,
             amount: fees.totalChargedToUser,
-            description: `Contribution to ${org.name}`,
+            description: description,
             email: org.email || '', 
-            phone: memberId.toString()
+            phone: phone
         };
 
         const htmlForm = netcash.generateAutoPostForm(txData);

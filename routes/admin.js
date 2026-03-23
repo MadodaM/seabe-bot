@@ -54,12 +54,15 @@ const parseCookies = (req) => {
 // --- UI TEMPLATE ---
 const renderPage = (org, activeTab, content) => {
     const isChurch = org.type === 'CHURCH';
+    const isGrooming = org.type === 'SERVICE_PROVIDER' || org.type === 'PERSONAL_CARE'; // 👈 ADD THIS
+    
     const navStyle = (tab) => `padding: 10px 15px; text-decoration: none; color: ${activeTab === tab ? '#000' : '#888'}; border-bottom: ${activeTab === tab ? '3px solid #00d2d3' : 'none'}; font-weight: bold; font-size: 14px;`;
     
     // Feature Toggles based on Type
-    const verifyTab = !isChurch ? `<a href="/admin/${org.code}/verifications" style="${navStyle('verifications')}">🕵️ Verifications</a>` : '';
-    const claimsTab = !isChurch ? `<a href="/admin/${org.code}/claims" style="${navStyle('claims')}">📑 Claims</a>` : '';
+    const verifyTab = !isChurch && !isGrooming ? `<a href="/admin/${org.code}/verifications" style="${navStyle('verifications')}">🕵️ Verifications</a>` : '';
+    const claimsTab = !isChurch && !isGrooming ? `<a href="/admin/${org.code}/claims" style="${navStyle('claims')}">📑 Claims</a>` : '';
     const eventsTab = isChurch ? `<a href="/admin/${org.code}/events" style="${navStyle('events')}">📅 Events</a>` : '';
+    const appointmentsTab = isGrooming ? `<a href="/admin/${org.code}/appointments" style="${navStyle('appointments')}">📅 Schedule</a>` : ''; // 👈 ADD THIS
 
     return `<!DOCTYPE html><html><head><title>${org.name}</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:-apple-system,sans-serif;background:#f4f7f6;margin:0;padding-bottom:50px;}.header{background:white;padding:20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;}.nav{background:white;padding:0 20px;border-bottom:1px solid #ddd;overflow-x:auto;white-space:nowrap;display:flex;}.container{padding:20px;max-width:800px;margin:0 auto;}.card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.05);margin-bottom:20px;}.btn{display:inline-block;padding:12px 20px;background:#1e272e;color:white;text-decoration:none;border-radius:8px;border:none;font-weight:bold;font-size:14px;width:100%;text-align:center;cursor:pointer;}.btn-del{background:#ffebeb;color:#d63031;padding:5px 10px;font-size:11px;width:auto;border-radius:4px;border:none;}.approve{background:#2ecc71;}.reject{background:#e74c3c;}.img-preview{max-width:100%;height:auto;border:1px solid #ddd;border-radius:5px;margin-top:10px;}input,select,textarea,button{box-sizing:border-box;}input,select,textarea{width:100%;padding:12px;margin-bottom:15px;border:1px solid #ddd;border-radius:6px;}label{display:block;margin-bottom:5px;font-weight:bold;font-size:12px;color:#555;text-transform:uppercase;}table{width:100%;border-collapse:collapse;}td,th{padding:12px 8px;border-bottom:1px solid #eee;font-size:14px;text-align:left;}.badge{padding:4px 8px;border-radius:4px;font-size:10px;color:white;font-weight:bold;}a{color:#0984e3;text-decoration:none;}</style></head>
     <body><div class="header"><b>${org.name} (${org.type})</b><a href="/admin/${org.code}/logout" style="color:red;font-size:12px;">Logout</a></div>
@@ -67,14 +70,11 @@ const renderPage = (org, activeTab, content) => {
         <a href="/admin/${org.code}/dashboard" style="${navStyle('dashboard')}">📊 Dashboard</a>
         <a href="/admin/${org.code}/transactions" style="${navStyle('transactions')}">🧾 Ledger</a>
         ${verifyTab}
-        <a href="/admin/${org.code}/members" style="${navStyle('members')}">👥 Members</a>
-        ${claimsTab}
+        <a href="/admin/${org.code}/members" style="${navStyle('members')}">👥 Members/Clients</a>
+        ${appointmentsTab} ${claimsTab}
         ${eventsTab}
         <a href="/admin/${org.code}/team" style="${navStyle('team')}">🛡️ Team</a>
         <a href="/admin/${org.code}/broadcast" style="${navStyle('broadcast')}">📢 Broadcasts</a>
-        <a href="/admin/${org.code}/vendors" style="${navStyle('vendors')}">🛒 Vendors</a>
-        <a href="/admin/${org.code}/collections" style="${navStyle('collections')}">💰 Revenue Recovery</a>
-        <a href="/admin/${org.code}/surepol" style="${navStyle('surepol')}">⚰️ Surepol (Burial)</a>
         <a href="/admin/${org.code}/settings" style="${navStyle('settings')}">⚙️ Settings</a>
     </div><div class="container">${content}</div></body></html>`;
 };
@@ -665,6 +665,154 @@ module.exports = (app, { prisma }) => {
             res.send(renderPage(req.org, 'transactions', content));
         } catch (e) {
             res.status(500).send("Error loading transactions: " + e.message);
+        }
+    });
+	
+	// ==========================================
+    // 📅 MERCHANT DASHBOARD: APPOINTMENTS
+    // ==========================================
+    router.get('/admin/:code/appointments', async (req, res) => {
+        const orgCode = req.params.code.toUpperCase();
+
+        try {
+            // 1. Verify the organization exists
+            const org = await prisma.church.findUnique({ where: { code: orgCode } });
+            if (!org) return res.send("Organization not found.");
+
+            // 2. Fetch all appointments with the Client and Service data attached
+            const appointments = await prisma.appointment.findMany({
+                where: { churchId: org.id },
+                include: { 
+                    member: true,   // Get the client's name & phone
+                    product: true   // Get the service name & price
+                },
+                orderBy: { bookingDate: 'desc' } // Newest first
+            });
+
+            // 3. Render the UI
+            let rowsHtml = '';
+            
+            if (appointments.length === 0) {
+                rowsHtml = `<tr><td colspan="5" class="p-6 text-center text-gray-500">No appointments booked yet.</td></tr>`;
+            } else {
+                appointments.forEach(appt => {
+                    // Format the date nicely
+                    const dateObj = new Date(appt.bookingDate);
+                    const formattedDate = dateObj.toLocaleDateString('en-ZA', { weekday: 'short', month: 'short', day: 'numeric' });
+                    const formattedTime = dateObj.toLocaleTimeString('en-ZA', { hour: '2-digit', minute:'2-digit' });
+
+                    // Status Badges
+                    let statusBadge = `<span class="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs font-bold">${appt.status}</span>`;
+                    if (appt.status === 'COMPLETED') statusBadge = `<span class="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-bold">COMPLETED</span>`;
+                    if (appt.status === 'CANCELLED') statusBadge = `<span class="px-2 py-1 bg-red-100 text-red-800 rounded-full text-xs font-bold">CANCELLED</span>`;
+
+                    const depositBadge = appt.depositPaid 
+                        ? `<span class="text-green-600 font-bold">✅ Paid</span>` 
+                        : `<span class="text-red-500 font-bold">❌ Pending</span>`;
+
+                    rowsHtml += `
+                        <tr class="border-b hover:bg-gray-50">
+                            <td class="p-4">
+                                <div class="font-bold text-gray-800">${formattedDate}</div>
+                                <div class="text-sm text-gray-500">${formattedTime}</div>
+                            </td>
+                            <td class="p-4">
+                                <div class="font-bold text-gray-800">${appt.member.firstName} ${appt.member.lastName || ''}</div>
+                                <a href="https://wa.me/${appt.member.phone.replace('+', '')}" target="_blank" class="text-xs text-seabe-teal hover:underline">${appt.member.phone}</a>
+                            </td>
+                            <td class="p-4">
+                                <div class="font-bold text-gray-800">${appt.product.name}</div>
+                                <div class="text-sm text-gray-500">R${appt.product.price.toFixed(2)}</div>
+                            </td>
+                            <td class="p-4">${statusBadge}<br><div class="text-xs mt-1">Deposit: ${depositBadge}</div></td>
+                            <td class="p-4 text-right">
+                                ${appt.status !== 'COMPLETED' && appt.status !== 'CANCELLED' ? `
+                                <form action="/admin/${org.code}/appointments/${appt.id}/status" method="POST" class="inline">
+                                    <input type="hidden" name="status" value="COMPLETED">
+                                    <button type="submit" class="bg-seabe-navy text-white px-3 py-1 rounded shadow hover:bg-gray-800 text-sm mr-2">Complete</button>
+                                </form>
+                                <form action="/admin/${org.code}/appointments/${appt.id}/status" method="POST" class="inline">
+                                    <input type="hidden" name="status" value="CANCELLED">
+                                    <button type="submit" class="text-red-500 hover:underline text-sm font-bold">Cancel</button>
+                                </form>
+                                ` : '-'}
+                            </td>
+                        </tr>
+                    `;
+                });
+            }
+
+            // A simple shared head snippet (assuming you have Tailwind via CDN like in your other views)
+            const html = `
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Merchant Schedule | Seabe Digital</title>
+                <script src="https://cdn.tailwindcss.com"></script>
+                <script>
+                    tailwind.config = {
+                        theme: { extend: { colors: { 'seabe-navy': '#0B132B', 'seabe-teal': '#47A8BD', 'seabe-light': '#F8F9FA' } } }
+                    }
+                </script>
+            </head>
+            <body class="bg-seabe-light min-h-screen p-8">
+                <div class="max-w-6xl mx-auto">
+                    <div class="flex justify-between items-center mb-8">
+                        <div>
+                            <h1 class="text-3xl font-bold text-seabe-navy">${org.name} - Appointments</h1>
+                            <p class="text-gray-500">Manage your bookings and daily schedule</p>
+                        </div>
+                        <a href="/admin/${org.code}" class="text-seabe-teal font-bold hover:underline">← Back to Dashboard</a>
+                    </div>
+
+                    <div class="bg-white rounded-2xl shadow-xl overflow-hidden">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-seabe-navy text-white">
+                                    <th class="p-4 font-semibold">Date & Time</th>
+                                    <th class="p-4 font-semibold">Client</th>
+                                    <th class="p-4 font-semibold">Service</th>
+                                    <th class="p-4 font-semibold">Status</th>
+                                    <th class="p-4 font-semibold text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${rowsHtml}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </body>
+            </html>
+            `;
+
+            res.send(html);
+
+        } catch (e) {
+            console.error("Schedule Load Error:", e);
+            res.status(500).send("System Error Loading Schedule");
+        }
+    });
+	
+	// ==========================================
+    // 📅 MERCHANT DASHBOARD: UPDATE STATUS
+    // ==========================================
+    router.post('/admin/:code/appointments/:id/status', express.urlencoded({ extended: true }), async (req, res) => {
+        const { id, code } = req.params;
+        const { status } = req.body;
+
+        try {
+            await prisma.appointment.update({
+                where: { id: parseInt(id) },
+                data: { status: status }
+            });
+            // Redirect back to the calendar view to see the updated badge
+            res.redirect(`/admin/${code}/appointments`);
+        } catch (e) {
+            console.error("Update Error:", e);
+            res.status(500).send("Error updating appointment.");
         }
     });
 

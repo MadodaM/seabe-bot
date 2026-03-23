@@ -14,6 +14,7 @@ const { getAISupportReply } = require('../services/aiSupport');
 const { handleSocietyMessage } = require('../bots/societyBot');
 const { handleChurchMessage } = require('../bots/churchBot');
 const { handleStokvelMessage } = require('../bots/stokvelBot');
+const { processGroomingMessage } = require('../bots/groomingBot');
 const { processTwilioClaim } = require('../services/aiClaimWorker');
 const { calculateTransaction } = require('../services/pricingEngine'); // 🚀 NEW: Pricing Engine
 
@@ -111,6 +112,17 @@ router.post('/', (req, res) => {
                 
                 await sendWhatsApp(cleanPhone, resetMsg);
                 return;
+            }
+
+			// ================================================
+            // ✂️ PERSONAL CARE / GROOMING INTERCEPTOR
+            // ================================================
+            const handledByGrooming = await processGroomingMessage(incomingMsg, cleanPhone, session, sendWhatsApp);
+            if (handledByGrooming) {
+                // The grooming bot directly updates the DB, so we clear the local session
+                // to prevent the 'finally' block from accidentally overwriting it with old data.
+                session = {}; 
+                return; 
             }
 
             // ================================================

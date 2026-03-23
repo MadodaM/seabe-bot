@@ -178,6 +178,33 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
                      });
                  }
             }
+			
+			// ==========================================
+            // ✂️ 3. MERCHANT APPOINTMENTS (SALONS)
+            // ==========================================
+            else if (reference.startsWith('APPT-')) {
+                const apptId = parseInt(reference.split('-')[1]);
+                try {
+                    const appointment = await prisma.appointment.update({
+                        where: { id: apptId },
+                        data: { depositPaid: true, status: 'CONFIRMED' },
+                        include: { member: true, church: true, product: true }
+                    });
+
+                    // Fire off the automated WhatsApp Confirmation!
+                    if (appointment.member && appointment.member.phone) {
+                        const dateObj = new Date(appointment.bookingDate);
+                        const prettyDate = dateObj.toLocaleDateString('en-ZA', { weekday: 'short', month: 'short', day: 'numeric' });
+                        const prettyTime = dateObj.toLocaleTimeString('en-ZA', { hour: '2-digit', minute:'2-digit' });
+
+                        const confirmMsg = `🎉 *Booking Confirmed!*\n\nHi ${appointment.member.firstName}, your deposit has been successfully received.\n\n*${appointment.church.name}* has locked in your slot for a *${appointment.product.name}* on *${prettyDate} at ${prettyTime}*.\n\nSee you then! ✂️`;
+
+                        await sendWhatsApp(appointment.member.phone, confirmMsg);
+                    }
+                } catch (e) {
+                    console.error("❌ Failed to process appointment webhook:", e);
+                }
+            }
 
             // 📄 STEP 5: GENERATE PDF RECEIPT
             let pdfUrl = null;

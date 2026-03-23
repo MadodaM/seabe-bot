@@ -62,6 +62,7 @@ model Member {
   collections  Collection[]
   riskFlags    RiskFlag[]
   enrollments  Enrollment[]
+  appointments Appointment[]
 }
 
 model Dependent {
@@ -126,6 +127,8 @@ model Church {
   admins  Admin[]
   courses Course[]
   bankDetail    BankDetail?
+  products       Product[]
+  appointments   Appointment[]
   
 
   // Member Relations
@@ -154,6 +157,7 @@ enum OrgType {
   BURIAL_SOCIETY
   NON_PROFIT
   SERVICE_PROVIDER
+  PERSONAL_CARE
 }
 
 // --- FINANCES & CONTENT ---
@@ -593,4 +597,57 @@ model BankDetail {
   
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+}
+
+// ==========================================
+// ✂️ PERSONAL CARE & APPOINTMENT MODULE
+// ==========================================
+
+// 1. Manage Products/Services (e.g., "Fade", "Braids", "Manicure")
+model Product {
+  id             Int          @id @default(autoincrement())
+  churchId       Int          // Links to the Organization (Salon)
+  church         Church       @relation(fields: [churchId], references: [id])
+  
+  name           String
+  description    String?
+  price          Float
+  durationMins   Int?         // Estimated time (e.g., 45 mins)
+  isActive       Boolean      @default(true)
+  
+  appointments   Appointment[]
+  
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// 2. Manage Bookings
+model Appointment {
+  id             Int          @id @default(autoincrement())
+  churchId       Int          // Links to the Organization (Salon)
+  church         Church       @relation(fields: [churchId], references: [id])
+  
+  memberId       Int          // Links to the Customer
+  member         Member       @relation(fields: [memberId], references: [id])
+  
+  productId      Int          // Links to the specific service booked
+  product        Product      @relation(fields: [productId], references: [id])
+  
+  bookingDate    DateTime     // The exact date and time of the appointment
+  status         ApptStatus   @default(PENDING)
+  depositPaid    Boolean      @default(false)
+  notes          String?      // Optional notes from the client or barber
+  
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// 3. Statuses for the Booking Engine
+enum ApptStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
 }
