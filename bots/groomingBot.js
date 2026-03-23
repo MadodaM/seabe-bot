@@ -83,7 +83,8 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
 
         // Handle Back Button
         if (cleanMsg === '0') {
-             await sendWhatsApp(phone, `✂️ *Welcome to ${data.orgName}!*\n\nReply with a number:\n*1.* Book an Appointment\n*2.* View Services & Prices`);
+             await prisma.botSession.delete({ where: { phone } });
+             await sendWhatsApp(phone, `You have exited ${data.orgName}.\n\nReply *shop name* to return to the main platform menu.`);
              return true;
         }
 

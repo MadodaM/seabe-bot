@@ -62,7 +62,8 @@ const renderPage = (org, activeTab, content) => {
     const verifyTab = !isChurch && !isGrooming ? `<a href="/admin/${org.code}/verifications" style="${navStyle('verifications')}">🕵️ Verifications</a>` : '';
     const claimsTab = !isChurch && !isGrooming ? `<a href="/admin/${org.code}/claims" style="${navStyle('claims')}">📑 Claims</a>` : '';
     const eventsTab = isChurch ? `<a href="/admin/${org.code}/events" style="${navStyle('events')}">📅 Events</a>` : '';
-    const appointmentsTab = isGrooming ? `<a href="/admin/${org.code}/appointments" style="${navStyle('appointments')}">📅 Schedule</a>` : ''; // 👈 ADD THIS
+    const appointmentsTab = isGrooming ? `<a href="/admin/${org.code}/appointments" style="${navStyle('appointments')}">📅 Schedule</a>` : '';
+    const servicesTab = isGrooming ? `<a href="/admin/${org.code}/services" style="${navStyle('services')}">✂️ Services</a>` : '';
 
     return `<!DOCTYPE html><html><head><title>${org.name}</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:-apple-system,sans-serif;background:#f4f7f6;margin:0;padding-bottom:50px;}.header{background:white;padding:20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;}.nav{background:white;padding:0 20px;border-bottom:1px solid #ddd;overflow-x:auto;white-space:nowrap;display:flex;}.container{padding:20px;max-width:800px;margin:0 auto;}.card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.05);margin-bottom:20px;}.btn{display:inline-block;padding:12px 20px;background:#1e272e;color:white;text-decoration:none;border-radius:8px;border:none;font-weight:bold;font-size:14px;width:100%;text-align:center;cursor:pointer;}.btn-del{background:#ffebeb;color:#d63031;padding:5px 10px;font-size:11px;width:auto;border-radius:4px;border:none;}.approve{background:#2ecc71;}.reject{background:#e74c3c;}.img-preview{max-width:100%;height:auto;border:1px solid #ddd;border-radius:5px;margin-top:10px;}input,select,textarea,button{box-sizing:border-box;}input,select,textarea{width:100%;padding:12px;margin-bottom:15px;border:1px solid #ddd;border-radius:6px;}label{display:block;margin-bottom:5px;font-weight:bold;font-size:12px;color:#555;text-transform:uppercase;}table{width:100%;border-collapse:collapse;}td,th{padding:12px 8px;border-bottom:1px solid #eee;font-size:14px;text-align:left;}.badge{padding:4px 8px;border-radius:4px;font-size:10px;color:white;font-weight:bold;}a{color:#0984e3;text-decoration:none;}</style></head>
     <body><div class="header"><b>${org.name} (${org.type})</b><a href="/admin/${org.code}/logout" style="color:red;font-size:12px;">Logout</a></div>
@@ -2240,5 +2241,106 @@ module.exports = (app, { prisma }) => {
             console.error("DebiCheck Trigger Error:", error);
             res.json({ success: false, error: error.message });
         }
+    });
+	
+	// ============================================================
+    // ✂️ MERCHANT DASHBOARD: SERVICES & PRICING
+    // ============================================================
+    router.get('/admin/:code/services', checkSession, async (req, res) => {
+        try {
+            const services = await prisma.product.findMany({
+                where: { churchId: req.org.id },
+                orderBy: { name: 'asc' }
+            });
+
+            const rows = services.map(s => `
+                <tr>
+                    <td><b>${s.name}</b></td>
+                    <td>R${s.price.toFixed(2)}</td>
+                    <td><span class="badge" style="background:${s.isActive ? '#27ae60' : '#e74c3c'};">${s.isActive ? 'Active' : 'Inactive'}</span></td>
+                    <td style="text-align:right;">
+                        <form method="POST" action="/admin/${req.org.code}/services/delete" style="display:inline;">
+                            <input type="hidden" name="serviceId" value="${s.id}">
+                            <button class="btn-del" onclick="return confirm('Are you sure you want to delete this service?');">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+            `).join('');
+
+            const content = `
+                <div class="card" style="display:flex; justify-content:space-between; align-items:center; background:#1e272e; color:white;">
+                    <div>
+                        <h2 style="margin:0; color:#00d2d3;">✂️ Service & Price List</h2>
+                        <p style="margin:0; margin-top:5px; font-size:13px; color:#b2bec3;">Manage the grooming services clients can book via WhatsApp.</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 style="margin-top:0;">Add New Service</h3>
+                    <form method="POST" action="/admin/${req.org.code}/services/add" style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; background:#f8f9fa; padding:15px; border-radius:6px;">
+                        <div>
+                            <label>Service Name</label>
+                            <input type="text" name="name" required placeholder="e.g. Standard Fade">
+                        </div>
+                        <div>
+                            <label>Price (R)</label>
+                            <input type="number" name="price" required placeholder="100" step="0.01">
+                        </div>
+                        <div style="grid-column: span 2;">
+                            <button type="submit" class="btn" style="background:#0984e3; width:100%;">Add Service</button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="card">
+                    <h3 style="margin:0 0 15px 0;">Active Services (${services.length})</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Service Name</th>
+                                <th>Price</th>
+                                <th>Status</th>
+                                <th style="text-align:right;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${services.length > 0 ? rows : '<tr><td colspan="4" style="text-align:center; padding:30px; color:#999;">No services added yet. Add one above!</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            res.send(renderPage(req.org, 'services', content));
+        } catch (error) {
+            console.error("Services Error:", error);
+            res.send(renderPage(req.org, 'services', `<div class="card" style="color:red;">Error loading services.</div>`));
+        }
+    });
+
+    router.post('/admin/:code/services/add', checkSession, async (req, res) => {
+        try {
+            await prisma.product.create({
+                data: {
+                    name: req.body.name,
+                    price: parseFloat(req.body.price),
+                    churchId: req.org.id,
+                    isActive: true
+                }
+            });
+        } catch (e) {
+            console.error("Add service error:", e);
+        }
+        res.redirect(`/admin/${req.org.code}/services`);
+    });
+
+    router.post('/admin/:code/services/delete', checkSession, async (req, res) => {
+        try {
+            await prisma.product.delete({
+                where: { id: parseInt(req.body.serviceId) }
+            });
+        } catch (e) {
+            console.error("Delete service error:", e);
+        }
+        res.redirect(`/admin/${req.org.code}/services`);
     });
 };
