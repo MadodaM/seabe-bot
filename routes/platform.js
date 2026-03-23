@@ -117,6 +117,37 @@ function renderAdminPage(title, content, error = null) {
         </html>
     `;
 }
+	// ============================================================
+    // 🛠️ TEMP: SUPER ADMIN MFA SETUP (DELETE AFTER USING!)
+    // ============================================================
+    app.get('/admin-mfa-setup', async (req, res) => {
+        try {
+            // Generate a mathematically valid Base32 secret
+            const secret = speakeasy.generateSecret({ name: `Seabe Super Admin` });
+            
+            // Generate the QR Code image
+            const qrImage = await qrcode.toDataURL(secret.otpauth_url);
+
+            res.send(`
+                <div style="font-family: sans-serif; padding: 40px; max-width: 600px; margin: 0 auto;">
+                    <h2 style="color: #d63031;">🛑 Super Admin MFA Setup</h2>
+                    <p><b>Step 1:</b> Scan this QR Code with your Google Authenticator or Authy app.</p>
+                    <img src="${qrImage}" style="border: 2px solid #333; border-radius: 8px; width: 200px; height: 200px;"/>
+                    
+                    <p style="margin-top: 30px;"><b>Step 2:</b> Copy the exact code below.</p>
+                    <h3 style="background: #eee; padding: 15px; border-radius: 5px; font-family: monospace; letter-spacing: 2px;">${secret.base32}</h3>
+                    
+                    <p><b>Step 3:</b> Open your <code>.env</code> file (or Render environment variables) and set it like this:</p>
+                    <pre style="background: #2d3436; color: #00d2d3; padding: 15px; border-radius: 5px;">ADMIN_TOTP_SECRET="${secret.base32}"</pre>
+                    
+                    <p style="color: #d63031; font-weight: bold; margin-top: 30px;">Step 4: Restart your server and DELETE THIS ROUTE so no one else can see your secret!</p>
+                </div>
+            `);
+        } catch (e) {
+            res.send("Error generating MFA: " + e.message);
+        }
+    });
+
 
 module.exports = function(app, { prisma }) {
 
