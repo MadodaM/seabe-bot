@@ -69,11 +69,22 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
             // Save the services to the bot's memory BEFORE updating the session!
             data.services = services;
 
+            // 🚨 THE FIX: Create a fresh object so Prisma detects the change!
+            // We also simplify the data so Prisma doesn't choke on Decimal types.
+            const simpleServices = services.map(s => ({
+                id: s.id,
+                name: s.name,
+                price: Number(s.price)
+            }));
+
             await prisma.botSession.update({
                 where: { phone: phone },
                 data: { 
                     step: 'BOOKING_SERVICE',
-                    data: data 
+                    data: {
+                        ...data, // Spreads old data into a NEW memory object
+                        services: simpleServices
+                    }
                 }
             });
 
@@ -131,15 +142,17 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
         const selectedService = data.services[index];
 
         // Save the chosen service to memory
-        data.serviceId = selectedService.id;
-        data.serviceName = selectedService.name;
-        data.price = selectedService.price;
-
+        // Save the chosen service to memory safely
         await prisma.botSession.update({
             where: { phone: phone },
             data: { 
                 step: 'BOOKING_DATE',
-                data: data 
+                data: {
+                    ...data, // Force Prisma to save the update
+                    serviceId: selectedService.id,
+                    serviceName: selectedService.name,
+                    price: selectedService.price
+                }
             }
         });
 
