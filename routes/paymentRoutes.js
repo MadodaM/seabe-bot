@@ -245,7 +245,7 @@ router.post('/pay/process', express.urlencoded({ extended: true }), async (req, 
                 netcashFee: fees.netcashFee,
                 platformFee: fees.platformFee,
                 // 🚀 FIX 3: Uses the correct schema field name
-                netSettlementAmount: fees.netSettlement, 
+                netSettlement: fees.netSettlement,
                 status: 'PENDING',
                 type: txType,
                 churchCode: org.code,
