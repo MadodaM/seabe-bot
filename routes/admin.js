@@ -731,9 +731,18 @@ module.exports = (app, { prisma }) => {
                             </button>
                         `;
                     } else if (appt.status === 'PENDING_PAYMENT') {
-                        actionBtns = `<span style="color:#e67e22; font-weight:bold; font-size:11px;">⏳ Awaiting Payment</span>`;
+                        <button id="resend-btn-<%= appt.id %>"
+								class="bg-orange-100 text-orange-600 px-4 py-2 rounded-lg text-sm font-bold border border-orange-200 hover:bg-orange-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
+								onclick="sendBill('<%= appt.id %>')"
+								data-sent-time="<%= appt.updatedAt.toISOString() %>"
+								disabled>
+							Resend Link
+						</button>
                     } else if (appt.status === 'COMPLETED') {
-                        actionBtns = `<span style="color:#27ae60; font-weight:bold; font-size:11px;">✅ Paid In Full</span>`;
+                        <button class="bg-green-100 text-green-700 px-4 py-2 rounded-lg text-sm font-bold border border-green-300 hover:bg-green-200 transition shadow-sm"
+								onclick="resendInvoice('<%= appt.id %>')">
+							🧾 Resend Invoice
+						</button>
                     }
                     
                     rowsHtml += `
@@ -810,6 +819,49 @@ module.exports = (app, { prisma }) => {
                         document.getElementById('checkoutForm').action = '/admin/${orgCode}/appointments/' + id + '/send-bill';
                         document.getElementById('checkoutModal').style.display = 'flex';
                     }
+					
+					document.addEventListener('DOMContentLoaded', () => {
+    // Find all dynamic resend buttons on the page
+    document.querySelectorAll('[id^="resend-btn-"]').forEach(btn => {
+        const sentTime = new Date(btn.dataset.sentTime).getTime();
+        
+        const checkTimer = setInterval(() => {
+            const now = new Date().getTime();
+            const diffMinutes = (now - sentTime) / 60000;
+
+				if (diffMinutes >= 2) {
+					// Time is up! Enable the button.
+					btn.disabled = false;
+					btn.innerHTML = "🔄 Resend Link";
+					clearInterval(checkTimer);
+				} else {
+					// Still waiting. Show the countdown.
+					const remainingSeconds = Math.ceil(120 - ((now - sentTime) / 1000));
+					btn.innerHTML = `Wait ${remainingSeconds}s`;
+				}
+							}, 1000);
+						});
+					});
+
+					// The AJAX call for Resending the Invoice
+					async function resendInvoice(apptId) {
+						if(!confirm("Resend the official PDF invoice to the client's WhatsApp?")) return;
+						
+						try {
+							// NOTE: Make sure the URL matches your admin routing structure
+							const response = await fetch(`/admin/appointments/${apptId}/resend-invoice`, { method: 'POST' });
+							const data = await response.json();
+							
+							if(data.success) {
+								alert("✅ Invoice successfully resent to the client!");
+							} else {
+								alert("⚠️ Error: " + data.error);
+							}
+						} catch (error) {
+							alert("System error communicating with the server.");
+						}
+					}
+					
                 </script>
             `;
 
