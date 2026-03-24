@@ -688,18 +688,15 @@ module.exports = (app, { prisma }) => {
         }
     });
 	
-// ==========================================
+	// ==========================================
     // 📅 MERCHANT DASHBOARD: APPOINTMENTS
     // ==========================================
-    router.get('/admin/:code/appointments', async (req, res) => {
+    router.get('/admin/:code/appointments', checkSession, async (req, res) => {
         const orgCode = req.params.code.toUpperCase();
 
         try {
-            const org = await prisma.church.findUnique({ where: { code: orgCode } });
-            if (!org) return res.send("Organization not found.");
-
             const appointments = await prisma.appointment.findMany({
-                where: { churchId: org.id },
+                where: { churchId: req.org.id },
                 include: { 
                     member: true,   
                     product: true   
@@ -710,106 +707,97 @@ module.exports = (app, { prisma }) => {
             let rowsHtml = '';
             
             if (appointments.length === 0) {
-                rowsHtml = `<tr><td colspan="5" class="p-6 text-center text-gray-500">No appointments booked yet.</td></tr>`;
+                rowsHtml = `<tr><td colspan="5" style="text-align:center; padding:30px; color:#95a5a6;">No appointments booked yet.</td></tr>`;
             } else {
                 appointments.forEach(appt => {
                     const dateObj = new Date(appt.bookingDate);
                     const formattedDate = dateObj.toLocaleDateString('en-ZA', { weekday: 'short', month: 'short', day: 'numeric' });
                     const formattedTime = dateObj.toLocaleTimeString('en-ZA', { hour: '2-digit', minute:'2-digit' });
 
-                    let statusBadge = `<span class="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs font-bold">${appt.status}</span>`;
-                    if (appt.status === 'COMPLETED') statusBadge = `<span class="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-bold">COMPLETED</span>`;
-                    if (appt.status === 'CANCELLED') statusBadge = `<span class="px-2 py-1 bg-red-100 text-red-800 rounded-full text-xs font-bold">CANCELLED</span>`;
+                    // Standardize badges using platform colors
+                    let statusBadgeColor = '#f39c12'; // PENDING
+                    if (appt.status === 'COMPLETED') statusBadgeColor = '#27ae60';
+                    if (appt.status === 'CANCELLED') statusBadgeColor = '#c0392b';
+                    let statusBadge = `<span class="badge" style="background:${statusBadgeColor};">${appt.status}</span>`;
 
                     const basePrice = appt.product.price.toFixed(2);
+
+                    // Dynamic action buttons
+                    let actionBtns = '-';
+                    if (appt.status === 'CONFIRMED') {
+                        actionBtns = `
+                            <button onclick="openCheckoutModal(${appt.id}, '${appt.member.firstName}', '${appt.product.name}', ${basePrice})" class="btn" style="background:#00d2d3; color:#1e272e; padding:6px 12px; font-size:11px;">
+                                💳 Send Bill
+                            </button>
+                        `;
+                    } else if (appt.status === 'PENDING_PAYMENT') {
+                        actionBtns = `<span style="color:#e67e22; font-weight:bold; font-size:11px;">⏳ Awaiting Payment</span>`;
+                    } else if (appt.status === 'COMPLETED') {
+                        actionBtns = `<span style="color:#27ae60; font-weight:bold; font-size:11px;">✅ Paid In Full</span>`;
+                    }
                     
                     rowsHtml += `
-                        <tr class="border-b hover:bg-gray-50">
-                            <td class="p-4">
-                                <div class="font-bold text-gray-800">${formattedDate}</div>
-                                <div class="text-sm text-gray-500">${formattedTime}</div>
+                        <tr>
+                            <td>
+                                <strong>${formattedDate}</strong><br>
+                                <span style="font-size:11px; color:#7f8c8d;">${formattedTime}</span>
                             </td>
-                            <td class="p-4">
-                                <div class="font-bold text-gray-800">${appt.member.firstName} ${appt.member.lastName || ''}</div>
-                                <a href="https://wa.me/${appt.member.phone.replace('+', '')}" target="_blank" class="text-xs text-seabe-teal hover:underline">${appt.member.phone}</a>
+                            <td>
+                                <strong>${appt.member.firstName} ${appt.member.lastName || ''}</strong><br>
+                                <a href="https://wa.me/${appt.member.phone.replace('+', '')}" target="_blank" style="font-size:11px; color:#0984e3; text-decoration:none;">${appt.member.phone}</a>
                             </td>
-                            <td class="p-4">
-                                <div class="font-bold text-gray-800">${appt.product.name}</div>
-                                <div class="text-sm text-gray-500">R${basePrice}</div>
+                            <td>
+                                <strong>${appt.product.name}</strong><br>
+                                <span style="font-size:11px; color:#7f8c8d;">R${basePrice}</span>
                             </td>
-                            <td class="p-4">${statusBadge}</td>
-                            <td class="p-4 text-right">
-                                ${appt.status === 'CONFIRMED' ? `
-                                <button onclick="openCheckoutModal(${appt.id}, '${appt.member.firstName}', '${appt.product.name}', ${basePrice})" class="bg-seabe-teal text-white px-3 py-1 rounded shadow hover:bg-teal-600 text-sm font-bold">
-                                    💳 Send Bill
-                                </button>
-                                ` : ''}
-                                ${appt.status === 'PENDING_PAYMENT' ? `<span class="text-orange-500 font-bold text-sm">⏳ Awaiting Payment</span>` : ''}
-                                ${appt.status === 'COMPLETED' ? `<span class="text-green-600 font-bold text-sm">✅ Paid In Full</span>` : ''}
-                            </td>
+                            <td>${statusBadge}</td>
+                            <td style="text-align:right;">${actionBtns}</td>
                         </tr>
                     `;
                 });
             }
 
-            const html = `
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Merchant Schedule | Seabe Digital</title>
-                <script src="https://cdn.tailwindcss.com"></script>
-                <script>
-                    tailwind.config = {
-                        theme: { extend: { colors: { 'seabe-navy': '#0B132B', 'seabe-teal': '#47A8BD', 'seabe-light': '#F8F9FA' } } }
-                    }
-                </script>
-            </head>
-            <body class="bg-seabe-light min-h-screen p-8">
-                <div class="max-w-6xl mx-auto">
-                    <div class="flex justify-between items-center mb-8">
-                        <div>
-                            <h1 class="text-3xl font-bold text-seabe-navy">${org.name} - Appointments</h1>
-                            <p class="text-gray-500">Manage your bookings and daily schedule</p>
-                        </div>
-                        <a href="/admin/${org.code}" class="text-seabe-teal font-bold hover:underline">← Back to Dashboard</a>
-                    </div>
-
-                    <div class="bg-white rounded-2xl shadow-xl overflow-hidden">
-                        <table class="w-full text-left border-collapse">
-                            <thead>
-                                <tr class="bg-seabe-navy text-white">
-                                    <th class="p-4 font-semibold">Date & Time</th>
-                                    <th class="p-4 font-semibold">Client</th>
-                                    <th class="p-4 font-semibold">Service</th>
-                                    <th class="p-4 font-semibold">Status</th>
-                                    <th class="p-4 font-semibold text-right">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${rowsHtml}
-                            </tbody>
-                        </table>
+            const content = `
+                <div class="card" style="display:flex; justify-content:space-between; align-items:center; background:#1e272e; color:white;">
+                    <div>
+                        <h2 style="margin:0; color:#00d2d3;">📅 Appointments Schedule</h2>
+                        <p style="margin:0; margin-top:5px; font-size:13px; color:#b2bec3;">Manage your bookings and daily schedule.</p>
                     </div>
                 </div>
 
-                <div id="checkoutModal" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden flex items-center justify-center z-50">
-                    <div class="bg-white rounded-xl p-6 max-w-sm w-full shadow-2xl">
-                        <h3 class="text-xl font-bold text-seabe-navy mb-2">Checkout: <span id="clientNameDisplay"></span></h3>
-                        <p class="text-sm text-gray-500 mb-4 border-b pb-4">Base Service: <span id="serviceDisplay" class="font-bold"></span></p>
+                <div class="card" style="overflow-x:auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date & Time</th>
+                                <th>Client</th>
+                                <th>Service</th>
+                                <th>Status</th>
+                                <th style="text-align:right;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rowsHtml}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="checkoutModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+                    <div style="background:white; width:90%; max-width:400px; border-radius:10px; padding:20px; box-shadow:0 10px 25px rgba(0,0,0,0.2);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                            <h3 style="margin:0; color:#1e272e;">Checkout: <span id="clientNameDisplay"></span></h3>
+                            <button type="button" onclick="document.getElementById('checkoutModal').style.display='none'" style="background:none; border:none; font-size:20px; cursor:pointer;">&times;</button>
+                        </div>
+                        <p style="font-size:13px; color:#7f8c8d; margin-bottom:15px; border-bottom:1px solid #eee; padding-bottom:15px;">Base Service: <strong id="serviceDisplay" style="color:#2c3e50;"></strong></p>
                         
                         <form id="checkoutForm" method="POST">
-                            <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Add Products/Extras Used</label>
-                            <input type="text" name="addedItems" placeholder="e.g. Beard Oil, Color Dye" class="w-full p-2 border rounded mb-4 focus:ring-2 focus:ring-seabe-teal">
+                            <label style="display:block; font-size:11px; font-weight:bold; color:#555; text-transform:uppercase; margin-bottom:5px;">Add Products/Extras Used</label>
+                            <input type="text" name="addedItems" placeholder="e.g. Beard Oil, Color Dye" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:5px; margin-bottom:15px; box-sizing:border-box;">
                             
-                            <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Final Total Amount (R)</label>
-                            <input type="number" name="finalAmount" id="finalAmountInput" step="0.01" required class="w-full p-3 border rounded text-lg font-bold mb-6 focus:ring-2 focus:ring-seabe-teal">
+                            <label style="display:block; font-size:11px; font-weight:bold; color:#555; text-transform:uppercase; margin-bottom:5px;">Final Total Amount (R)</label>
+                            <input type="number" name="finalAmount" id="finalAmountInput" step="0.01" required style="width:100%; padding:10px; border:1px solid #ddd; border-radius:5px; margin-bottom:20px; box-sizing:border-box; font-size:16px; font-weight:bold;">
                             
-                            <div class="flex justify-end space-x-3">
-                                <button type="button" onclick="document.getElementById('checkoutModal').classList.add('hidden')" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
-                                <button type="submit" class="bg-seabe-navy text-white px-4 py-2 rounded font-bold shadow hover:bg-gray-800">Send Payment Link 📱</button>
-                            </div>
+                            <button type="submit" class="btn" style="width:100%; background:#1e272e; color:white; padding:12px; font-size:14px;">Send Payment Link 📱</button>
                         </form>
                     </div>
                 </div>
@@ -819,19 +807,18 @@ module.exports = (app, { prisma }) => {
                         document.getElementById('clientNameDisplay').innerText = clientName;
                         document.getElementById('serviceDisplay').innerText = serviceName + ' (R' + basePrice + ')';
                         document.getElementById('finalAmountInput').value = basePrice;
-                        document.getElementById('checkoutForm').action = '/admin/${org.code}/appointments/' + id + '/send-bill';
-                        document.getElementById('checkoutModal').classList.remove('hidden');
+                        document.getElementById('checkoutForm').action = '/admin/${orgCode}/appointments/' + id + '/send-bill';
+                        document.getElementById('checkoutModal').style.display = 'flex';
                     }
                 </script>
-            </body>
-            </html>
             `;
 
-            res.send(html);
+            // Magic Wrapper!
+            res.send(renderPage(req.org, 'appointments', content));
 
         } catch (e) {
             console.error("Schedule Load Error:", e);
-            res.status(500).send("System Error Loading Schedule");
+            res.send(renderPage(req.org, 'appointments', '<div class="error-box">System Error Loading Schedule</div>'));
         }
     });
 
