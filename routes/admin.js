@@ -844,43 +844,41 @@ module.exports = (app, { prisma }) => {
 					});
 
 					// The AJAX call for Resending the Invoice
-						async function resendInvoice(apptId) {
-							if(!confirm("Resend the official PDF invoice to the client's WhatsApp?")) return;
+					async function resendInvoice(apptId) {
+						if(!confirm("Resend the official PDF invoice to the client's WhatsApp?")) return;
+						
+						try {
+							// Hitting the simplified route (ensure it matches your admin route prefix)
+							// If your dashboard is at /admin/dashboard, this fetches /admin/appointments/ID/resend-invoice
+							const response = await fetch(`/admin/appointments/${apptId}/resend-invoice`, { 
+								method: 'POST',
+								headers: { 'Content-Type': 'application/json' }
+							});
+							
+							// 🚨 BULLETPROOF DEBUGGER: Read the raw text response FIRST
+							const rawText = await response.text();
 							
 							try {
-								// 🚀 THE FIX: Extract the orgCode dynamically from your current admin URL
-								// (Assuming your URL looks like /admin/TES123/...)
-								const pathParts = window.location.pathname.split('/');
-								const orgCode = pathParts[2]; 
-
-								// Now we include the orgCode in the fetch URL so Express finds the route!
-								const response = await fetch(`/admin/${orgCode}/appointments/${apptId}/resend-invoice`, { 
-									method: 'POST',
-									headers: {
-										'Content-Type': 'application/json'
-									}
-								});
+								// Now we try to parse it safely
+								const data = JSON.parse(rawText); 
 								
-								// Let's safely check if the response is actually JSON before parsing
-								const contentType = response.headers.get("content-type");
-								if (contentType && contentType.indexOf("application/json") !== -1) {
-									const data = await response.json();
-									if(data.success) {
-										alert("✅ Invoice successfully resent to the client!");
-									} else {
-										alert("⚠️ Error: " + data.error);
-									}
+								if(data.success) {
+									alert("✅ Invoice successfully resent to the client!");
 								} else {
-									// If it's still HTML, we catch it gracefully instead of crashing
-									console.error("Server returned HTML instead of JSON. Check route authentication.");
-									alert("⚠️ Server routing error. Please check your console.");
+									alert("⚠️ Error: " + data.error);
 								}
-								
-							} catch (error) {
-								console.error(error);
-								alert("System error communicating with the server.");
+							} catch (parseError) {
+								// If parsing fails, it means the server handed us HTML!
+								console.error("🚨 SERVER RETURNED HTML INSTEAD OF JSON. Here is the exact response:");
+								console.error(rawText);
+								alert("⚠️ Server routing error! Press F12 and check your browser console to see the exact error page the server sent back.");
 							}
+							
+						} catch (error) {
+							console.error(error);
+							alert("System error communicating with the server.");
 						}
+					}
 					
                 </script>
             `;
@@ -957,7 +955,7 @@ module.exports = (app, { prisma }) => {
 	// ==========================================
     // 🧾 RESEND INVOICE (PDF to WhatsApp)
     // ==========================================
-    router.post('/:orgCode/appointments/:id/resend-invoice', async (req, res) => {
+    router.post('/appointments/:id/resend-invoice', async (req, res) => {
         try {
             const apptId = parseInt(req.params.id);
             
@@ -969,7 +967,7 @@ module.exports = (app, { prisma }) => {
 
             if (!appt) return res.status(404).json({ error: "Appointment not found." });
 
-            // 2. Find the latest successful transaction for this client at this salon
+            // 2. Find the latest successful transaction for this client
             const tx = await prisma.transaction.findFirst({
                 where: {
                     churchId: appt.churchId,
@@ -987,9 +985,7 @@ module.exports = (app, { prisma }) => {
             const { generateReceiptPDF } = require('../services/receiptGenerator');
             const pdfUrl = await generateReceiptPDF(tx, appt.church);
 
-            if (!pdfUrl) {
-                return res.status(500).json({ error: "Cloudinary failed to generate the PDF." });
-            }
+            if (!pdfUrl) return res.status(500).json({ error: "Failed to generate the PDF." });
 
             // 4. Send via Twilio
             const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
