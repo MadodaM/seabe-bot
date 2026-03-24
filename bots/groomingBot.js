@@ -1,3 +1,4 @@
+// bots/groomingBot.js
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
@@ -11,7 +12,7 @@ const prisma = new PrismaClient();
  */
 async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp) {
     const cleanMsg = incomingMsg.trim();
-    const data = session.data || {};
+    const data = session?.data || {};
 
     // ==========================================
     // 1. THE TRIGGER: Check if they typed a Salon Name
@@ -21,7 +22,7 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
         const salon = await prisma.church.findFirst({
             where: {
                 name: { equals: cleanMsg, mode: 'insensitive' },
-                type: 'PERSONAL_CARE' // Using the new enum we added to your schema!
+                type: 'PERSONAL_CARE' 
             }
         });
 
@@ -33,7 +34,7 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
                 create: { phone: phone, mode: 'GROOMING', step: 'MAIN_MENU', data: { orgId: salon.id, orgName: salon.name } }
             });
 
-            const menu = `✂️ *Welcome to ${salon.name}!*\n\nReply with a number:\n*1.* Book an Appointment\n*2.* View Services & Prices`;
+            const menu = `✂️ *Welcome to ${salon.name}!*\n\nReply with a number:\n*1.* Book an Appointment\n*2.* View Services & Prices\n*0.* Exit`;
             await sendWhatsApp(phone, menu);
             return true;
         }
@@ -46,29 +47,46 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
 
     // STEP: MAIN_MENU
     if (session.step === 'MAIN_MENU') {
+        
+        // OPTION 1: Book Appointment
         if (cleanMsg === '1') {
-            // OPTION 1: Show services so they can pick what they are booking for
-            const services = await prisma.product.findMany({ where: { churchId: data.orgId, isActive: true } });
-            
+            const services = await prisma.product.findMany({
+                where: { churchId: data.orgId, isActive: true },
+                orderBy: { name: 'asc' }
+            });
+
             if (services.length === 0) {
-                await sendWhatsApp(phone, `We are currently updating our price list. Please check back later!\n\nReply *0* to go back.`);
+                await sendWhatsApp(phone, "We are currently updating our price list. Please check back later!\n\nReply *0* to go back.");
                 return true;
             }
 
-            let msg = `💇‍♂️ *What service are we booking?*\n\n`;
-            services.forEach((s, i) => msg += `*${i + 1}.* ${s.name} (R${s.price.toFixed(2)})\n`);
-            
-            await prisma.botSession.update({
-                where: { phone },
-                data: { step: 'SELECT_SERVICE', data: { ...data, availableServices: services } }
+            let menu = `✂️ *Select a Service*\n\n`;
+            services.forEach((s, i) => {
+                menu += `*${i + 1}.* ${s.name} - R${s.price.toFixed(2)}\n`;
             });
-            await sendWhatsApp(phone, msg + `\nReply with the number.`);
+            menu += `\nReply with the number of your choice (or *0* to cancel).`;
+
+            // Save the services to the bot's memory BEFORE updating the session!
+            data.services = services;
+
+            await prisma.botSession.update({
+                where: { phone: phone },
+                data: { 
+                    step: 'BOOKING_SERVICE',
+                    data: data 
+                }
+            });
+
+            await sendWhatsApp(phone, menu);
             return true;
         } 
         
+        // OPTION 2: View Prices
         if (cleanMsg === '2') {
-            // OPTION 2: Just view prices
-            const services = await prisma.product.findMany({ where: { churchId: data.orgId, isActive: true } });
+            const services = await prisma.product.findMany({ 
+                where: { churchId: data.orgId, isActive: true },
+                orderBy: { name: 'asc' }
+            });
             
             if (services.length === 0) {
                 await sendWhatsApp(phone, `We are currently updating our price list. Please check back later!\n\nReply *0* to go back.`);
@@ -76,44 +94,70 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
             }
 
             let serviceList = `📋 *${data.orgName} - Prices*\n\n`;
-            services.forEach((s, i) => serviceList += `• ${s.name}: R${s.price.toFixed(2)}\n`);
-            await sendWhatsApp(phone, serviceList + `\nReply *1* to Book or *0* for Main Menu.`);
+            services.forEach((s) => serviceList += `• ${s.name}: R${s.price.toFixed(2)}\n`);
+            await sendWhatsApp(phone, serviceList + `\nReply *1* to Book or *0* to Exit.`);
             return true;
         }
 
-        // Handle Back Button
+        // OPTION 0: Handle Exit Button
         if (cleanMsg === '0') {
              await prisma.botSession.delete({ where: { phone } });
-             await sendWhatsApp(phone, `You have exited ${data.orgName}.\n\nReply *shop name* to return to the main platform menu.`);
+             await sendWhatsApp(phone, `You have exited ${data.orgName}.\n\nReply *Hi* to return to the main platform menu.`);
              return true;
         }
 
-        await sendWhatsApp(phone, `⚠️ Invalid option. Please reply with *1* or *2*.`);
+        await sendWhatsApp(phone, `⚠️ Invalid option. Please reply with *1* or *2* (or *0* to exit).`);
         return true;
     }
 
-    // STEP: SELECT_SERVICE
-    if (session.step === 'SELECT_SERVICE') {
-        const index = parseInt(cleanMsg) - 1;
-        const selectedService = data.availableServices[index];
-
-        if (selectedService) {
-            await prisma.botSession.update({
-                where: { phone },
-                data: { 
-                    step: 'BOOKING_DATE', 
-                    data: { ...data, serviceId: selectedService.id, serviceName: selectedService.name, price: selectedService.price } 
-                }
-            });
-            await sendWhatsApp(phone, `📅 Great choice! When would you like to come in for your *${selectedService.name}*?\n\n(e.g., "Tomorrow at 10am" or "Saturday 2pm")`);
-        } else {
-            await sendWhatsApp(phone, "⚠️ Please select a valid number from the list.");
+    // ==========================================
+    // STEP: BOOKING_SERVICE -> Select from list
+    // ==========================================
+    if (session.step === 'BOOKING_SERVICE') {
+        if (cleanMsg === '0') {
+            await prisma.botSession.delete({ where: { phone } });
+            await sendWhatsApp(phone, "Booking cancelled. Reply *Hi* to start over.");
+            return true;
         }
+
+        const index = parseInt(cleanMsg) - 1;
+        
+        // THE SAFETY NET: If the array doesn't exist, or they type a bad number, catch it!
+        if (!data.services || isNaN(index) || !data.services[index]) {
+            await sendWhatsApp(phone, "⚠️ Please reply with a valid number from the menu.");
+            return true;
+        }
+
+        const selectedService = data.services[index];
+
+        // Save the chosen service to memory
+        data.serviceId = selectedService.id;
+        data.serviceName = selectedService.name;
+        data.price = selectedService.price;
+
+        await prisma.botSession.update({
+            where: { phone: phone },
+            data: { 
+                step: 'BOOKING_DATE',
+                data: data 
+            }
+        });
+
+        await sendWhatsApp(phone, `Great! You selected *${selectedService.name}* (R${selectedService.price.toFixed(2)}).\n\n📅 What date and time would you like to come in?\n_(e.g., "Tomorrow at 2pm" or "Friday 10am")_`);
         return true;
     }
 
+    // ==========================================
     // STEP: BOOKING_DATE -> FINAL_CONFIRMATION
+    // ==========================================
     if (session.step === 'BOOKING_DATE') {
+        
+        if (cleanMsg === '0') {
+            await prisma.botSession.delete({ where: { phone } });
+            await sendWhatsApp(phone, "Booking cancelled. Reply *Hi* to start over.");
+            return true;
+        }
+
         // Find the user in the Member table
         let member = await prisma.member.findFirst({ where: { phone: phone } });
         
@@ -129,24 +173,21 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
             });
         }
 
-        // 🚀 CREATE THE APPOINTMENT IN THE DATABASE
-        const appointment = await prisma.appointment.create({
+        // 🚀 CREATE THE APPOINTMENT (Instantly Confirmed, No Deposit)
+        await prisma.appointment.create({
             data: {
                 churchId: data.orgId,
                 memberId: member.id,
                 productId: data.serviceId,
-                bookingDate: new Date(), // Placeholder: saves current time
-                status: 'PENDING',
+                bookingDate: new Date(), // Placeholder until Chrono-node is added
+                status: 'CONFIRMED', 
+                depositPaid: false,
                 notes: `Client requested time: ${cleanMsg}`
             }
         });
 
-        // 💰 GENERATE DEPOSIT LINK (Charging a 25% deposit)
-        const depositAmount = (data.price * 0.25).toFixed(2);
-        const host = process.env.HOST_URL || 'https://seabe.tech';
-        const payLink = `${host}/pay?apptId=${appointment.id}&amount=${depositAmount}`;
-
-        const confirmation = `✅ *Booking Request Received!*\n\nWe've penciled you in for your *${data.serviceName}* on *${cleanMsg}*.\n\n🔒 *Secure your slot:*\nTo prevent no-shows, we require a R${depositAmount} deposit.\n\n👉 Pay Deposit Here: ${payLink}\n\nOnce paid, your appointment is officially confirmed!`;
+        // 🎉 INSTANT CONFIRMATION MESSAGE
+        const confirmation = `✅ *Booking Confirmed!*\n\nWe've locked in your *${data.serviceName}* on *${cleanMsg}*.\n\n📍 *${data.orgName}*\n💰 Payment of *R${data.price.toFixed(2)}* can be made in-store after your appointment.\n\nSee you soon! ✂️`;
         
         await sendWhatsApp(phone, confirmation);
         
