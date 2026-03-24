@@ -117,6 +117,9 @@ function renderAdminPage(title, content, error = null) {
         </html>
     `;
 }
+
+module.exports = function(app, { prisma }) {
+	
 	// ============================================================
     // 🛠️ TEMP: SUPER ADMIN MFA SETUP (DELETE AFTER USING!)
     // ============================================================
@@ -147,9 +150,6 @@ function renderAdminPage(title, content, error = null) {
             res.send("Error generating MFA: " + e.message);
         }
     });
-
-
-module.exports = function(app, { prisma }) {
 
     // ============================================================
     // 🔐 AUTHENTICATION (NOW WITH TOTP MFA!)
