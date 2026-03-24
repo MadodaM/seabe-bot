@@ -560,9 +560,35 @@ router.post('/', (req, res) => {
             // ================================================
             if (numMedia > 0 && session.step === 'AWAITING_CLAIM_DOCUMENT') {
                 const code = member?.church?.code || member?.society?.code || session.churchCode;
+                const churchId = member?.churchId || 1;
+                
+                // 💰 1. CHARGE THE SOCIETY FOR THE AI SCAN
+                try {
+                    const { getPrice } = require('../services/pricing');
+                    const claimCost = await getPrice('CLAIM_AI'); 
+                    
+                    await prisma.transaction.create({ 
+                        data: {
+                            amount: -claimCost, 
+                            type: 'CLAIM_FEE',       
+                            status: 'SUCCESS',
+                            reference: `FEE-${Date.now()}`,
+                            method: 'INTERNAL', 
+                            description: 'Forensic Death Claim Analysis',
+                            phone: cleanPhone, 
+                            date: new Date(),
+                            church: { connect: { id: Number(churchId) } }
+                        }
+                    });
+                    console.log(`💰 [BILLING] Charged Org #${churchId} R${claimCost} for AI Claim Analysis`);
+                } catch (e) {
+                    console.error("🛑 BILLING FAILED (CRITICAL):", e.message);
+                }
+
+                // 🤖 2. TRIGGER THE FORENSIC WORKER
                 processTwilioClaim(cleanPhone, req.body.MediaUrl0, code);
                 clearSessionFlag = true;
-                await sendWhatsApp(cleanPhone, "⏳ *Document Received!*\n\nOur Gemini AI is now processing the claim. I will message you once the scan is complete.");
+                await sendWhatsApp(cleanPhone, "⏳ *Document Received!*\n\nOur Gemini AI is now processing the claim. This usually takes 10-15 seconds. I will message you once the scan is complete.");
                 return;
             }
 

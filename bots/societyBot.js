@@ -1,5 +1,5 @@
 // ==========================================
-// bots/societyBot.js - Burial Society Logic Handler (Final Production Version)
+// bots/societyBot.js - Burial Society Logic Handler
 // ==========================================
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -7,21 +7,17 @@ const netcash = require('../services/netcash');
 const { generatePolicyCard } = require('../services/cardGenerator');
 const { generateKYCLink } = require('../routes/kyc');
 const { calculateTransaction } = require('../services/pricingEngine');
-const { processTwilioClaim } = require('../services/aiClaimWorker');
-const { getPrice } = require('../services/pricing'); // 🚀 NEW: Dynamic Pricing
+const { getPrice } = require('../services/pricing');
 
-// Safely initialize Twilio for direct background messaging
 let twilioClient;
 if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
     twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 }
 
-// Helper: Send WhatsApp Message (Text or Media)
 const sendWhatsApp = async (to, body, mediaUrl = null) => {
     if (!twilioClient) return console.log("⚠️ Twilio Keys Missing!");
     const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
     
-    // 🛡️ Ensure 'to' is a clean Twilio string
     let cleanTo = to.replace(/\D/g, '');
     if (cleanTo.startsWith('0')) cleanTo = '27' + cleanTo.substring(1);
     
@@ -32,11 +28,9 @@ const sendWhatsApp = async (to, body, mediaUrl = null) => {
             body: body
         };
         
-        // If an image is provided, attach it!
         if (mediaUrl) msgConfig.mediaUrl = [mediaUrl]; 
 
         await twilioClient.messages.create(msgConfig);
-        console.log(`✅ Society text delivered to +${cleanTo}`);
     } catch (err) {
         console.error("❌ Twilio Send Error:", err.message);
     }
@@ -44,13 +38,10 @@ const sendWhatsApp = async (to, body, mediaUrl = null) => {
 
 const gateway = netcash;
 
-// 💰 BILLING HELPER (Fixed for Single Table Organizations)
 async function chargeSociety(societyId, churchId, phone, amount, type, description) {
     try {
         if (!societyId && !churchId) return; 
 
-        // Since all entities are identified as a "Church" in the DB, 
-        // we use the available ID (Church ID takes priority, else Society ID)
         const validOrgId = churchId || societyId || 1; 
 
         const transactionData = {
@@ -61,18 +52,9 @@ async function chargeSociety(societyId, churchId, phone, amount, type, descripti
             method: 'INTERNAL', 
             description: description,
             phone: phone, 
-            
-            // ✅ FIX: Use 'date' (matches Schema)
             date: new Date(),
-            
-            // ✅ FIX: ONLY connect 'church' (matches Schema)
-            church: { 
-                connect: { id: Number(validOrgId) } 
-            }
+            church: { connect: { id: Number(validOrgId) } }
         };
-
-        // We DO NOT connect 'society' here because the database schema 
-        // treats all organizations as 'Church' entities for billing.
 
         await prisma.transaction.create({ data: transactionData });
         console.log(`💰 [BILLING] Charged Org #${validOrgId} R${amount} for ${type}`);
@@ -84,11 +66,9 @@ async function chargeSociety(societyId, churchId, phone, amount, type, descripti
 
 async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
     let reply = "";
-    // Check both relation types depending on how they joined
     const orgName = session.orgName || (member?.church ? member.church.name : (member?.society ? member.society.name : "Burial Society"));
     const orgCode = session.orgCode || member?.churchCode || member?.societyCode;
-    const societyId = member?.societyId || 1; // Default to ID 1 if null (Pilot Society)
-    // If member.churchId is null, we assume the society IS the church entity
+    const societyId = member?.societyId || 1; 
     const churchId = member?.churchId || member?.society?.churchId || 1;
 
     try {
@@ -159,7 +139,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
 
             // 🚀 OPTION 5: PREMIUM PAYMENT
             else if (incomingMsg === '5') {
-                const amount = member?.monthlyPremium || 0; // Don't guess R150 anymore
+                const amount = member?.monthlyPremium || 0; 
                 
                 if (amount === 0) {
                     reply = `💳 *Premium Payment*\n\nWe don't have a set premium amount for your profile.\n\nPlease reply with the amount you wish to pay (e.g. 150):`;
@@ -233,13 +213,9 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             if (idToCheck.length !== 13) {
                 reply = "❌ Invalid ID. Please enter a 13-digit SA ID number.";
             } else {
-                // 1. Fetch Dynamic Price
                 const kycCost = await getPrice('KYC_CHECK');
-
-                // 2. Charge the Society (Pass 'cleanPhone' as the 2nd argument)
                 await chargeSociety(societyId, churchId, cleanPhone, kycCost, 'KYC_FEE', `Identity Check: ${idToCheck}`);
 
-                // 3. Generate Link (or result)
                 const host = process.env.HOST_URL || 'seabe-bot.onrender.com';
                 const link = await generateKYCLink(cleanPhone, host, member.id);
                 
@@ -255,7 +231,6 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
             const amount = session.tempPaymentAmount;
             
             if (incomingMsg === '1') {
-                // 1. DEBIT ORDER MANDATE
                 const ref = `${orgCode}-MANDATE-${cleanPhone.slice(-4)}`;
                 const mandateData = await gateway.setupDebitOrderMandate(amount, cleanPhone, orgName, ref);
                 
@@ -267,7 +242,6 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                 session.step = 'SOCIETY_MENU';
 
             } else if (incomingMsg === '2') {
-                // 2. ONCE-OFF PAYMENT
                 const pricing = await calculateTransaction(amount, 'STANDARD', 'DEFAULT', true);
                 const ref = `${orgCode}-ONCEOFF-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
                 const link = await gateway.createPaymentLink(pricing.totalChargedToUser, ref, cleanPhone, orgName);
@@ -350,50 +324,10 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                 reply = "⚠️ Member record not found.";
             }
         }
-
-        // 🚀 4. CLAIM UPLOAD LOGIC (WITH ROBUST BILLING)
+        
+        // 🚀 CLAIM UPLOAD FALLBACK
         else if (session.step === 'AWAITING_CLAIM_DOCUMENT') {
-            
-            // Robust Media Detection: specific object OR string URL OR session var
-            let mediaUrl = session.tempMediaUrl;
-            if (!mediaUrl && typeof incomingMsg === 'object' && incomingMsg.type === 'image') mediaUrl = incomingMsg.url;
-            if (!mediaUrl && typeof incomingMsg === 'string' && incomingMsg.startsWith('http')) mediaUrl = incomingMsg;
-
-            if (mediaUrl) {
-                
-                // 💰 BILLING TRIGGER (Dynamic Pricing Engine)
-                try {
-                    // Fetch dynamic price (Will return DB value or Default from code)
-                    const claimCost = await getPrice('CLAIM_AI'); 
-                    
-                    console.log(`💰 [BILLING] Charging Society R${claimCost.toFixed(2)} for Claim Analysis...`);
-
-                    await chargeSociety(
-                        societyId,        
-                        churchId,         
-                        cleanPhone,       
-                        claimCost,        
-                        'CLAIM_FEE',      
-                        'Forensic Death Claim Analysis'
-                    );
-                    
-                    console.log("✅ [BILLING] Payment Secured.");
-                } catch (err) {
-                    console.error("🛑 BILLING FAILED (CRITICAL):", err.message);
-                    // We continue processing even if billing fails, but log it critically
-                }
-
-                // 2. Reply to user
-                await sendWhatsApp(cleanPhone, `⏳ *Document Received*...\n\nAnalyzing forensic details now. This may take 10-20 seconds.`);
-
-                // 3. Start the heavy AI
-                processTwilioClaim(cleanPhone, mediaUrl, orgCode);
-                
-                // 4. Reset step
-                session.step = null;
-            } else {
-                reply = "⚠️ Please upload a valid **photo** of the Death Certificate.";
-            }
+             reply = "⚠️ Please upload a valid **photo** of the Death Certificate.";
         }
 
         // --- FINAL SEND ---
