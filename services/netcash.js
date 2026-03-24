@@ -319,6 +319,33 @@ async function executeBankTransfer(stokvel, amount, reference) {
     }
 }
 
+/**
+ * 🚀 SEABE ID: Charge a saved Netcash Token instantly
+ */
+async function chargeSavedToken(token, amount, reference) {
+    try {
+        console.log(`🔌 [NETCASH] Initiating 1-Click Charge for Token: ${token.slice(0,4)}...`);
+        
+        // In production, this hits the Netcash NIWS Token API
+        // const response = await axios.post('https://niws.netcash.co.za/site/api/tokencharge', {
+        //     ServiceKey: process.env.NETCASH_SERVICE_KEY,
+        //     Token: token,
+        //     Amount: amount * 100, // Cents
+        //     Reference: reference
+        // });
+
+        // Simulated Success for testing the flow
+        return { 
+            success: true, 
+            transactionId: `NC-${Math.floor(Math.random() * 1000000)}`,
+            message: "Token charged successfully" 
+        };
+    } catch (error) {
+        console.error("❌ Netcash Token Charge Failed:", error);
+        return { success: false, message: "Bank rejected the token." };
+    }
+}
+
 module.exports = { 
     createPaymentLink, 
     generateAutoPostForm,
@@ -327,5 +354,6 @@ module.exports = {
     getTransactionHistory,
     setupDebitOrderMandate,
     listActiveSubscriptions,
-	executeBankTransfer
+	executeBankTransfer,
+	chargeSavedToken
 };

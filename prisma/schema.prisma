@@ -63,6 +63,7 @@ model Member {
   riskFlags    RiskFlag[]
   enrollments  Enrollment[]
   appointments Appointment[]
+  paymentMethods PaymentMethod[]
 }
 
 model Dependent {
@@ -651,4 +652,20 @@ enum ApptStatus {
   PENDING_PAYMENT
   COMPLETED
   CANCELLED
+}
+
+// ==========================================
+// 💳 SEABE ID: SAVED PAYMENT METHODS
+// ==========================================
+model PaymentMethod {
+  id          Int      @id @default(autoincrement())
+  memberId    Int
+  member      Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  token       String   @unique // The Netcash secure token
+  cardBrand   String   // e.g., "Visa", "Mastercard"
+  last4       String   // e.g., "1234"
+  expMonth    String?  
+  expYear     String?
+  isDefault   Boolean  @default(true)
+  createdAt   DateTime @default(now())
 }

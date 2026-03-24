@@ -137,7 +137,7 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                 }
             }
 
-            // 🚀 OPTION 5: PREMIUM PAYMENT
+            // 🚀 OPTION 5: PREMIUM PAYMENT (WITH SEABE ID CHECK)
             else if (incomingMsg === '5') {
                 const amount = member?.monthlyPremium || 0; 
                 
@@ -146,13 +146,27 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
                     session.step = 'PAYMENT_AMOUNT_INPUT';
                 } else {
                     session.tempPaymentAmount = amount;
-                    session.step = 'PAYMENT_OPTIONS';
-                    reply = `💳 *Premium Payment*\nYour base premium is R${amount.toFixed(2)}.\n\nHow would you like to pay today?\n\n` +
-                            `*1️⃣ Set up a Monthly Debit Order* (Recommended)\n` +
-                            `_Automatically pay every month. R5.00 processing fee applies._\n\n` +
-                            `*2️⃣ Make a Once-Off Payment*\n` +
-                            `_Pay manually via Capitec Pay or Card today._\n\n` +
-                            `Reply 1 or 2.`;
+                    
+                    // 🔍 SEABE ID: Check for saved cards!
+                    const savedCards = await prisma.paymentMethod.findMany({ 
+                        where: { memberId: member.id },
+                        orderBy: { createdAt: 'desc' }
+                    });
+
+                    if (savedCards.length > 0) {
+                        const card = savedCards[0]; // Get their default/latest card
+                        session.step = 'CONFIRM_1CLICK_PAY';
+                        session.savedCardToken = card.token;
+                        
+                        reply = `💳 *Secure 1-Click Checkout*\n\nAmount Due: *R${amount.toFixed(2)}*\n\nWould you like to pay using your saved *${card.cardBrand} ending in ${card.last4}*?\n\n*1️⃣ Yes, charge my card now*\n*2️⃣ No, use a different payment method*\n\nReply 1 or 2.`;
+                    } else {
+                        // Standard flow for new users
+                        session.step = 'PAYMENT_OPTIONS';
+                        reply = `💳 *Premium Payment*\nAmount: R${amount.toFixed(2)}.\n\nHow would you like to pay today?\n\n` +
+                                `*1️⃣ Set up a Monthly Debit Order*\n` +
+                                `*2️⃣ Make a Once-Off Payment (Card/EFT)*\n\n` +
+                                `Reply 1 or 2.`;
+                    }
                 }
             }
 
@@ -255,6 +269,41 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
 
             } else {
                 reply = "⚠️ Invalid option. Please reply 1 or 2.";
+            }
+        }
+		
+		// ==========================================
+        // ⚡ SEABE ID: 1-CLICK CHECKOUT EXECUTION
+        // ==========================================
+        else if (session.step === 'CONFIRM_1CLICK_PAY') {
+            if (incomingMsg === '1') {
+                const amount = session.tempPaymentAmount;
+                const token = session.savedCardToken;
+                
+                await sendWhatsApp(cleanPhone, "🔄 *Processing Payment...*\nSecurely communicating with your bank. Please wait.");
+
+                // Trigger the Server-to-Server Token Charge!
+                const { chargeSavedToken } = require('../services/netcash');
+                const ref = `${orgCode}-1CLICK-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-4)}`;
+                
+                const chargeResult = await chargeSavedToken(token, amount, ref);
+
+                if (chargeResult.success) {
+                    // Record successful payment
+                    await chargeSociety(societyId, churchId, cleanPhone, amount, 'PREMIUM_PAYMENT', `1-Click Payment via ${ref}`);
+                    
+                    reply = `✅ *Payment Successful!*\n\nThank you, ${member.firstName}. We have successfully processed *R${amount.toFixed(2)}* using your saved card.\n\nYour policy is up to date. Reply *0* to return to the menu.`;
+                } else {
+                    reply = `⚠️ *Payment Failed*\n\nYour bank declined the transaction. Please check your funds or use a different card.\n\nReply *5* to try another payment method.`;
+                }
+                session.step = 'SOCIETY_MENU';
+            } 
+            else if (incomingMsg === '2') {
+                // Fallback to standard options
+                session.step = 'PAYMENT_OPTIONS';
+                reply = `💳 *Alternative Payment*\n\n*1️⃣ Set up a Monthly Debit Order*\n*2️⃣ Make a Once-Off Payment (Card/EFT)*\n\nReply 1 or 2.`;
+            } else {
+                reply = "⚠️ Invalid option. Please reply *1* to use your saved card, or *2* to use a different method.";
             }
         }
 
