@@ -843,40 +843,31 @@ module.exports = (app, { prisma }) => {
 						});
 					});
 
-					// The AJAX call for Resending the Invoice
 					async function resendInvoice(apptId) {
 						if(!confirm("Resend the official PDF invoice to the client's WhatsApp?")) return;
 						
 						try {
-							// Hitting the simplified route (ensure it matches your admin route prefix)
-							// If your dashboard is at /admin/dashboard, this fetches /admin/appointments/ID/resend-invoice
-							const response = await fetch(`/admin/appointments/${apptId}/resend-invoice`, { 
+							// 🚀 THE FIX: Dynamically build the URL based on your current browser path
+							// If current URL is seabe.tech/admin/TES624/appointments, this builds the correct POST path.
+							const currentPath = window.location.pathname; // e.g. "/admin/TES624/appointments"
+							const fetchUrl = `${currentPath}/${apptId}/resend-invoice`;
+
+							const response = await fetch(fetchUrl, { 
 								method: 'POST',
 								headers: { 'Content-Type': 'application/json' }
 							});
 							
-							// 🚨 BULLETPROOF DEBUGGER: Read the raw text response FIRST
-							const rawText = await response.text();
+							const data = await response.json();
 							
-							try {
-								// Now we try to parse it safely
-								const data = JSON.parse(rawText); 
-								
-								if(data.success) {
-									alert("✅ Invoice successfully resent to the client!");
-								} else {
-									alert("⚠️ Error: " + data.error);
-								}
-							} catch (parseError) {
-								// If parsing fails, it means the server handed us HTML!
-								console.error("🚨 SERVER RETURNED HTML INSTEAD OF JSON. Here is the exact response:");
-								console.error(rawText);
-								alert("⚠️ Server routing error! Press F12 and check your browser console to see the exact error page the server sent back.");
+							if(data.success) {
+								alert("✅ Invoice successfully resent to the client!");
+							} else {
+								alert("⚠️ Error: " + data.error);
 							}
 							
 						} catch (error) {
-							console.error(error);
-							alert("System error communicating with the server.");
+							console.error("Fetch Error:", error);
+							alert("⚠️ Connection error. Please ensure you are logged in and try again.");
 						}
 					}
 					
@@ -955,7 +946,7 @@ module.exports = (app, { prisma }) => {
 	// ==========================================
     // 🧾 RESEND INVOICE (PDF to WhatsApp)
     // ==========================================
-    router.post('/appointments/:id/resend-invoice', async (req, res) => {
+    router.post('/:orgCode/appointments/:id/resend-invoice', async (req, res) => {
         try {
             const apptId = parseInt(req.params.id);
             
@@ -965,9 +956,9 @@ module.exports = (app, { prisma }) => {
                 include: { member: true, church: true, product: true }
             });
 
-            if (!appt) return res.status(404).json({ error: "Appointment not found." });
+            if (!appt) return res.status(404).json({ success: false, error: "Appointment not found." });
 
-            // 2. Find the latest successful transaction for this client
+            // 2. Find the latest successful transaction
             const tx = await prisma.transaction.findFirst({
                 where: {
                     churchId: appt.churchId,
@@ -978,14 +969,14 @@ module.exports = (app, { prisma }) => {
             });
 
             if (!tx) {
-                return res.status(400).json({ error: "No successful payment record found to generate an invoice." });
+                return res.status(400).json({ success: false, error: "No successful payment record found." });
             }
 
             // 3. Generate the PDF
             const { generateReceiptPDF } = require('../services/receiptGenerator');
             const pdfUrl = await generateReceiptPDF(tx, appt.church);
 
-            if (!pdfUrl) return res.status(500).json({ error: "Failed to generate the PDF." });
+            if (!pdfUrl) return res.status(500).json({ success: false, error: "Failed to generate PDF." });
 
             // 4. Send via Twilio
             const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
@@ -1000,11 +991,11 @@ module.exports = (app, { prisma }) => {
                 mediaUrl: [pdfUrl]
             });
 
-            res.json({ success: true });
+            return res.json({ success: true });
 
         } catch (error) {
             console.error("❌ Resend Invoice Error:", error);
-            res.status(500).json({ error: "System Error processing invoice request." });
+            return res.status(500).json({ success: false, error: "Internal Server Error" });
         }
     });
 	
