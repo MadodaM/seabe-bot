@@ -65,14 +65,18 @@ async function generatePolicyCard(member, org) {
         // 7. 🚀 GENERATE & DRAW SCANNABLE QR CODE
         try {
             const qrData = `MEMBER:${policyNum}|ORG:${org?.code || 'N/A'}`;
-            const qrBuffer = await QRCode.toBuffer(qrData, {
-                color: { dark: '#1e272e', light: '#ffffff' },
-                width: 180,
-                margin: 1
-            });
-            const qrImage = await loadImage(qrBuffer);
             
-            // Draw white background box for QR to make it pop
+            // 🚨 THE FIX: Use DataURL, Pure Black, High Error Correction, and larger Margin
+            const qrDataUrl = await QRCode.toDataURL(qrData, {
+                errorCorrectionLevel: 'H', // High error correction so it scans even if slightly blurry
+                color: { dark: '#000000', light: '#ffffff' }, // Pure black & white for maximum contrast
+                width: 180,
+                margin: 2 // Larger 'Quiet Zone' for smartphone cameras
+            });
+            
+            const qrImage = await loadImage(qrDataUrl);
+            
+            // Draw white background box for QR to make it pop perfectly
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(560, 160, 200, 200);
             
