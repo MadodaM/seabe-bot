@@ -275,67 +275,45 @@ router.post('/pay/process', express.urlencoded({ extended: true }), async (req, 
 });
 
 	// ==========================================
-	// 💳 BROWSER SUCCESS REDIRECT (Netcash Return URL)
-	// ==========================================
-	router.get('/payment-success', async (req, res) => {
-		const reference = req.query.Reference || req.query.ref || req.query.p2;
-		
-		if (!reference) {
-			return res.send(renderPage('Processing', '⏳', 'Processing...', 'Payment received but waiting on bank confirmation. You will receive a WhatsApp receipt shortly.'));
-		}
+    // 💳 BROWSER SUCCESS REDIRECT (Netcash Return URL)
+    // ==========================================
+    router.get('/payment-success', async (req, res) => {
+        const reference = req.query.Reference || req.query.ref || req.query.p2;
+        
+        if (!reference) {
+            return res.send(renderPage('Processing', '⏳', 'Processing...', 'Payment received but waiting on bank confirmation. You will receive a WhatsApp receipt shortly.'));
+        }
 
-		try {
-			const verifyData = await netcash.verifyPayment(reference);
+        try {
+            const verifyData = await netcash.verifyPayment(reference);
 
-			if (verifyData && (verifyData.status === 'Complete' || verifyData.status === 'success' || verifyData.TransactionAccepted)) {
-				
-				const transaction = await prisma.transaction.findUnique({
-					where: { reference: reference },
-					include: { member: true, church: true } 
-				});
+            // If Netcash says it's good, show the success screen!
+            if (verifyData && (verifyData.status === 'Complete' || verifyData.status === 'success' || verifyData.TransactionAccepted)) {
+                
+                // We ONLY read from the database here. We DO NOT update it. 
+                // We leave the update to the advanced Webhook so it generates the PDF!
+                const transaction = await prisma.transaction.findUnique({
+                    where: { reference: reference },
+                    include: { church: true } 
+                });
 
-				if (transaction) {
-					if (transaction.status === 'PENDING') {
-						await prisma.transaction.update({
-							where: { id: transaction.id },
-							data: { status: 'SUCCESS' }
-						});
-						
-						const targetPhone = transaction.member ? transaction.member.phone : transaction.phone;
-						const displayName = transaction.church ? transaction.church.name : "Seabe Platform";
-						const invoiceDate = new Date().toISOString().split('T')[0];
+                const orgName = transaction?.church?.name || "Seabe Platform";
+                const amountText = transaction?.amount ? `<b>R${transaction.amount.toFixed(2)}</b>` : "your payment";
 
-						const receiptBody = 
-							`📜 *OFFICIAL DIGITAL RECEIPT*\n--------------------------------\n` +
-							`🏛️ *Organization:* ${displayName}\n` +
-							`💰 *Amount:* R${transaction.amount.toFixed(2)}\n📅 *Date:* ${invoiceDate}\n` +
-							`🔢 *Reference:* ${reference}\n--------------------------------\n` +
-							`✅ *Status:* Confirmed & Recorded\n\n_Thank you for your faithful contribution._`;
-
-						if (client && targetPhone) {
-							await client.messages.create({
-								from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '')}`,
-								to: `whatsapp:${formatPhone(targetPhone)}`,
-								body: receiptBody
-							}).catch(err => console.error("❌ Receipt Delivery Error:", err.message));
-						}
-					}
-
-					const orgName = transaction.church ? transaction.church.name : "Seabe Platform";
-					return res.send(renderPage(
-						'Payment Successful', 
-						'✅', 
-						'Payment Successful!', 
-						`Your payment of <b>R${transaction.amount.toFixed(2)}</b> to <b>${orgName}</b> has been securely received.`
-					));
-				}
-			}
-			res.send(renderPage('Processing', '⏳', 'Processing...', 'We are waiting for final confirmation from Netcash. Your receipt will be sent to WhatsApp shortly.'));
-		} catch (error) {
-			console.error("Browser Redirect Verification Error:", error.message);
-			res.status(500).send(renderPage('Bank Sync Delay', '⚠️', 'Bank Sync Delay', 'An error occurred verifying with the bank, but your transaction is safe. Please check your WhatsApp for the receipt.', true));
-		}
-	});
+                return res.send(renderPage(
+                    'Payment Successful', 
+                    '✅', 
+                    'Payment Successful!', 
+                    `Your payment of ${amountText} to <b>${orgName}</b> has been securely received.<br><br><span style="color:#0984e3;"><i>Your official PDF receipt is being generated and will arrive on WhatsApp momentarily.</i></span>`
+                ));
+            }
+            
+            res.send(renderPage('Processing', '⏳', 'Processing...', 'We are waiting for final confirmation from Netcash. Your receipt will be sent to WhatsApp shortly.'));
+        } catch (error) {
+            console.error("Browser Redirect Verification Error:", error.message);
+            res.status(500).send(renderPage('Bank Sync Delay', '⚠️', 'Bank Sync Delay', 'An error occurred verifying with the bank, but your transaction is safe. Please check your WhatsApp for the receipt.', true));
+        }
+    });
 
 	// ==========================================
 	// ❌ BROWSER CANCEL REDIRECT (Netcash Cancel URL)
