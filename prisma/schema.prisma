@@ -641,7 +641,7 @@ model Appointment {
   notes          String?      // Optional notes from the client or barber
   
   createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  updatedAt      DateTime     @updatedAt			
 }
 
 // 3. Statuses for the Booking Engine

@@ -2,12 +2,15 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { sendWhatsApp } = require('../services/twilioClient'); 
+const { generatePolicyCard } = require('../services/cardGenerator'); // 👈 ADDED IMPORT
 
 async function handleStokvelMessage(cleanPhone, incomingMsg, session, member) {
-    const stokvelName = member.church?.name || "Your Savings Club";
+    // 🚀 We now fetch the full church object just in case it wasn't pre-loaded
+    const org = await prisma.church.findUnique({ where: { code: member.churchCode } });
+    const stokvelName = org?.name || "Your Savings Club";
 
     // 1. Trigger the Main Menu
-    if (incomingMsg === 'stokvel' || incomingMsg === 'menu') {
+    if (incomingMsg.toLowerCase() === 'stokvel' || incomingMsg.toLowerCase() === 'menu') {
         session.step = 'STOKVEL_MENU';
         const msg = `👋 *Welcome to ${stokvelName}*\n\n` +
                     `*Main Menu:*\n` +
@@ -27,7 +30,6 @@ async function handleStokvelMessage(cleanPhone, incomingMsg, session, member) {
             case '1':
                 // 💰 Pay Now
                 const host = process.env.HOST_URL || 'https://seabe.tech';
-                // Note: Adjust this URL structure to match your specific payment gateway generator
                 const paymentLink = `${host}/pay?memberId=${member.id}&code=${member.churchCode}`; 
                 await sendWhatsApp(cleanPhone, `💳 *Make a Contribution*\n\nClick below to securely transfer funds to ${stokvelName}:\n👉 ${paymentLink}\n\nReply *Menu* to go back.`);
                 break;
@@ -39,11 +41,10 @@ async function handleStokvelMessage(cleanPhone, incomingMsg, session, member) {
                 
             case '3':
                 // 🛡️ KYC Status (Ties directly into our Gemini Vision AI!)
-                let kycMsg = `🛡️ *KYC Compliance Status*\n\nCurrent Status: *${member.kycStatus}*\n\n`;
+                let kycMsg = `🛡️ *KYC Compliance Status*\n\nCurrent Status: *${member.kycStatus || 'UNVERIFIED'}*\n\n`;
                 
                 if (member.kycStatus === 'UNVERIFIED' || member.kycStatus === 'REJECTED') {
                     kycMsg += `⚠️ Your account is restricted.\n\nTo verify your identity, please reply directly to this message with a clear photo of your *ID Document* (Green book or Smart Card).`;
-                    // Setting this step hands them right back to our AI Vision interceptor!
                     session.step = 'AWAITING_MEMBER_ID'; 
                 } else if (member.kycStatus === 'PENDING') {
                     kycMsg += `⏳ Your documents are currently under review by the Club Admin. We will notify you once approved.\n\nReply *Menu* to go back.`;
@@ -55,8 +56,31 @@ async function handleStokvelMessage(cleanPhone, incomingMsg, session, member) {
                 break;
                 
             case '4':
-                // 🪪 My Stokvel Card
-                await sendWhatsApp(cleanPhone, `🪪 *Digital Stokvel Card*\n\n*Name:* ${member.firstName} ${member.lastName}\n*Member ID:* STK-${member.id}\n*Club:* ${stokvelName}\n*Joined:* ${new Date(member.createdAt).toLocaleDateString()}\n\n_(Digital barcode rendering coming soon!)_\n\nReply *Menu* to go back.`);
+                // 🪪 My Stokvel Card (Now powered by Cloudinary & Canvas!)
+                await sendWhatsApp(cleanPhone, `🎨 Generating your Digital ID Card... Please wait a moment.`);
+                
+                try {
+                    // Call the generator
+                    const cardUrl = await generatePolicyCard(member, org);
+                    
+                    if (cardUrl) {
+                        // If it worked, we send it as a Media Message via Twilio
+                        const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+                        const botPhone = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+                        
+                        await twilioClient.messages.create({
+                            from: `whatsapp:${botPhone}`,
+                            to: `whatsapp:${member.phone}`,
+                            body: `🪪 *Here is your official Digital ID Card for ${stokvelName}.*\n\nYou can save this image to your phone or present the QR code at events for quick verification.\n\nReply *Menu* to go back.`,
+                            mediaUrl: [cardUrl] // 👈 Boom! Image attachment!
+                        });
+                    } else {
+                        await sendWhatsApp(cleanPhone, `⚠️ Sorry, we encountered an error generating your card. Please try again later.\n\nReply *Menu* to go back.`);
+                    }
+                } catch (error) {
+                    console.error("Card Generation Error:", error);
+                    await sendWhatsApp(cleanPhone, `⚠️ System error generating card.\n\nReply *Menu* to go back.`);
+                }
                 break;
                 
             case '5':
