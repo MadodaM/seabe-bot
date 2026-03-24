@@ -286,7 +286,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                                 <select name="type" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none bg-gray-50">
                                     <option value="BURIAL_SOCIETY">Burial Society</option>
                                     <option value="CHURCH">Church</option>
-									<option value="STOKVEL_SAVINGS">Stokvel / Savings Club</option>
+                                    <option value="STOKVEL_SAVINGS">Stokvel / Savings Club</option>
                                     <option value="NON_PROFIT">NPO / NGO</option>
                                 </select>
                             </div>
@@ -331,7 +331,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
         `);
     });
 
-// ==========================================
+    // ==========================================
     // 3. REGISTRATION HANDLER (With X-Ray Logging)
     // ==========================================
     const kybUploads = uploadCloud.fields([{ name: 'idDoc', maxCount: 1 }, { name: 'bankDoc', maxCount: 1 }]);
@@ -420,7 +420,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                         bankDetail: {
                             create: {
                                 bankName: extractedBank.bankName, accountName: extractedBank.accountName,
-                                accountNumber: String(extractedBank.accountNumber), branchCode: String(extractedBank.branchCode),      
+                                accountNumber: String(extractedBank.accountNumber), branchCode: String(extractedBank.branchCode),     
                                 accountType: extractedBank.accountType || 'CURRENT', accountstatus: false 
                             }
                         }
@@ -461,8 +461,122 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             }
         }); 
     });
-	
-	// ==========================================
+    
+    // ==========================================
+    // 6.5. QR CODE VERIFICATION PAGE (NEW!)
+    // ==========================================
+    app.get('/verify', async (req, res) => {
+        const { org, policy } = req.query;
+
+        if (!org || !policy) {
+            return res.send(`
+                <html><head>${sharedHead}</head><body class="bg-seabe-light flex items-center justify-center h-screen">
+                    <div class="bg-white p-8 rounded-2xl shadow-xl text-center max-w-sm border-t-4 border-red-500">
+                        <h1 class="text-2xl font-bold text-red-500 mb-2">❌ Invalid Link</h1>
+                        <p class="text-gray-500">Missing verification parameters.</p>
+                    </div>
+                </body></html>
+            `);
+        }
+
+        try {
+            const church = await prisma.church.findUnique({ where: { code: org } });
+            if (!church) {
+                return res.send(`
+                    <html><head>${sharedHead}</head><body class="bg-seabe-light flex items-center justify-center h-screen">
+                        <div class="bg-white p-8 rounded-2xl shadow-xl text-center max-w-sm border-t-4 border-red-500">
+                            <h1 class="text-2xl font-bold text-red-500 mb-2">❌ Organization Not Found</h1>
+                            <p class="text-gray-500">This code is invalid or the organization no longer exists.</p>
+                        </div>
+                    </body></html>
+                `);
+            }
+
+            // Attempt to find the member securely
+            let member;
+            if (policy.startsWith('SB-')) {
+                const phoneSuffix = policy.replace('SB-', '');
+                member = await prisma.member.findFirst({
+                    where: {
+                        churchCode: org,
+                        phone: { endsWith: phoneSuffix }
+                    }
+                });
+            } else {
+                member = await prisma.member.findFirst({
+                    where: { churchCode: org, policyNumber: policy }
+                });
+            }
+
+            if (!member) {
+                return res.send(`
+                    <html><head>${sharedHead}</head><body class="bg-seabe-light flex items-center justify-center h-screen">
+                        <div class="bg-white p-8 rounded-2xl shadow-xl text-center max-w-sm border-t-4 border-red-500">
+                            <h1 class="text-2xl font-bold text-red-500 mb-2">❌ Member Not Found</h1>
+                            <p class="text-gray-500">This policy number could not be verified in our records.</p>
+                        </div>
+                    </body></html>
+                `);
+            }
+
+            // Render a beautiful Verification UI
+            const isActive = member.status === 'ACTIVE';
+            const statusColorClass = isActive ? 'bg-green-500' : 'bg-red-500';
+            const statusIcon = isActive ? '✅ POLICY ACTIVE' : '❌ ' + (member.status || 'INACTIVE');
+            const borderColorClass = isActive ? 'border-green-500' : 'border-red-500';
+
+            // Mask the phone number for privacy (e.g. ******2707)
+            const maskedPhone = member.phone.replace(/.(?=.{4})/g, '*');
+            const joinedDate = member.createdAt ? new Date(member.createdAt).toLocaleDateString('en-ZA') : 'N/A';
+
+            res.send(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Policy Verification</title>
+                    ${sharedHead}
+                </head>
+                <body class="bg-seabe-light flex items-center justify-center min-h-screen p-4">
+                    <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-sm border-t-8 ${borderColorClass} text-center">
+                        <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Official Verification</h3>
+                        <h2 class="text-2xl font-extrabold text-seabe-navy mb-4">${church.name}</h2>
+                        
+                        <div class="${statusColorClass} text-white px-6 py-3 rounded-full font-bold text-lg inline-block mb-6 shadow-md shadow-${isActive ? 'green' : 'red'}-500/40">
+                            ${statusIcon}
+                        </div>
+                        
+                        <div class="bg-gray-50 p-5 rounded-xl border border-gray-100 text-left space-y-4">
+                            <div class="flex justify-between items-center border-b border-gray-200 pb-3">
+                                <strong class="text-gray-500 text-sm">Member:</strong> 
+                                <span class="font-bold text-gray-800">${member.firstName} ${member.lastName || ''}</span>
+                            </div>
+                            <div class="flex justify-between items-center border-b border-gray-200 pb-3">
+                                <strong class="text-gray-500 text-sm">Policy No:</strong> 
+                                <span class="font-mono text-gray-800 font-semibold">${policy}</span>
+                            </div>
+                            <div class="flex justify-between items-center border-b border-gray-200 pb-3">
+                                <strong class="text-gray-500 text-sm">Phone:</strong> 
+                                <span class="font-bold text-gray-800">${maskedPhone}</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <strong class="text-gray-500 text-sm">Joined:</strong> 
+                                <span class="font-bold text-gray-800">${joinedDate}</span>
+                            </div>
+                        </div>
+                        
+                        <p class="mt-8 text-xs text-gray-400 font-semibold">Verified securely via Seabe Digital</p>
+                    </div>
+                </body>
+                </html>
+            `);
+
+        } catch (error) {
+            console.error("Verification Error:", error);
+            res.send("System Error");
+        }
+    });
+
+    // ==========================================
     // 8. DEBICHECK MANDATE CAPTURE (Public Link)
     // ==========================================
     app.get('/mandate/:memberId', async (req, res) => {
