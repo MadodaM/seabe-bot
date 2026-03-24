@@ -648,8 +648,7 @@ model Appointment {
 enum ApptStatus {
   PENDING
   CONFIRMED
-  IN_PROGRESS
+  PENDING_PAYMENT
   COMPLETED
   CANCELLED
-  NO_SHOW
 }
