@@ -934,6 +934,64 @@ module.exports = (app, { prisma }) => {
         }
     });
 	
+	// ==========================================
+    // 🧾 RESEND INVOICE (PDF to WhatsApp)
+    // ==========================================
+    router.post('/:orgCode/appointments/:id/resend-invoice', async (req, res) => {
+        try {
+            const apptId = parseInt(req.params.id);
+            
+            // 1. Fetch the Appointment and relations
+            const appt = await prisma.appointment.findUnique({
+                where: { id: apptId },
+                include: { member: true, church: true, product: true }
+            });
+
+            if (!appt) return res.status(404).json({ error: "Appointment not found." });
+
+            // 2. Find the latest successful transaction for this client at this salon
+            const tx = await prisma.transaction.findFirst({
+                where: {
+                    churchId: appt.churchId,
+                    memberId: appt.memberId,
+                    status: 'SUCCESS'
+                },
+                orderBy: { date: 'desc' }
+            });
+
+            if (!tx) {
+                return res.status(400).json({ error: "No successful payment record found to generate an invoice." });
+            }
+
+            // 3. Generate the PDF
+            const { generateReceiptPDF } = require('../services/receiptGenerator');
+            const pdfUrl = await generateReceiptPDF(tx, appt.church);
+
+            if (!pdfUrl) {
+                return res.status(500).json({ error: "Cloudinary failed to generate the PDF." });
+            }
+
+            // 4. Send via Twilio
+            const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+            const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+            
+            const msg = `🧾 *Invoice Copy*\n\nHi ${appt.member.firstName}, here is a copy of your official receipt for the *${appt.product.name}*.\n\nThank you for choosing ${appt.church.name}!`;
+
+            await twilioClient.messages.create({
+                from: `whatsapp:${cleanTwilioNumber}`,
+                to: `whatsapp:${appt.member.phone}`,
+                body: msg,
+                mediaUrl: [pdfUrl]
+            });
+
+            res.json({ success: true });
+
+        } catch (error) {
+            console.error("❌ Resend Invoice Error:", error);
+            res.status(500).json({ error: "System Error processing invoice request." });
+        }
+    });
+	
     // ============================================================
     // 📅 ORGANIZATION EVENTS MANAGEMENT
     // ============================================================
