@@ -133,25 +133,31 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
 
         const index = parseInt(cleanMsg) - 1;
         
-        // THE SAFETY NET: If the array doesn't exist, or they type a bad number, catch it!
-        if (!data.services || isNaN(index) || !data.services[index]) {
+        // 🚨 THE FIX: Re-fetch the menu directly from the DB! 
+        // This guarantees the array exists and matches exactly what the user saw.
+        const services = await prisma.product.findMany({
+            where: { churchId: data.orgId, isActive: true },
+            orderBy: { name: 'asc' }
+        });
+
+        // Check if their number is valid based on the fresh database list
+        if (isNaN(index) || index < 0 || index >= services.length) {
             await sendWhatsApp(phone, "⚠️ Please reply with a valid number from the menu.");
             return true;
         }
 
-        const selectedService = data.services[index];
+        const selectedService = services[index];
 
-        // Save the chosen service to memory
-        // Save the chosen service to memory safely
+        // Now we only need to save simple strings/numbers to the next step, no arrays!
         await prisma.botSession.update({
             where: { phone: phone },
             data: { 
                 step: 'BOOKING_DATE',
                 data: {
-                    ...data, // Force Prisma to save the update
+                    ...data,
                     serviceId: selectedService.id,
                     serviceName: selectedService.name,
-                    price: selectedService.price
+                    price: Number(selectedService.price)
                 }
             }
         });
