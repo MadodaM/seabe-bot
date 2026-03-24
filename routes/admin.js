@@ -54,16 +54,18 @@ const parseCookies = (req) => {
 // --- UI TEMPLATE ---
 const renderPage = (org, activeTab, content) => {
     const isChurch = org.type === 'CHURCH';
-    const isGrooming = org.type === 'SERVICE_PROVIDER' || org.type === 'PERSONAL_CARE'; // 👈 ADD THIS
+    const isGrooming = org.type === 'SERVICE_PROVIDER' || org.type === 'PERSONAL_CARE';
+    const isAcademy = org.type === 'ACADEMY' || org.type === 'COACHING' || org.type === 'NON_PROFIT'; // Added Academy types
     
     const navStyle = (tab) => `padding: 10px 15px; text-decoration: none; color: ${activeTab === tab ? '#000' : '#888'}; border-bottom: ${activeTab === tab ? '3px solid #00d2d3' : 'none'}; font-weight: bold; font-size: 14px;`;
     
     // Feature Toggles based on Type
-    const verifyTab = !isChurch && !isGrooming ? `<a href="/admin/${org.code}/verifications" style="${navStyle('verifications')}">🕵️ Verifications</a>` : '';
-    const claimsTab = !isChurch && !isGrooming ? `<a href="/admin/${org.code}/claims" style="${navStyle('claims')}">📑 Claims</a>` : '';
+    const verifyTab = !isChurch && !isGrooming && !isAcademy ? `<a href="/admin/${org.code}/verifications" style="${navStyle('verifications')}">🕵️ Verifications</a>` : '';
+    const claimsTab = !isChurch && !isGrooming && !isAcademy ? `<a href="/admin/${org.code}/claims" style="${navStyle('claims')}">📑 Claims</a>` : '';
     const eventsTab = isChurch ? `<a href="/admin/${org.code}/events" style="${navStyle('events')}">📅 Events</a>` : '';
     const appointmentsTab = isGrooming ? `<a href="/admin/${org.code}/appointments" style="${navStyle('appointments')}">📅 Schedule</a>` : '';
     const servicesTab = isGrooming ? `<a href="/admin/${org.code}/services" style="${navStyle('services')}">✂️ Services</a>` : '';
+    const academyTab = isAcademy ? `<a href="/admin/${org.code}/academy" style="${navStyle('academy')}">🎓 Academy</a>` : '';
 
     return `<!DOCTYPE html><html><head><title>${org.name}</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:-apple-system,sans-serif;background:#f4f7f6;margin:0;padding-bottom:50px;}.header{background:white;padding:20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;}.nav{background:white;padding:0 20px;border-bottom:1px solid #ddd;overflow-x:auto;white-space:nowrap;display:flex;}.container{padding:20px;max-width:800px;margin:0 auto;}.card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.05);margin-bottom:20px;}.btn{display:inline-block;padding:12px 20px;background:#1e272e;color:white;text-decoration:none;border-radius:8px;border:none;font-weight:bold;font-size:14px;width:100%;text-align:center;cursor:pointer;}.btn-del{background:#ffebeb;color:#d63031;padding:5px 10px;font-size:11px;width:auto;border-radius:4px;border:none;}.approve{background:#2ecc71;}.reject{background:#e74c3c;}.img-preview{max-width:100%;height:auto;border:1px solid #ddd;border-radius:5px;margin-top:10px;}input,select,textarea,button{box-sizing:border-box;}input,select,textarea{width:100%;padding:12px;margin-bottom:15px;border:1px solid #ddd;border-radius:6px;}label{display:block;margin-bottom:5px;font-weight:bold;font-size:12px;color:#555;text-transform:uppercase;}table{width:100%;border-collapse:collapse;}td,th{padding:12px 8px;border-bottom:1px solid #eee;font-size:14px;text-align:left;}.badge{padding:4px 8px;border-radius:4px;font-size:10px;color:white;font-weight:bold;}a{color:#0984e3;text-decoration:none;}</style></head>
     <body><div class="header"><b>${org.name} (${org.type})</b><a href="/admin/${org.code}/logout" style="color:red;font-size:12px;">Logout</a></div>
@@ -72,8 +74,8 @@ const renderPage = (org, activeTab, content) => {
         <a href="/admin/${org.code}/transactions" style="${navStyle('transactions')}">🧾 Ledger</a>
         ${verifyTab}
         <a href="/admin/${org.code}/members" style="${navStyle('members')}">👥 Members/Clients</a>
-        ${appointmentsTab} ${claimsTab}
-        ${eventsTab}
+        ${appointmentsTab} ${servicesTab} ${claimsTab}
+        ${eventsTab} ${academyTab}
         <a href="/admin/${org.code}/team" style="${navStyle('team')}">🛡️ Team</a>
         <a href="/admin/${org.code}/broadcast" style="${navStyle('broadcast')}">📢 Broadcasts</a>
         <a href="/admin/${org.code}/settings" style="${navStyle('settings')}">⚙️ Settings</a>
@@ -959,6 +961,249 @@ module.exports = (app, { prisma }) => {
         } catch (error) {
             console.error("Resend Error:", error);
             res.status(500).json({ success: false, error: "Internal Server Error" });
+        }
+    });
+	
+	// ============================================================
+    // 🎓 LMS / ACADEMY DASHBOARD (Schema Aligned + Modal)
+    // ============================================================
+    router.get('/admin/:code/academy', checkSession, async (req, res) => {
+        try {
+            const org = req.org;
+
+            // 1. Fetch Enrollments & count total modules dynamically
+            const enrollments = await prisma.enrollment.findMany({
+                where: { 
+                    course: { churchId: org.id } 
+                },
+                include: { 
+                    member: true, 
+                    course: {
+                        include: {
+                            _count: { select: { modules: true } } // Get total lesson count
+                        }
+                    }
+                },
+                orderBy: { updatedAt: 'desc' }
+            });
+
+            // 2. Calculate Top-Level Metrics
+            const totalStudents = enrollments.length;
+            const completedCourses = enrollments.filter(e => e.status === 'COMPLETED').length;
+            
+            // Group by Course to see Uptake
+            const courseUptake = {};
+            enrollments.forEach(e => {
+                const courseName = e.course.title; 
+                if (!courseUptake[courseName]) {
+                    courseUptake[courseName] = { count: 0, completed: 0 };
+                }
+                courseUptake[courseName].count++;
+                if (e.status === 'COMPLETED') courseUptake[courseName].completed++;
+            });
+
+            // 3. Generate Course Uptake HTML Rows
+            const uptakeRows = Object.keys(courseUptake).map(courseName => {
+                const data = courseUptake[courseName];
+                const completionRate = data.count > 0 ? Math.round((data.completed / data.count) * 100) : 0;
+                return `
+                    <tr>
+                        <td><strong>${courseName}</strong></td>
+                        <td><span class="badge" style="background:#3498db;">${data.count} Enrolled</span></td>
+                        <td>
+                            <div style="width: 100%; background: #eee; border-radius: 4px; overflow: hidden; margin-top: 5px;">
+                                <div style="height: 8px; width: ${completionRate}%; background: #27ae60;"></div>
+                            </div>
+                            <span style="font-size:10px; color:#7f8c8d;">${completionRate}% Completion</span>
+                        </td>
+                    </tr>
+                `;
+            }).join('') || '<tr><td colspan="3" style="text-align:center; color:#95a5a6;">No active courses yet.</td></tr>';
+
+            // 4. Generate Student Progress HTML Rows
+            const studentRows = enrollments.map(e => {
+                const totalModules = e.course._count.modules || 1; 
+                
+                let progressPercent = Math.round((e.progress / totalModules) * 100);
+                if (progressPercent > 100) progressPercent = 100;
+                
+                let deliveryBadge = `<span class="badge" style="background:#f39c12;">Module ${e.progress} Sent</span>`;
+                
+                if (e.status === 'COMPLETED') {
+                    deliveryBadge = `<span class="badge" style="background:#27ae60;">✅ Graduated</span>`;
+                } else if (e.status === 'PAUSED') {
+                    deliveryBadge = `<span class="badge" style="background:#e74c3c;">⏸️ Paused</span>`;
+                } else if (e.quizState === 'AWAITING_ANSWER') {
+                    deliveryBadge = `<span class="badge" style="background:#8e44ad;">⏳ Waiting on Quiz Reply</span>`;
+                }
+
+                // 🚀 Added the View Answers button column here
+                return `
+                    <tr>
+                        <td>
+                            <strong>${e.member.firstName} ${e.member.lastName || ''}</strong><br>
+                            <a href="https://wa.me/${e.member.phone.replace('+', '')}" target="_blank" style="font-size:11px; color:#0984e3; text-decoration:none;">${e.member.phone}</a>
+                        </td>
+                        <td><strong>${e.course.title}</strong></td>
+                        <td>
+                            <strong>${progressPercent}%</strong><br>
+                            <span style="font-size:11px; color:#7f8c8d;">Module ${e.progress} / ${totalModules}</span>
+                        </td>
+                        <td>
+                            ${deliveryBadge}<br>
+                            <span style="font-size:10px; color:#aaa;">Last active: ${new Date(e.updatedAt).toLocaleDateString()}</span>
+                        </td>
+                        <td style="text-align:right;">
+                            <button onclick="viewAnswers(${e.id}, '${e.member.firstName.replace(/'/g, "\\'")}')" class="btn" style="background:#8e44ad; padding:6px 12px; font-size:11px; width:auto;">
+                                📝 View Answers
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            // 5. The Dashboard UI Layout
+            const content = `
+                <div class="card" style="background:#2c3e50; color:white; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <h2 style="margin:0; color:#00d2d3;">🎓 Academy Mission Control</h2>
+                        <p style="margin:5px 0 0 0; font-size:13px; color:#b2bec3;">Track student progress, course uptake, and WhatsApp delivery logs.</p>
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:20px; margin-bottom:20px;">
+                    <div class="card" style="border-top:4px solid #3498db; margin-bottom:0;">
+                        <div style="font-size:11px; color:#7f8c8d; text-transform:uppercase; font-weight:bold;">Total Active Students</div>
+                        <h2 style="font-size:28px; color:#2c3e50; margin:5px 0;">${totalStudents}</h2>
+                    </div>
+                    <div class="card" style="border-top:4px solid #27ae60; margin-bottom:0;">
+                        <div style="font-size:11px; color:#7f8c8d; text-transform:uppercase; font-weight:bold;">Total Graduates</div>
+                        <h2 style="font-size:28px; color:#2c3e50; margin:5px 0;">${completedCourses}</h2>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 style="margin-top:0;">📈 Course Uptake & Performance</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Course Name</th>
+                                <th>Total Enrollment</th>
+                                <th>Average Completion</th>
+                            </tr>
+                        </thead>
+                        <tbody>${uptakeRows}</tbody>
+                    </table>
+                </div>
+
+                <div class="card" style="overflow-x:auto;">
+                    <h3 style="margin-top:0;">👨‍🎓 Student Roster & Delivery Logs</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Student</th>
+                                <th>Enrolled Course</th>
+                                <th>Progress</th>
+                                <th>WhatsApp Delivery Status</th>
+                                <th style="text-align:right;">Assessments</th> </tr>
+                        </thead>
+                        <tbody>${studentRows.length > 0 ? studentRows : '<tr><td colspan="5" style="text-align:center; color:#999; padding:20px;">No enrollments found.</td></tr>'}</tbody>
+                    </table>
+                </div>
+
+                <div id="answersModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:1000; justify-content:center; align-items:center;">
+                    <div style="background:white; width:90%; max-width:600px; border-radius:10px; padding:25px; box-shadow:0 10px 25px rgba(0,0,0,0.2); max-height:80vh; overflow-y:auto;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee; padding-bottom:15px; margin-bottom:15px;">
+                            <h3 style="margin:0; color:#2c3e50;">Assessments: <span id="modalStudentName" style="color:#8e44ad;"></span></h3>
+                            <button onclick="closeAnswersModal()" style="background:none; border:none; font-size:24px; cursor:pointer; color:#7f8c8d;">&times;</button>
+                        </div>
+                        <div id="modalAnswersContent">
+                            <p style="text-align:center; color:#7f8c8d;">Loading answers...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <script>
+                    function closeAnswersModal() {
+                        document.getElementById('answersModal').style.display = 'none';
+                    }
+
+                    async function viewAnswers(enrollmentId, studentName) {
+                        document.getElementById('modalStudentName').innerText = studentName;
+                        document.getElementById('modalAnswersContent').innerHTML = '<p style="text-align:center; color:#7f8c8d;">Loading answers from database...</p>';
+                        document.getElementById('answersModal').style.display = 'flex';
+
+                        try {
+                            const currentPath = window.location.pathname.replace(/\\/$/, ""); 
+                            const fetchUrl = currentPath + '/answers/' + enrollmentId;
+                            
+                            const res = await fetch(fetchUrl);
+                            const data = await res.json();
+                            
+                            if (data.answers.length === 0) {
+                                document.getElementById('modalAnswersContent').innerHTML = '<p style="text-align:center; color:#95a5a6; padding:20px;">No quiz answers submitted yet.</p>';
+                                return;
+                            }
+
+                            let html = '';
+                            data.answers.forEach(ans => {
+                                const statusColor = ans.isCorrect ? '#27ae60' : '#e74c3c';
+                                const statusIcon = ans.isCorrect ? '✅ Correct' : '❌ Incorrect';
+                                
+                                html += \`
+                                    <div style="background:#f8f9fa; border-left:4px solid \${statusColor}; padding:15px; margin-bottom:10px; border-radius:4px;">
+                                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                            <span style="font-size:11px; color:#7f8c8d; font-weight:bold; text-transform:uppercase;">Module \${ans.lessonNumber}</span>
+                                            <span style="font-size:11px; color:\${statusColor}; font-weight:bold;">\${statusIcon}</span>
+                                        </div>
+                                        <div style="font-weight:bold; margin-bottom:5px; color:#2c3e50;">Q: \${ans.questionText}</div>
+                                        <div style="color:#555;"><strong>A:</strong> \${ans.studentResponse}</div>
+                                        <div style="font-size:10px; color:#aaa; margin-top:8px; text-align:right;">Submitted: \${new Date(ans.submittedAt).toLocaleString()}</div>
+                                    </div>
+                                \`;
+                            });
+                            document.getElementById('modalAnswersContent').innerHTML = html;
+
+                        } catch (error) {
+                            document.getElementById('modalAnswersContent').innerHTML = '<p style="color:red; text-align:center;">⚠️ Connection Error Loading Answers.</p>';
+                        }
+                    }
+                </script>
+            `;
+
+            res.send(renderPage(req.org, 'academy', content));
+
+        } catch (error) {
+            console.error("LMS Dashboard Error:", error);
+            res.send(renderPage(req.org, 'academy', '<div class="card" style="color:red; font-weight:bold;">System Error Loading Academy Dashboard. Check Server Logs.</div>'));
+        }
+    });
+	
+	// ==========================================
+    // 📝 API: FETCH STUDENT ANSWERS
+    // ==========================================
+    router.get('/admin/:code/academy/answers/:enrollmentId', checkSession, async (req, res) => {
+        try {
+            // Fetch the logs and include the related Module to get the Question text
+            const logs = await prisma.assessmentLog.findMany({
+                where: { enrollmentId: parseInt(req.params.enrollmentId) },
+                include: { module: true },
+                orderBy: { createdAt: 'desc' }
+            });
+            
+            // Format the data for the frontend modal
+            const answers = logs.map(log => ({
+                submittedAt: log.createdAt,
+                lessonNumber: log.module.order,
+                questionText: log.module.quizQuestion || 'Assessment',
+                studentResponse: log.response,
+                isCorrect: log.isCorrect
+            }));
+
+            res.json({ success: true, answers });
+        } catch (error) {
+            console.error("Fetch Answers Error:", error);
+            res.status(500).json({ success: false, error: "Failed to fetch answers." });
         }
     });
 	
