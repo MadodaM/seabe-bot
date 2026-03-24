@@ -688,7 +688,7 @@ module.exports = (app, { prisma }) => {
         }
     });
 	
-	// ==========================================
+// ==========================================
     // 📅 MERCHANT DASHBOARD: APPOINTMENTS
     // ==========================================
     router.get('/admin/:code/appointments', checkSession, async (req, res) => {
@@ -714,35 +714,37 @@ module.exports = (app, { prisma }) => {
                     const formattedDate = dateObj.toLocaleDateString('en-ZA', { weekday: 'short', month: 'short', day: 'numeric' });
                     const formattedTime = dateObj.toLocaleTimeString('en-ZA', { hour: '2-digit', minute:'2-digit' });
 
-                    // Standardize badges using platform colors
                     let statusBadgeColor = '#f39c12'; // PENDING
-                    if (appt.status === 'COMPLETED') statusBadgeColor = '#27ae60';
+                    if (appt.status === 'CONFIRMED' || appt.status === 'COMPLETED') statusBadgeColor = '#27ae60';
                     if (appt.status === 'CANCELLED') statusBadgeColor = '#c0392b';
                     let statusBadge = `<span class="badge" style="background:${statusBadgeColor};">${appt.status}</span>`;
 
                     const basePrice = appt.product.price.toFixed(2);
 
-                    // Dynamic action buttons
+                    // --- 🚀 DYNAMIC ACTION BUTTONS ---
                     let actionBtns = '-';
-                    if (appt.status === 'CONFIRMED') {
+                    if (appt.status === 'CONFIRMED' && !appt.depositPaid) {
                         actionBtns = `
-                            <button onclick="openCheckoutModal(${appt.id}, '${appt.member.firstName}', '${appt.product.name}', ${basePrice})" class="btn" style="background:#00d2d3; color:#1e272e; padding:6px 12px; font-size:11px;">
+                            <button onclick="openCheckoutModal(${appt.id}, '${appt.member.firstName}', '${appt.product.name}', ${basePrice})" class="btn" style="background:#00d2d3; color:#1e272e; padding:6px 12px; font-size:11px; width:auto;">
                                 💳 Send Bill
-                            </button>
-                        `;
+                            </button>`;
                     } else if (appt.status === 'PENDING_PAYMENT') {
-                        <button id="resend-btn-<%= appt.id %>"
-								class="bg-orange-100 text-orange-600 px-4 py-2 rounded-lg text-sm font-bold border border-orange-200 hover:bg-orange-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
-								onclick="sendBill('<%= appt.id %>')"
-								data-sent-time="<%= appt.updatedAt.toISOString() %>"
-								disabled>
-							Resend Link
-						</button>
-                    } else if (appt.status === 'COMPLETED') {
-                        <button class="bg-green-100 text-green-700 px-4 py-2 rounded-lg text-sm font-bold border border-green-300 hover:bg-green-200 transition shadow-sm"
-								onclick="resendInvoice('<%= appt.id %>')">
-							🧾 Resend Invoice
-						</button>
+                        actionBtns = `
+                            <button id="resend-btn-${appt.id}"
+                                class="btn"
+                                style="background:#fff7ed; color:#ea580c; border:1px solid #fdba74; padding:6px 12px; font-size:11px; width:auto;"
+                                onclick="executeResendLink(${appt.id})"
+                                data-sent-time="${appt.updatedAt.toISOString()}"
+                                disabled>
+                                Wait...
+                            </button>`;
+                    } else if (appt.depositPaid || appt.status === 'COMPLETED') {
+                        actionBtns = `
+                            <button class="btn" 
+                                style="background:#f0fdf4; color:#16a34a; border:1px solid #bbf7d0; padding:6px 12px; font-size:11px; width:auto;"
+                                onclick="resendInvoice(${appt.id})">
+                                🧾 Resend Invoice
+                            </button>`;
                     }
                     
                     rowsHtml += `
@@ -785,9 +787,7 @@ module.exports = (app, { prisma }) => {
                                 <th style="text-align:right;">Actions</th>
                             </tr>
                         </thead>
-                        <tbody>
-                            ${rowsHtml}
-                        </tbody>
+                        <tbody>${rowsHtml}</tbody>
                     </table>
                 </div>
 
@@ -797,16 +797,12 @@ module.exports = (app, { prisma }) => {
                             <h3 style="margin:0; color:#1e272e;">Checkout: <span id="clientNameDisplay"></span></h3>
                             <button type="button" onclick="document.getElementById('checkoutModal').style.display='none'" style="background:none; border:none; font-size:20px; cursor:pointer;">&times;</button>
                         </div>
-                        <p style="font-size:13px; color:#7f8c8d; margin-bottom:15px; border-bottom:1px solid #eee; padding-bottom:15px;">Base Service: <strong id="serviceDisplay" style="color:#2c3e50;"></strong></p>
-                        
                         <form id="checkoutForm" method="POST">
-                            <label style="display:block; font-size:11px; font-weight:bold; color:#555; text-transform:uppercase; margin-bottom:5px;">Add Products/Extras Used</label>
-                            <input type="text" name="addedItems" placeholder="e.g. Beard Oil, Color Dye" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:5px; margin-bottom:15px; box-sizing:border-box;">
-                            
-                            <label style="display:block; font-size:11px; font-weight:bold; color:#555; text-transform:uppercase; margin-bottom:5px;">Final Total Amount (R)</label>
-                            <input type="number" name="finalAmount" id="finalAmountInput" step="0.01" required style="width:100%; padding:10px; border:1px solid #ddd; border-radius:5px; margin-bottom:20px; box-sizing:border-box; font-size:16px; font-weight:bold;">
-                            
-                            <button type="submit" class="btn" style="width:100%; background:#1e272e; color:white; padding:12px; font-size:14px;">Send Payment Link 📱</button>
+                            <label>Add Products/Extras Used</label>
+                            <input type="text" name="addedItems" placeholder="e.g. Beard Oil, Color Dye">
+                            <label>Final Total Amount (R)</label>
+                            <input type="number" name="finalAmount" id="finalAmountInput" step="0.01" required>
+                            <button type="submit" class="btn">Send Payment Link 📱</button>
                         </form>
                     </div>
                 </div>
@@ -814,98 +810,100 @@ module.exports = (app, { prisma }) => {
                 <script>
                     function openCheckoutModal(id, clientName, serviceName, basePrice) {
                         document.getElementById('clientNameDisplay').innerText = clientName;
-                        document.getElementById('serviceDisplay').innerText = serviceName + ' (R' + basePrice + ')';
                         document.getElementById('finalAmountInput').value = basePrice;
                         document.getElementById('checkoutForm').action = '/admin/${orgCode}/appointments/' + id + '/send-bill';
                         document.getElementById('checkoutModal').style.display = 'flex';
                     }
-					
-					document.addEventListener('DOMContentLoaded', () => {
-    // Find all dynamic resend buttons on the page
-    document.querySelectorAll('[id^="resend-btn-"]').forEach(btn => {
-        const sentTime = new Date(btn.dataset.sentTime).getTime();
-        
-        const checkTimer = setInterval(() => {
-            const now = new Date().getTime();
-            const diffMinutes = (now - sentTime) / 60000;
 
-				if (diffMinutes >= 2) {
-					// Time is up! Enable the button.
-					btn.disabled = false;
-					btn.innerHTML = "🔄 Resend Link";
-					clearInterval(checkTimer);
-				} else {
-					// Still waiting. Show the countdown.
-					const remainingSeconds = Math.ceil(120 - ((now - sentTime) / 1000));
-					btn.innerHTML = `Wait ${remainingSeconds}s`;
-				}
-							}, 1000);
-						});
-					});
+                    // --- ⏳ COUNTDOWN TIMER LOGIC ---
+                    document.addEventListener('DOMContentLoaded', () => {
+                        document.querySelectorAll('[id^="resend-btn-"]').forEach(btn => {
+                            const sentTime = new Date(btn.dataset.sentTime).getTime();
+                            const checkTimer = setInterval(() => {
+                                const now = new Date().getTime();
+                                const diffSeconds = (now - sentTime) / 1000;
 
-					async function resendInvoice(apptId) {
-						if(!confirm("Resend the official PDF invoice to the client's WhatsApp?")) return;
-						
-						try {
-							// 🚀 THE FIX: Dynamically build the URL based on your current browser path
-							// If current URL is seabe.tech/admin/TES624/appointments, this builds the correct POST path.
-							const currentPath = window.location.pathname; // e.g. "/admin/TES624/appointments"
-							const fetchUrl = `${currentPath}/${apptId}/resend-invoice`;
+                                if (diffSeconds >= 120) {
+                                    btn.disabled = false;
+                                    btn.innerHTML = "🔄 Resend Link";
+                                    btn.style.background = "#ea580c";
+                                    btn.style.color = "white";
+                                    clearInterval(checkTimer);
+                                } else {
+                                    const remaining = Math.ceil(120 - diffSeconds);
+                                    btn.innerHTML = 'Wait ' + remaining + 's';
+                                }
+                            }, 1000);
+                        });
+                    });
 
-							const response = await fetch(fetchUrl, { 
-								method: 'POST',
-								headers: { 'Content-Type': 'application/json' }
-							});
-							
-							const data = await response.json();
-							
-							if(data.success) {
-								alert("✅ Invoice successfully resent to the client!");
-							} else {
-								alert("⚠️ Error: " + data.error);
-							}
-							
-						} catch (error) {
-							console.error("Fetch Error:", error);
-							alert("⚠️ Connection error. Please ensure you are logged in and try again.");
-						}
-					}
-					
+                    // --- 🔗 RESEND LINK EXECUTION ---
+                    function executeResendLink(apptId) {
+                        if(!confirm("Resend the payment link to the client?")) return;
+                        const form = document.createElement('form');
+                        form.method = 'POST';
+                        form.action = window.location.pathname + '/' + apptId + '/send-bill';
+                        document.body.appendChild(form);
+                        form.submit();
+                    }
+
+                    // --- 🧾 RESEND INVOICE ---
+                    async function resendInvoice(apptId) {
+                        if(!confirm("Resend the official PDF invoice to the client?")) return;
+                        const fetchUrl = window.location.pathname + '/' + apptId + '/resend-invoice';
+                        try {
+                            const response = await fetch(fetchUrl, { method: 'POST', headers: {'Content-Type': 'application/json'} });
+                            const data = await response.json();
+                            if(data.success) alert("✅ Invoice successfully resent!");
+                            else alert("⚠️ Error: " + data.error);
+                        } catch (error) {
+                            alert("⚠️ Connection error.");
+                        }
+                    }
                 </script>
             `;
 
-            // Magic Wrapper!
             res.send(renderPage(req.org, 'appointments', content));
 
         } catch (e) {
             console.error("Schedule Load Error:", e);
-            res.send(renderPage(req.org, 'appointments', '<div class="error-box">System Error Loading Schedule</div>'));
+            res.send(renderPage(req.org, 'appointments', '<div class="card">System Error Loading Schedule</div>'));
         }
     });
 
     // ==========================================
-    // 💳 MERCHANT DASHBOARD: SEND BILL VIA WHATSAPP
+    // 💳 MERCHANT DASHBOARD: SEND BILL
     // ==========================================
     router.post('/admin/:code/appointments/:id/send-bill', express.urlencoded({ extended: true }), async (req, res) => {
         const { id, code } = req.params;
         const { addedItems, finalAmount } = req.body;
 
         try {
+            const appt = await prisma.appointment.findUnique({ 
+                where: { id: parseInt(id) }, 
+                include: { member: true, product: true } 
+            });
+            
+            // Use provided values or fallback to existing data for resends
+            const amount = finalAmount ? parseFloat(finalAmount) : appt.finalAmount;
+            const extras = addedItems !== undefined ? addedItems : appt.addedItems;
+
             const appointment = await prisma.appointment.update({
                 where: { id: parseInt(id) },
                 data: { 
-                    addedItems: addedItems || null,
-                    finalAmount: parseFloat(finalAmount),
-                    status: 'PENDING_PAYMENT' 
+                    addedItems: extras || null,
+                    finalAmount: amount || appt.product.price,
+                    status: 'PENDING_PAYMENT',
+                    updatedAt: new Date() // 🚀 Reset the 2-minute timer
                 },
                 include: { member: true, church: true, product: true }
             });
 
             const host = process.env.HOST_URL || 'https://seabe.tech';
-            const payLink = `${host}/pay?apptId=${appointment.id}&amount=${finalAmount}`;
-
-            const extrasText = addedItems ? `\n➕ *Extras:* ${addedItems}` : '';
-            const msg = `🧾 *${appointment.church.name} - Invoice*\n\nHi ${appointment.member.firstName}, your grooming session is complete!\n\n✂️ *Service:* ${appointment.product.name}${extrasText}\n💰 *Total Due:* R${parseFloat(finalAmount).toFixed(2)}\n\nPlease click the secure link below to complete your payment via Card or Instant EFT:\n👉 ${payLink}\n\n_Thank you for your business!_`;
+            const payLink = `${host}/pay?apptId=${appointment.id}&amount=${appointment.finalAmount}`;
+            const extrasText = appointment.addedItems ? `\n➕ *Extras:* ${appointment.addedItems}` : '';
+            
+            const msg = `🧾 *${appointment.church.name} - Invoice*\n\nHi ${appointment.member.firstName}, your payment link is ready.\n\n✂️ *Service:* ${appointment.product.name}${extrasText}\n💰 *Total Due:* R${appointment.finalAmount.toFixed(2)}\n\n👉 Click to pay: ${payLink}`;
 
             const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
             const botPhone = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
@@ -920,82 +918,47 @@ module.exports = (app, { prisma }) => {
 
         } catch (e) {
             console.error("Send Bill Error:", e);
-            res.status(500).send("Error sending bill to customer.");
+            res.status(500).send("Error sending bill.");
         }
     });
 
     // ==========================================
-    // 📅 MERCHANT DASHBOARD: UPDATE STATUS
-    // ==========================================
-    router.post('/admin/:code/appointments/:id/status', express.urlencoded({ extended: true }), async (req, res) => {
-        const { id, code } = req.params;
-        const { status } = req.body;
-
-        try {
-            await prisma.appointment.update({
-                where: { id: parseInt(id) },
-                data: { status: status }
-            });
-            res.redirect(`/admin/${code}/appointments`);
-        } catch (e) {
-            console.error("Update Error:", e);
-            res.status(500).send("Error updating appointment.");
-        }
-    });
-	
-	// ==========================================
     // 🧾 RESEND INVOICE (PDF to WhatsApp)
     // ==========================================
-    router.post('/:orgCode/appointments/:id/resend-invoice', async (req, res) => {
+    router.post('/admin/:code/appointments/:id/resend-invoice', async (req, res) => {
         try {
-            const apptId = parseInt(req.params.id);
-            
-            // 1. Fetch the Appointment and relations
             const appt = await prisma.appointment.findUnique({
-                where: { id: apptId },
+                where: { id: parseInt(req.params.id) },
                 include: { member: true, church: true, product: true }
             });
 
             if (!appt) return res.status(404).json({ success: false, error: "Appointment not found." });
 
-            // 2. Find the latest successful transaction
             const tx = await prisma.transaction.findFirst({
-                where: {
-                    churchId: appt.churchId,
-                    memberId: appt.memberId,
-                    status: 'SUCCESS'
-                },
+                where: { churchId: appt.churchId, memberId: appt.memberId, status: 'SUCCESS' },
                 orderBy: { date: 'desc' }
             });
 
-            if (!tx) {
-                return res.status(400).json({ success: false, error: "No successful payment record found." });
-            }
+            if (!tx) return res.status(400).json({ success: false, error: "No successful payment found." });
 
-            // 3. Generate the PDF
             const { generateReceiptPDF } = require('../services/receiptGenerator');
             const pdfUrl = await generateReceiptPDF(tx, appt.church);
 
-            if (!pdfUrl) return res.status(500).json({ success: false, error: "Failed to generate PDF." });
-
-            // 4. Send via Twilio
             const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
-            const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+            const botPhone = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
             
-            const msg = `🧾 *Invoice Copy*\n\nHi ${appt.member.firstName}, here is a copy of your official receipt for the *${appt.product.name}*.\n\nThank you for choosing ${appt.church.name}!`;
-
             await twilioClient.messages.create({
-                from: `whatsapp:${cleanTwilioNumber}`,
+                from: `whatsapp:${botPhone}`,
                 to: `whatsapp:${appt.member.phone}`,
-                body: msg,
+                body: `🧾 *Invoice Copy*\n\nHi ${appt.member.firstName}, here is your official receipt for the *${appt.product.name}*.`,
                 mediaUrl: [pdfUrl]
             });
 
-            return res.json({ success: true });
+            res.json({ success: true });
 
         } catch (error) {
-            console.error("❌ Resend Invoice Error:", error);
-            return res.status(500).json({ success: false, error: "Internal Server Error" });
+            console.error("Resend Error:", error);
+            res.status(500).json({ success: false, error: "Internal Server Error" });
         }
     });
 	
