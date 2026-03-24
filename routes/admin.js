@@ -216,11 +216,28 @@ module.exports = (app, { prisma }) => {
             const { phone, password, totp } = req.body;
             const code = req.params.code.toUpperCase();
             
-            // Clean phone for lookup
-            let cleanPhone = phone.trim().replace(/\D/g, '');
-            if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+            // 1. Create different variations of the phone number
+            const rawPhone = phone.trim();
+            let cleanPhone = rawPhone.replace(/\D/g, ''); // Removes +, spaces, etc.
+            let localPhone = cleanPhone; // e.g. 083...
+            let intlPhone = cleanPhone;  // e.g. 2783...
+
+            if (cleanPhone.startsWith('0')) intlPhone = '27' + cleanPhone.substring(1);
+            if (cleanPhone.startsWith('27')) localPhone = '0' + cleanPhone.substring(2);
             
-            const org = await prisma.church.findFirst({ where: { code: code, adminPhone: cleanPhone } });
+            // 2. Tell the database to check ALL of them!
+            const org = await prisma.church.findFirst({ 
+                where: { 
+                    code: code, 
+                    OR: [
+                        { adminPhone: rawPhone },
+                        { adminPhone: cleanPhone },
+                        { adminPhone: localPhone },
+                        { adminPhone: intlPhone },
+                        { adminPhone: '+' + intlPhone }
+                    ]
+                } 
+            });
             
             if (!org || !org.password || !org.mfaSecret) {
                 return res.send(`<h2>Login Failed</h2><p>Invalid Credentials or MFA Setup Incomplete.</p><a href="/admin/${code}">Back</a>`);
@@ -242,8 +259,10 @@ module.exports = (app, { prisma }) => {
                 return res.send(`<h2>Login Failed</h2><p>Invalid 2FA Code.</p><a href="/admin/${code}">Back</a>`);
             }
 
+            // Success! Set cookie and redirect
             res.setHeader('Set-Cookie', `session_${org.code}=active; HttpOnly; Path=/; Max-Age=86400`);
             res.redirect(`/admin/${org.code}/dashboard`);
+            
         } catch (e) {
             res.send("Error: " + e.message);
         }
