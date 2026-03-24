@@ -844,23 +844,43 @@ module.exports = (app, { prisma }) => {
 					});
 
 					// The AJAX call for Resending the Invoice
-					async function resendInvoice(apptId) {
-						if(!confirm("Resend the official PDF invoice to the client's WhatsApp?")) return;
-						
-						try {
-							// NOTE: Make sure the URL matches your admin routing structure
-							const response = await fetch(`/admin/appointments/${apptId}/resend-invoice`, { method: 'POST' });
-							const data = await response.json();
+						async function resendInvoice(apptId) {
+							if(!confirm("Resend the official PDF invoice to the client's WhatsApp?")) return;
 							
-							if(data.success) {
-								alert("✅ Invoice successfully resent to the client!");
-							} else {
-								alert("⚠️ Error: " + data.error);
+							try {
+								// 🚀 THE FIX: Extract the orgCode dynamically from your current admin URL
+								// (Assuming your URL looks like /admin/TES123/...)
+								const pathParts = window.location.pathname.split('/');
+								const orgCode = pathParts[2]; 
+
+								// Now we include the orgCode in the fetch URL so Express finds the route!
+								const response = await fetch(`/admin/${orgCode}/appointments/${apptId}/resend-invoice`, { 
+									method: 'POST',
+									headers: {
+										'Content-Type': 'application/json'
+									}
+								});
+								
+								// Let's safely check if the response is actually JSON before parsing
+								const contentType = response.headers.get("content-type");
+								if (contentType && contentType.indexOf("application/json") !== -1) {
+									const data = await response.json();
+									if(data.success) {
+										alert("✅ Invoice successfully resent to the client!");
+									} else {
+										alert("⚠️ Error: " + data.error);
+									}
+								} else {
+									// If it's still HTML, we catch it gracefully instead of crashing
+									console.error("Server returned HTML instead of JSON. Check route authentication.");
+									alert("⚠️ Server routing error. Please check your console.");
+								}
+								
+							} catch (error) {
+								console.error(error);
+								alert("System error communicating with the server.");
 							}
-						} catch (error) {
-							alert("System error communicating with the server.");
 						}
-					}
 					
                 </script>
             `;
