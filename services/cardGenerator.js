@@ -64,14 +64,15 @@ async function generatePolicyCard(member, org) {
 
         // 7. 🚀 GENERATE & DRAW SCANNABLE QR CODE
         try {
-            const qrData = `MEMBER:${policyNum}|ORG:${org?.code || 'N/A'}`;
+            // 🚨 THE FIX: Format as a Web URL so iPhone/Android cameras recognize it instantly!
+            const host = process.env.HOST_URL || 'https://seabe.tech';
+            const qrData = `${host}/verify?org=${org?.code || 'N/A'}&policy=${policyNum}`;
             
-            // 🚨 THE FIX: Use DataURL, Pure Black, High Error Correction, and larger Margin
             const qrDataUrl = await QRCode.toDataURL(qrData, {
-                errorCorrectionLevel: 'H', // High error correction so it scans even if slightly blurry
-                color: { dark: '#000000', light: '#ffffff' }, // Pure black & white for maximum contrast
+                errorCorrectionLevel: 'H', 
+                color: { dark: '#000000', light: '#ffffff' }, 
                 width: 180,
-                margin: 2 // Larger 'Quiet Zone' for smartphone cameras
+                margin: 2 
             });
             
             const qrImage = await loadImage(qrDataUrl);
