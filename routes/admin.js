@@ -55,7 +55,7 @@ const parseCookies = (req) => {
 const renderPage = (org, activeTab, content) => {
     const isChurch = org.type === 'CHURCH';
     const isGrooming = org.type === 'SERVICE_PROVIDER' || org.type === 'PERSONAL_CARE';
-    const isAcademy = org.type === 'ACADEMY' || org.type === 'COACHING' || org.type === 'NON_PROFIT'; // Added Academy types
+    const isAcademy = org.type === 'ACADEMY' || org.type === 'COACHING' || org.type === 'NON_PROFIT' || org.type === 'CHURCH';// Added Academy types
     
     const navStyle = (tab) => `padding: 10px 15px; text-decoration: none; color: ${activeTab === tab ? '#000' : '#888'}; border-bottom: ${activeTab === tab ? '3px solid #00d2d3' : 'none'}; font-weight: bold; font-size: 14px;`;
     
