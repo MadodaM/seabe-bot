@@ -42,6 +42,7 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
         });
 
         if (salon) {
+            // Write a perfectly clean initial object
             const initialData = { orgId: salon.id, orgName: salon.name };
             await prisma.botSession.upsert({
                 where: { phone: phone },
@@ -56,14 +57,22 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
         return false; 
     }
 
+    // 🚨 SAFETY NET: If session wiped orgId, catch it before Prisma crashes!
+    const orgId = parseInt(data.orgId);
+    if (isNaN(orgId)) {
+        await prisma.botSession.deleteMany({ where: { phone: phone } });
+        await sendWhatsApp(phone, "⚠️ Your session expired. Please reply with the salon name to start over.");
+        return true;
+    }
+
     // ==========================================
     // 2. THE FLOW: Booking & Menus
     // ==========================================
     if (session.step === 'MAIN_MENU') {
         
-        if (cleanMsg === '1') {
+        if (cleanMsg === '1' || cleanMsg === '2') {
             const services = await prisma.product.findMany({
-                where: { churchId: parseInt(data.orgId), isActive: true },
+                where: { churchId: orgId, isActive: true },
                 orderBy: { name: 'asc' }
             });
 
@@ -72,39 +81,27 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
                 return true;
             }
 
-            let menu = `✂️ *Select a Service*\n\n`;
-            services.forEach((s, i) => menu += `*${i + 1}.* ${s.name} - R${s.price.toFixed(2)}\n`);
-            menu += `\nReply with the number of your choice (or *0* to cancel).`;
+            if (cleanMsg === '1') {
+                let menu = `✂️ *Select a Service*\n\n`;
+                services.forEach((s, i) => menu += `*${i + 1}.* ${s.name} - R${s.price.toFixed(2)}\n`);
+                menu += `\nReply with the number of your choice (or *0* to cancel).`;
 
-            // Step forward, keep existing data intact
-            await prisma.botSession.update({
-                where: { phone: phone },
-                data: { step: 'BOOKING_SERVICE', data: data }
-            });
-
-            await sendWhatsApp(phone, menu);
+                // Explicitly pass data forward
+                await prisma.botSession.update({
+                    where: { phone: phone },
+                    data: { step: 'BOOKING_SERVICE', data: data }
+                });
+                await sendWhatsApp(phone, menu);
+            } else {
+                let serviceList = `📋 *${data.orgName} - Prices*\n\n`;
+                services.forEach(s => serviceList += `• ${s.name}: R${s.price.toFixed(2)}\n`);
+                await sendWhatsApp(phone, serviceList + `\nReply *1* to Book or *0* to Exit.`);
+            }
             return true;
         } 
         
-        if (cleanMsg === '2') {
-            const services = await prisma.product.findMany({ 
-                where: { churchId: parseInt(data.orgId), isActive: true },
-                orderBy: { name: 'asc' }
-            });
-            
-            if (services.length === 0) {
-                await sendWhatsApp(phone, `We are currently updating our price list. Please check back later!\n\nReply *0* to go back.`);
-                return true;
-            }
-
-            let serviceList = `📋 *${data.orgName} - Prices*\n\n`;
-            services.forEach(s => serviceList += `• ${s.name}: R${s.price.toFixed(2)}\n`);
-            await sendWhatsApp(phone, serviceList + `\nReply *1* to Book or *0* to Exit.`);
-            return true;
-        }
-
         if (cleanMsg === '0') {
-             await prisma.botSession.delete({ where: { phone } });
+             await prisma.botSession.deleteMany({ where: { phone } });
              await sendWhatsApp(phone, `You have exited ${data.orgName}.\n\nReply *Hi* to return to the main platform menu.`);
              return true;
         }
@@ -118,14 +115,14 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
     // ==========================================
     if (session.step === 'BOOKING_SERVICE') {
         if (cleanMsg === '0') {
-            await prisma.botSession.delete({ where: { phone } });
+            await prisma.botSession.deleteMany({ where: { phone } });
             await sendWhatsApp(phone, "Booking cancelled. Reply *Hi* to start over.");
             return true;
         }
 
         const index = parseInt(cleanMsg) - 1;
         const services = await prisma.product.findMany({
-            where: { churchId: parseInt(data.orgId), isActive: true },
+            where: { churchId: orgId, isActive: true },
             orderBy: { name: 'asc' }
         });
 
@@ -136,8 +133,9 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
 
         const selectedService = services[index];
 
-        const updatedData = {
-            orgId: data.orgId,
+        // 🚨 Write a clean, new object to data so Prisma JSON doesn't mutate weirdly
+        const nextData = {
+            orgId: orgId,
             orgName: data.orgName,
             serviceId: selectedService.id,
             serviceName: selectedService.name,
@@ -146,7 +144,7 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
 
         await prisma.botSession.update({
             where: { phone: phone },
-            data: { step: 'BOOKING_DATE', data: updatedData }
+            data: { step: 'BOOKING_DATE', data: nextData }
         });
 
         await sendWhatsApp(phone, `Great! You selected *${selectedService.name}* (R${selectedService.price.toFixed(2)}).\n\n📅 What date and time would you like to come in?\n_(e.g., "Tomorrow at 2pm" or "Friday 10am")_`);
@@ -158,8 +156,16 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
     // ==========================================
     if (session.step === 'BOOKING_DATE') {
         if (cleanMsg === '0') {
-            await prisma.botSession.delete({ where: { phone } });
+            await prisma.botSession.deleteMany({ where: { phone } });
             await sendWhatsApp(phone, "Booking cancelled. Reply *Hi* to start over.");
+            return true;
+        }
+
+        // Safety Net
+        const serviceId = parseInt(data.serviceId);
+        if (isNaN(serviceId)) {
+            await prisma.botSession.deleteMany({ where: { phone } });
+            await sendWhatsApp(phone, "⚠️ Booking session expired. Please reply with the salon name to start over.");
             return true;
         }
 
@@ -170,12 +176,12 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
             });
         }
 
-        // 🚀 THE FIX: Force parseInt on IDs to guarantee Prisma never chokes on strings or undefined
+        // Force parseInt on IDs to guarantee Prisma never chokes
         await prisma.appointment.create({
             data: {
-                churchId: parseInt(data.orgId),
+                churchId: orgId,
                 memberId: parseInt(member.id),
-                productId: parseInt(data.serviceId),
+                productId: serviceId,
                 bookingDate: new Date(),
                 status: 'CONFIRMED', 
                 depositPaid: false,
@@ -186,7 +192,7 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
         const confirmation = `✅ *Booking Confirmed!*\n\nWe've locked in your *${data.serviceName}* on *${cleanMsg}*.\n\n📍 *${data.orgName}*\n💰 Payment of *R${data.price.toFixed(2)}* can be made in-store after your appointment.\n\nSee you soon! ✂️`;
         
         await sendWhatsApp(phone, confirmation);
-        await prisma.botSession.delete({ where: { phone } });
+        await prisma.botSession.deleteMany({ where: { phone } });
         return true;
     }
 
