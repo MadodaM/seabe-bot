@@ -5,15 +5,15 @@ const prisma = new PrismaClient();
 async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp) {
     const cleanMsg = incomingMsg.trim();
     
-    // 🚨 BULLETPROOF MEMORY PARSING: Force it into a clean object
+    // 🚨 CLEAN PARSING: Handle Prisma's native JSON object safely
     let data = {};
     if (session && session.data) {
-        try {
-            // If Prisma handed us a string, parse it. If it handed us an object, stringify and parse to clone it cleanly.
-            data = typeof session.data === 'string' ? JSON.parse(session.data) : JSON.parse(JSON.stringify(session.data));
-        } catch(e) {
-            console.error("Memory Parse Error:", e);
-            data = {};
+        // If it got accidentally stringified by previous tests, parse it. Otherwise, use it directly.
+        data = typeof session.data === 'string' ? JSON.parse(session.data) : session.data;
+        
+        // Catch double-stringified accidents from old tests
+        if (typeof data === 'string') {
+            try { data = JSON.parse(data); } catch(e) {}
         }
     }
 
@@ -44,13 +44,16 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
         });
 
         if (salon) {
-            const initialData = { orgId: salon.id, orgName: salon.name };
+            // STRICT PRIMITIVES ONLY: Guaranteed to save perfectly in Prisma
+            const initialData = { 
+                orgId: Number(salon.id), 
+                orgName: String(salon.name) 
+            };
             
-            // 🚨 STRICT SERIALIZATION: Force JSON.stringify to bypass Prisma's merging bugs
             await prisma.botSession.upsert({
                 where: { phone: phone },
-                update: { mode: 'GROOMING', step: 'MAIN_MENU', data: JSON.stringify(initialData) },
-                create: { phone: phone, mode: 'GROOMING', step: 'MAIN_MENU', data: JSON.stringify(initialData) }
+                update: { mode: 'GROOMING', step: 'MAIN_MENU', data: initialData },
+                create: { phone: phone, mode: 'GROOMING', step: 'MAIN_MENU', data: initialData }
             });
 
             const menu = `✂️ *Welcome to ${salon.name}!*\n\nReply with a number:\n*1.* Book an Appointment\n*2.* View Services & Prices\n*0.* Exit`;
@@ -60,13 +63,13 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
         return false; 
     }
 
-    // 🚨 SAFETY NET: If memory is corrupted, gracefully reset.
-    const orgId = parseInt(data.orgId);
-    if (isNaN(orgId)) {
+    // 🚨 SAFETY NET: If the database wiped the memory, stop gracefully.
+    if (!data || !data.orgId) {
         await prisma.botSession.deleteMany({ where: { phone: phone } });
-        await sendWhatsApp(phone, "⚠️ Session memory error. Please reply with the salon name (e.g. 'Wandile Hair Game') to restart.");
+        await sendWhatsApp(phone, "⚠️ Session expired. Please reply with the salon name (e.g. 'Wandile Hair Game') to restart.");
         return true;
     }
+    const orgId = parseInt(data.orgId);
 
     // ==========================================
     // 2. THE FLOW: Booking & Menus
@@ -86,18 +89,20 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
 
             if (cleanMsg === '1') {
                 let menu = `✂️ *Select a Service*\n\n`;
-                services.forEach((s, i) => menu += `*${i + 1}.* ${s.name} - R${s.price.toFixed(2)}\n`);
+                services.forEach((s, i) => menu += `*${i + 1}.* ${s.name} - R${Number(s.price).toFixed(2)}\n`);
                 menu += `\nReply with the number of your choice (or *0* to cancel).`;
 
-                // 🚨 STRICT SERIALIZATION
+                // Keep existing pure memory intact
+                const currentData = { orgId: data.orgId, orgName: data.orgName };
+
                 await prisma.botSession.update({
                     where: { phone: phone },
-                    data: { step: 'BOOKING_SERVICE', data: JSON.stringify(data) }
+                    data: { step: 'BOOKING_SERVICE', data: currentData }
                 });
                 await sendWhatsApp(phone, menu);
             } else {
                 let serviceList = `📋 *${data.orgName} - Prices*\n\n`;
-                services.forEach(s => serviceList += `• ${s.name}: R${s.price.toFixed(2)}\n`);
+                services.forEach(s => serviceList += `• ${s.name}: R${Number(s.price).toFixed(2)}\n`);
                 await sendWhatsApp(phone, serviceList + `\nReply *1* to Book or *0* to Exit.`);
             }
             return true;
@@ -136,21 +141,21 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
 
         const selectedService = services[index];
 
+        // 🚨 Build a fresh, clean primitive object so Prisma doesn't choke
         const nextData = {
-            orgId: orgId,
-            orgName: data.orgName,
-            serviceId: selectedService.id,
-            serviceName: selectedService.name,
+            orgId: Number(data.orgId),
+            orgName: String(data.orgName),
+            serviceId: Number(selectedService.id),
+            serviceName: String(selectedService.name),
             price: Number(selectedService.price)
         };
 
-        // 🚨 STRICT SERIALIZATION
         await prisma.botSession.update({
             where: { phone: phone },
-            data: { step: 'BOOKING_DATE', data: JSON.stringify(nextData) }
+            data: { step: 'BOOKING_DATE', data: nextData }
         });
 
-        await sendWhatsApp(phone, `Great! You selected *${selectedService.name}* (R${selectedService.price.toFixed(2)}).\n\n📅 What date and time would you like to come in?\n_(e.g., "Tomorrow at 2pm" or "Friday 10am")_`);
+        await sendWhatsApp(phone, `Great! You selected *${selectedService.name}* (R${Number(selectedService.price).toFixed(2)}).\n\n📅 What date and time would you like to come in?\n_(e.g., "Tomorrow at 2pm" or "Friday 10am")_`);
         return true;
     }
 
@@ -181,7 +186,7 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
         await prisma.appointment.create({
             data: {
                 churchId: orgId,
-                memberId: parseInt(member.id),
+                memberId: Number(member.id),
                 productId: serviceId,
                 bookingDate: new Date(),
                 status: 'CONFIRMED', 
@@ -190,7 +195,7 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
             }
         });
 
-        const confirmation = `✅ *Booking Confirmed!*\n\nWe've locked in your *${data.serviceName}* on *${cleanMsg}*.\n\n📍 *${data.orgName}*\n💰 Payment of *R${data.price.toFixed(2)}* can be made in-store after your appointment.\n\nSee you soon! ✂️`;
+        const confirmation = `✅ *Booking Confirmed!*\n\nWe've locked in your *${data.serviceName}* on *${cleanMsg}*.\n\n📍 *${data.orgName}*\n💰 Payment of *R${Number(data.price).toFixed(2)}* can be made in-store after your appointment.\n\nSee you soon! ✂️`;
         
         await sendWhatsApp(phone, confirmation);
         await prisma.botSession.deleteMany({ where: { phone } });
