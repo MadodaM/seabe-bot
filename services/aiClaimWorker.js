@@ -3,9 +3,9 @@
 // ==========================================
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const cloudinary = require('cloudinary').v2;
-const { PrismaClient } = require('@prisma/client');
 const prisma = require('./prisma-client'); 
 const axios = require('axios');
+const fs = require('fs');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -25,7 +25,7 @@ const sendWhatsApp = async (to, body) => {
     if (!twilioClient) return;
     
     // 🛡️ Bulletproof phone number cleaner for Twilio
-    let cleanTo = to.replace(/\D/g, ''); // Strip spaces and dashes
+    let cleanTo = to.replace(/\D/g, '');
     if (cleanTo.startsWith('0')) cleanTo = '27' + cleanTo.substring(1);
     if (!cleanTo.startsWith('+')) cleanTo = '+' + cleanTo;
 
@@ -98,13 +98,19 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
         };
 
         const result = await model.generateContent([prompt, imagePart]);
-        const aiData = JSON.parse(result.response.text());
+        
+        // Safety wrapper for JSON parsing
+        let aiData;
+        try {
+            aiData = JSON.parse(result.response.text());
+        } catch(e) {
+            throw new Error("AI returned invalid JSON format.");
+        }
 
         let status = 'PENDING_REVIEW';
         let adminNotes = `✅ AI Scan Complete. Fraud Score: ${aiData.fraudScore}/100.`;
 
         // 4️⃣ THE PLATFORM-WIDE DUPLICATE CHECK (The "Recycled Claim" Shield)
-        // We query the ENTIRE database, ignoring churchCode, to see if this ID was claimed anywhere else.
         const duplicateClaims = await prisma.claim.findMany({
             where: { deceasedIdNumber: aiData.deceasedIdNumber }
         });
@@ -116,15 +122,13 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
         }
 
         // 5️⃣ FORENSIC AI TAMPER EVALUATION
-        // Ensure fraudScore is treated as a number in case the LLM tries to return a string
         const parsedFraudScore = Number(aiData.fraudScore);
         if (status !== 'FLAGGED_FRAUD_DUPLICATE' && parsedFraudScore > 60) {
             status = 'FLAGGED_FRAUD_TAMPERING';
             adminNotes = `🚨 AI TAMPER WARNING: High fraud probability (${parsedFraudScore}/100). Indicators: ${aiData.fraudIndicators.join(', ')}`;
         }
 
-       // 6️⃣ POLICY WAITING PERIOD VALIDATION
-        // 🚀 FIX: Changed societyCode to churchCode to match your schema
+        // 6️⃣ POLICY WAITING PERIOD VALIDATION
         const member = await prisma.member.findFirst({
             where: { idNumber: aiData.deceasedIdNumber, churchCode: orgCode }
         });
@@ -144,7 +148,6 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
         }
 
         // 7️⃣ PERSIST CLAIM TO DATABASE
-        // 🚀 FIX: Changed findUnique to findFirst because phone is no longer unique
         const claimant = await prisma.member.findFirst({ 
             where: { phone: userPhone, churchCode: orgCode },
             orderBy: { id: 'desc' }
@@ -152,13 +155,12 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
         
         if (!claimant) throw new Error("Claimant not found in database.");
 
-        const benName = `${claimant.firstName} ${claimant.lastName}`;
+        const benName = `${claimant.firstName} ${claimant.lastName || ''}`.trim();
 
-        // 🚀 FIX: Swapped memberPhone out for memberId
         await prisma.claim.create({
             data: {
                 churchCode: orgCode, 
-                memberId: claimant.id, // <-- The new Multi-Tenant relational link!
+                memberId: claimant.id, 
                 deceasedIdNumber: aiData.deceasedIdNumber, 
                 dateOfDeath: new Date(aiData.dateOfDeath),
                 causeOfDeath: aiData.causeOfDeath,
@@ -173,7 +175,6 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
 
         // 8️⃣ SMART USER NOTIFICATION (Stealth Messaging)
         if (status.includes('FRAUD')) {
-            // We give them a generic message so they don't know they've been caught
             await sendWhatsApp(userPhone, `🔍 *Claim Under Review*\n\nYour document for ID ending in *${aiData.deceasedIdNumber.slice(-4)}* has been received. This claim requires manual validation by our compliance team. We will contact you shortly.`);
         } else if (status === 'UNRECOGNIZED_ID') {
             await sendWhatsApp(userPhone, `⚠️ *Claim Escalated*\n\nWe were unable to verify your policy or ID number. We have escalated the request.`);
@@ -191,16 +192,17 @@ async function processTwilioClaim(userPhone, twilioImageUrl, orgCode) {
 // ✨ ADMIN DASHBOARD: DIRECT FILE OCR
 // ==========================================
 async function analyzeAdminDocument(filePath, mimeType) {
-    const fs = require('fs');
+    let uploadResult;
+    
     try {
         console.log(`🚀 AI WORKER: Analyzing Admin Upload...`);
         const buffer = fs.readFileSync(filePath);
 
-        // 1️⃣ CLOUDINARY VAULT (With Bulletproof JIT Injection)
-        const uploadResult = await new Promise((resolve, reject) => {
+        // 1️⃣ CLOUDINARY VAULT
+        uploadResult = await new Promise((resolve, reject) => {
             const stream = cloudinary.uploader.upload_stream(
                 { 
-                    folder: 'seabe_admin_claims', // 🛠️ Correct folder for admin uploads
+                    folder: 'seabe_admin_claims', 
                     resource_type: 'auto',
                     cloud_name: process.env.CLOUDINARY_NAME || process.env.CLOUDINARY_CLOUD_NAME,
                     api_key: process.env.CLOUDINARY_KEY || process.env.CLOUDINARY_API_KEY,
@@ -238,14 +240,16 @@ async function analyzeAdminDocument(filePath, mimeType) {
         const result = await model.generateContent([prompt, imagePart]);
         const aiData = JSON.parse(result.response.text());
 
-        // Clean up the temp file
-        fs.unlinkSync(filePath);
-
         return { extractedData: aiData, vaultUrl: uploadResult.secure_url };
 
     } catch (error) {
         console.error("❌ Admin OCR Error:", error.message);
         throw error;
+    } finally {
+        // 🚨 CRITICAL FIX: Ensure file is always deleted, even if Gemini crashes
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
     }
 }
 

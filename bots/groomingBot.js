@@ -160,7 +160,7 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
         return true;
     }
 
-    // ==========================================
+// ==========================================
     // STEP: BOOKING_DATE -> FINAL_CONFIRMATION
     // ==========================================
     if (step === 'BOOKING_DATE') {
@@ -200,17 +200,35 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
             }
         });
 
-        const confirmation = `✅ *Booking Confirmed!*\n\nWe've locked in your *${data.serviceName || 'Service'}* on *${cleanMsg}*.\n\n📍 *${data.orgName || 'Salon'}*\n💰 Payment of *R${price.toFixed(2)}* can be made in-store after your appointment.\n\nSee you soon! ✂️`;
+        // 🔍 Check for saved Seabe ID cards (Get the most recent one)
+        const savedCards = await prisma.paymentMethod.findFirst({ 
+            where: { memberId: member.id },
+            orderBy: { createdAt: 'desc' }
+        });
+    
+        if (savedCards) {
+            // 🚨 We MUST update the session, NOT delete it, so the bot remembers them for the next step!
+            // Remember we use the String-Based state machine for Grooming!
+            const newStep = `GROOMING_1CLICK_PAY|${orgId}|${serviceId}|${price}`;
+            
+            await prisma.botSession.update({
+                where: { phone: phone },
+                data: { step: newStep }
+            });
+            if (session) { session.step = newStep; }
+
+            await sendWhatsApp(phone, `✅ *Booking Held!*\n\nWould you like to prepay the *R${price.toFixed(2)}* using your saved *${savedCards.cardBrand} ending in ${savedCards.last4}* so you can just walk in and out?\n\n*1️⃣ Yes, Prepay now*\n*2️⃣ No, I'll pay in-store*`);
+        } else {
+            // 🛑 Standard confirmation AND we delete the session because the booking flow is complete.
+            const confirmation = `✅ *Booking Confirmed!*\n\nWe've locked in your *${data.serviceName || 'Service'}* on *${cleanMsg}*.\n\n📍 *${data.orgName || 'Salon'}*\n💰 Payment of *R${price.toFixed(2)}* can be made in-store after your appointment.\n\nSee you soon! ✂️`;
+            await sendWhatsApp(phone, confirmation);
+            
+            // Clean up session securely
+            await prisma.botSession.deleteMany({ where: { phone } });
+            if (session) { session.mode = null; session.step = null; session.data = null; }
+        }
         
-        await sendWhatsApp(phone, confirmation);
-        
-        // Clean up session
-        await prisma.botSession.deleteMany({ where: { phone } });
-        if (session) { session.mode = null; session.step = null; session.data = null; }
         return true;
     }
-
-    return true; 
-}
 
 module.exports = { processGroomingMessage };

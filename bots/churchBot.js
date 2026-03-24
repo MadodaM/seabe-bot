@@ -217,38 +217,52 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
         }
 
         // ====================================================
-        // 3. PAYMENT PROCESSING (User Input)
+        // 3. PAYMENT PROCESSING (User Input -> Trigger Seabe ID)
         // ====================================================
         else if (session.step === 'CHURCH_PAY') {
-            let amount = incomingMsg.replace(/\D/g,''); 
-            let type = ''; 
-            
-            if (session.selectedEvent && session.selectedEvent.isDonation) {
-                type = `PROJECT-${session.selectedEvent.id}`;
+            let amount = parseFloat(incomingMsg.replace(/\D/g,'')); 
+            if (isNaN(amount) || amount < 10) {
+                reply = "⚠️ Please enter a valid amount (e.g. 100).";
+                return sendWhatsApp(cleanPhone, reply);
             }
+            
+            let type = ''; 
+            if (session.selectedEvent && session.selectedEvent.isDonation) type = `PROJECT-${session.selectedEvent.id}`;
             else if (session.choice === '1') type = (session.orgType === 'NON_PROFIT') ? 'DONATION' : 'OFFERING';
             else if (session.choice === '2') type = 'TITHE';
             else if (session.choice === '4') type = 'RECURRING';
-            else if (session.choice === 'EVENT') type = `TICKET-${session.selectedEvent.id}`;
-
-            const ref = `${session.orgCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
-
-            // For dynamic user input, we take the amount as is (no added fees typically for donations)
-            // We add '', church.code, and session.txType as the 5th, 6th, and 7th arguments
-			const link = await gateway.createPaymentLink(amount, ref, cleanPhone, session.orgName, '', session.churchCode, session.txType);
             
-            if (link) {
-                delete session.selectedEvent;
-                reply = `Tap to securely transact R${amount} to *${session.orgName}* via Seabe Pay:\n👉 ${link}`;
-                             
+            // Save state for 1-Click Execution
+            session.tempPaymentAmount = amount;
+            session.tempPaymentType = type;
+
+            // 🔍 SEABE ID CHECK
+            const savedCards = await prisma.paymentMethod.findMany({
+                where: { memberId: member.id }, orderBy: { createdAt: 'desc' }
+            });
+
+            if (savedCards.length > 0) {
+                const card = savedCards[0];
+                session.step = 'CHURCH_1CLICK_PAY';
+                session.savedCardToken = card.token;
+                reply = `💳 *Secure 1-Click Giving*\n\nAmount: *R${amount.toFixed(2)}*\n\nWould you like to give using your saved *${card.cardBrand} ending in ${card.last4}*?\n\n*1️⃣ Yes, charge my card now*\n*2️⃣ No, send me a payment link*\n\nReply 1 or 2.`;
             } else {
-                reply = "⚠️ Payment link error. Please try again later.";
+                // Standard Link Generation
+                const ref = `${session.orgCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
+                const link = await gateway.createPaymentLink(amount, ref, cleanPhone, session.orgName, '', session.churchCode, type);
+                
+                if (link) {
+                    delete session.selectedEvent;
+                    reply = `Tap to securely transact R${amount.toFixed(2)} to *${session.orgName}* via Seabe Pay:\n👉 ${link}\n\nReply *Menu* to return to the dashboard.`;                 
+                } else {
+                    reply = "⚠️ Payment link error. Please try again later.";
+                }
+                session.step = 'CHURCH_MENU';
             }
-            session.step = 'CHURCH_MENU';
         }
 
         // ====================================================
-        // 4. EVENT & PROJECT SELECTION (With Pricing Engine)
+        // 4. EVENT & PROJECT SELECTION (With Pricing & Seabe ID)
         // ====================================================
         else if (session.step === 'EVENT_SELECT') {
             const index = parseInt(incomingMsg) - 1;
@@ -263,40 +277,93 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
                     session.choice = '1'; 
                     reply = `🏗️ *${selected.name}*\n\nHow much would you like to contribute?`;
                 } else {
-                    session.choice = 'EVENT'; 
-                    
-                    // 🚀 DYNAMIC PRICING IMPLEMENTATION
-                    // Calculates: Ticket Price + Any Platform Fees defined in DB
+                    // Ticket Purchase
                     const pricing = await calculateTransaction(selected.price, 'STANDARD', 'CAPITEC');
+                    const totalAmount = pricing.totalChargedToUser;
+                    const type = `TICKET-${selected.id}`;
                     
-                    const ref = `${session.orgCode}-EVENT-${selected.id}-${Date.now().toString().slice(-5)}`;
-                    
-                    // Generate Link with TOTAL Amount
-                    const link = await gateway.createPaymentLink(pricing.totalChargedToUser, ref, cleanPhone, session.orgName);
-                    
-                    await prisma.transaction.create({ 
-                        data: { 
-                            churchCode: session.orgCode, 
-                            memberId: member.id, 
-                            phone: cleanPhone, 
-                            type: `TICKET-${selected.id}`, 
-                            amount: pricing.totalChargedToUser, // Save total amount
-                            reference: ref, 
-                            status: 'PENDING', 
-                            date: new Date() 
-                        } 
+                    session.tempPaymentAmount = totalAmount;
+                    session.tempPaymentType = type;
+
+                    // 🔍 SEABE ID CHECK
+                    const savedCards = await prisma.paymentMethod.findMany({
+                        where: { memberId: member.id }, orderBy: { createdAt: 'desc' }
                     });
 
-                    reply = `Tap to buy a ticket for *${selected.name}* via Netcash:\n` +
-                            `Ticket: R${pricing.baseAmount.toFixed(2)}\n` +
-                            (pricing.totalFees > 0 ? `Service Fee: R${pricing.totalFees.toFixed(2)}\n` : '') +
-                            `*Total: R${pricing.totalChargedToUser.toFixed(2)}*\n` +
-                            `👉 ${link}`;
-                    
-                    session.step = 'CHURCH_MENU';
+                    if (savedCards.length > 0) {
+                        const card = savedCards[0];
+                        session.step = 'CHURCH_1CLICK_PAY';
+                        session.savedCardToken = card.token;
+                        reply = `🎟️ *${selected.name}*\n\nTicket: R${pricing.baseAmount.toFixed(2)}\nService Fee: R${pricing.totalFees.toFixed(2)}\n*Total Due: R${totalAmount.toFixed(2)}*\n\nWould you like to pay using your saved *${card.cardBrand} ending in ${card.last4}*?\n\n*1️⃣ Yes, charge my card now*\n*2️⃣ No, send me a payment link*`;
+                    } else {
+                        // Standard Link Generation
+                        const ref = `${session.orgCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
+                        const link = await gateway.createPaymentLink(totalAmount, ref, cleanPhone, session.orgName, '', session.churchCode, type);
+                        
+                        await prisma.transaction.create({ 
+                            data: { 
+                                churchCode: session.orgCode, memberId: member.id, phone: cleanPhone, type: type, 
+                                amount: totalAmount, reference: ref, status: 'PENDING', date: new Date() 
+                            } 
+                        });
+
+                        reply = `Tap to buy a ticket for *${selected.name}* via Netcash:\n` +
+                                `Ticket: R${pricing.baseAmount.toFixed(2)}\n` +
+                                (pricing.totalFees > 0 ? `Service Fee: R${pricing.totalFees.toFixed(2)}\n` : '') +
+                                `*Total: R${totalAmount.toFixed(2)}*\n👉 ${link}\n\nReply *Menu* to return to the dashboard.`;
+                        
+                        session.step = 'CHURCH_MENU';
+                    }
                 }
             } else {
                 reply = "Invalid selection.";
+            }
+        }
+
+        // ====================================================
+        // ⚡ 4.5 SEABE ID: 1-CLICK CHECKOUT EXECUTION
+        // ====================================================
+        else if (session.step === 'CHURCH_1CLICK_PAY') {
+            const amount = session.tempPaymentAmount;
+            const type = session.tempPaymentType;
+
+            if (incomingMsg === '1') {
+                await sendWhatsApp(cleanPhone, "🔄 *Processing Transaction...*\nSecurely communicating with your bank. Please wait.");
+
+                const ref = `${session.orgCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
+                
+                // Trigger the Server-to-Server Token Charge
+                const chargeResult = await gateway.chargeSavedToken(session.savedCardToken, amount, ref);
+
+                if (chargeResult.success) {
+                    await prisma.transaction.create({
+                        data: {
+                            amount: amount, type: type, status: 'SUCCESS', reference: ref, method: 'SEABE_ID_TOKEN',
+                            description: `1-Click Payment (${type})`, phone: cleanPhone, date: new Date(), church: { connect: { id: member.churchId } }
+                        }
+                    });
+                    delete session.selectedEvent;
+                    reply = `✅ *Payment Successful!*\n\nThank you for your generosity, ${member.firstName}. Your transaction of *R${amount.toFixed(2)}* was successfully processed.\n\nReply *Menu* to return to the dashboard.`;
+                } else {
+                    reply = `⚠️ *Payment Failed*\n\nYour bank declined the transaction. Please reply *2* to try again with a secure payment link.`;
+                    return sendWhatsApp(cleanPhone, reply); // Leave them in CHURCH_1CLICK_PAY so they can reply '2'
+                }
+                session.step = 'CHURCH_MENU';
+            }
+            else if (incomingMsg === '2') {
+                const ref = `${session.orgCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
+                const link = await gateway.createPaymentLink(amount, ref, cleanPhone, session.orgName, '', session.churchCode, type);
+
+                if (link) {
+                    delete session.selectedEvent;
+                    reply = `💳 *Alternative Payment*\n\n👉 Transact securely here:\n${link}\n\nReply *Menu* to return to the dashboard.`;
+                } else {
+                    reply = "⚠️ Payment link error. Please try again later.";
+                }
+                session.step = 'CHURCH_MENU';
+            }
+            else {
+                reply = "⚠️ Invalid option. Please reply *1* to use your saved card, or *2* to use a payment link.";
             }
         }
 
