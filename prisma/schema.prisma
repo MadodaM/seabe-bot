@@ -29,16 +29,16 @@ model Member {
   proofOfAddressUrl String? // Stores encrypted Cloudinary URL
   isIdVerified      Boolean   @default(false)
   mandateStatus     String?
-  
-  // 🛡️ KYC Pipeline Tracker
-  kycStatus         String    @default("UNVERIFIED") // UNVERIFIED, PENDING, APPROVED, REJECTED
-  rejectionReason   String?
-  verifiedAt        DateTime?
-  consecutiveFailures Int @default(0) // 🛡️ Tracks Clause 8.2 (2 Strikes)
 
-// 🚀 NEW: The specific day of the month they want to be billed (1-31)
-  collectionDay   Int       @default(1)
-  
+  // 🛡️ KYC Pipeline Tracker
+  kycStatus           String    @default("UNVERIFIED") // UNVERIFIED, PENDING, APPROVED, REJECTED
+  rejectionReason     String?
+  verifiedAt          DateTime?
+  consecutiveFailures Int       @default(0) // 🛡️ Tracks Clause 8.2 (2 Strikes)
+
+  // 🚀 NEW: The specific day of the month they want to be billed (1-31)
+  collectionDay Int @default(1)
+
   // Link 1: Church (Optional)
   churchCode String?
   church     Church? @relation("ChurchMembers", fields: [churchCode], references: [code])
@@ -46,7 +46,7 @@ model Member {
   // Link 2: Burial Society (Optional)
   societyCode String?
   society     Church? @relation("SocietyMembers", fields: [societyCode], references: [code])
-  
+
   // 💰 NEW: Link 3: Stokvel Savings Club (Optional)
   stokvelCode String?
   stokvel     Church? @relation("StokvelMembers", fields: [stokvelCode], references: [code])
@@ -56,13 +56,13 @@ model Member {
   policyNumber String?
   joinedAt     DateTime @default(now())
 
-  dependents   Dependent[]
-  transactions Transaction[]
-  claims       Claim[]
-  collections  Collection[]
-  riskFlags    RiskFlag[]
-  enrollments  Enrollment[]
-  appointments Appointment[]
+  dependents     Dependent[]
+  transactions   Transaction[]
+  claims         Claim[]
+  collections    Collection[]
+  riskFlags      RiskFlag[]
+  enrollments    Enrollment[]
+  appointments   Appointment[]
   paymentMethods PaymentMethod[]
 }
 
@@ -111,26 +111,24 @@ model Church {
   otpExpires    DateTime?
   createdAt     DateTime  @default(now())
   tosAcceptedAt DateTime? // 👈 Add this so web.js can save the Terms agreement
-  
+
   // Compliance Tracking
-  agencyAccepted    Boolean  @default(false)
-  acceptedAt        DateTime?
-  acceptedVersion   String?  // e.g., "v1.0-SARB-DIR1-2007"
-  acceptedByIp      String?  // For audit log forensic proof
-  
+  agencyAccepted  Boolean   @default(false)
+  acceptedAt      DateTime?
+  acceptedVersion String? // e.g., "v1.0-SARB-DIR1-2007"
+  acceptedByIp    String? // For audit log forensic proof
+
   // --- COMPLIANCE ARCHIVE FIELDS ---
   deletedAt       DateTime? // If populated, the record is "soft deleted"
-  archived        Boolean  @default(false)
+  archived        Boolean   @default(false)
   retentionExpiry DateTime? // Exactly 5 years from createdAt
-  
 
   // Relations
-  admins  Admin[]
-  courses Course[]
-  bankDetail    BankDetail?
-  products       Product[]
-  appointments   Appointment[]
-  
+  admins       Admin[]
+  courses      Course[]
+  bankDetail   BankDetail?
+  products     Product[]
+  appointments Appointment[]
 
   // Member Relations
   churchMembers  Member[] @relation("ChurchMembers")
@@ -163,39 +161,38 @@ enum OrgType {
 
 // --- FINANCES & CONTENT ---
 model Transaction {
-  id              Int      @id @default(autoincrement())
-  churchCode      String
-  church          Church   @relation(fields: [churchCode], references: [code])
-  phone           String   // Keep this for easy Twilio replies
-  memberId        Int?     // Link to the specific member profile
-  member          Member?  @relation(fields: [memberId], references: [id])
-  type            String   // OFFERING, TITHE, PREM, TICKET
-  
+  id         Int     @id @default(autoincrement())
+  churchCode String
+  church     Church  @relation(fields: [churchCode], references: [code])
+  phone      String // Keep this for easy Twilio replies
+  memberId   Int? // Link to the specific member profile
+  member     Member? @relation(fields: [memberId], references: [id])
+  type       String // OFFERING, TITHE, PREM, TICKET
+
   // 💰 THE 4-PILLAR LEDGER (For Segregation & Auditing)
-  amount          Float    // 1. Gross Amount (What the user's card was charged, e.g., R150)
-  netcashFee      Float?   // 2. Gateway Fee (What Netcash deducts, e.g., R2.50)
-  platformFee     Float?   // 3. Seabe Fee (Your revenue, e.g., R5.00)
-  netSettlement   Float?   // 4. Church Payout (What physically lands in their bank, e.g., R142.50)
-  
-  reference       String   @unique
-  status          String   @default("PENDING") // 👈 Default set to uppercase PENDING
-  method          String?  // CARD, EFT, CASH
-  description     String?
-  date            DateTime @default(now())
-  
+  amount        Float // 1. Gross Amount (What the user's card was charged, e.g., R150)
+  netcashFee    Float? // 2. Gateway Fee (What Netcash deducts, e.g., R2.50)
+  platformFee   Float? // 3. Seabe Fee (Your revenue, e.g., R5.00)
+  netSettlement Float? // 4. Church Payout (What physically lands in their bank, e.g., R142.50)
+
+  reference   String   @unique
+  status      String   @default("PENDING") // 👈 Default set to uppercase PENDING
+  method      String? // CARD, EFT, CASH
+  description String?
+  date        DateTime @default(now())
+
   // 💸 PAYOUT RELATION (To track if this money has been settled)
-  payoutId      Int?
-  payoutBatch   PayoutLog? @relation(fields: [payoutId], references: [id])
+  payoutId    Int?
+  payoutBatch PayoutLog? @relation(fields: [payoutId], references: [id])
 
   // 🛡️ COMPLIANCE RELATION (Links to the AML Risk Engine)
-  complianceLog   ComplianceLog?
-  gateway         String?   @default("NETCASH") // "PAYFAST" or "NETCASH"
+  complianceLog ComplianceLog?
+  gateway       String?        @default("NETCASH") // "PAYFAST" or "NETCASH"
 
-// --- ADD THESE 3 LINES FOR SARB COMPLIANCE ---
-  deletedAt       DateTime? 
+  // --- ADD THESE 3 LINES FOR SARB COMPLIANCE ---
+  deletedAt       DateTime?
   archived        Boolean   @default(false)
   retentionExpiry DateTime?
-
 }
 
 model Event {
@@ -408,64 +405,84 @@ model PolicyAddon {
 // ==========================================
 
 model Course {
-  id          Int       @id @default(autoincrement())
+  id          Int     @id @default(autoincrement())
   title       String
   description String?
-  price       Decimal   @default(0.0)
-  status      String    @default("DRAFT") // DRAFT, LIVE, ARCHIVED
-  code        String?   
-  
+  price       Decimal @default(0.0)
+  status      String  @default("DRAFT") // DRAFT, LIVE, ARCHIVED
+  code        String?
+
   // Relations
-  churchId    Int?
-  church      Church?   @relation(fields: [churchId], references: [id])
-  
+  churchId Int?
+  church   Church? @relation(fields: [churchId], references: [id])
+
   modules     Module[]
   enrollments Enrollment[]
-  
-  createdAt   DateTime  @default(now())
+
+  createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 }
 
 model Module {
-  id          Int      @id @default(autoincrement())
-  courseId    Int
-  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  
-  title       String
-  order       Int      @default(1)
-  type        String   @default("TEXT")  // TEXT, PDF, VIDEO, AUDIO
-  
+  id       Int    @id @default(autoincrement())
+  courseId Int
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  title String
+  order Int    @default(1)
+  type  String @default("TEXT") // TEXT, PDF, VIDEO, AUDIO
+
   // 🚀 CONTENT FIELDS (Fixed based on Error Logs)
-  content         String?  // The generic/summary content
-  dailyLessonText String?  // The full detailed lesson text
-  
+  content         String? // The generic/summary content
+  dailyLessonText String? // The full detailed lesson text
+
   // 🚀 QUIZ FIELDS (New)
-  quizQuestion    String?
-  quizAnswer      String?
-  
-  contentUrl      String?  // Cloudinary Link
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  quizQuestion String?
+  quizAnswer   String?
+
+  contentUrl String? // Cloudinary Link
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assessmentLogs AssessmentLog[]
 }
 
 model Enrollment {
-  id        Int      @id @default(autoincrement())
-  
-  memberId  Int
-  member    Member   @relation(fields: [memberId], references: [id])
-  
-  courseId  Int
-  course    Course   @relation(fields: [courseId], references: [id])
-  
-  progress  Int      @default(0) // Last Module Order Sent
-  status    String   @default("ACTIVE") // ACTIVE, COMPLETED, PAUSED
-  
+  id Int @id @default(autoincrement())
+
+  memberId Int
+  member   Member @relation(fields: [memberId], references: [id])
+
+  courseId Int
+  course   Course @relation(fields: [courseId], references: [id])
+
+  progress Int    @default(0) // Last Module Order Sent
+  status   String @default("ACTIVE") // ACTIVE, COMPLETED, PAUSED
+
   // 🚀 STATE MACHINE (New)
-  quizState String   @default("IDLE") // IDLE, AWAITING_ANSWER
-  
+  quizState String @default("IDLE") // IDLE, AWAITING_ANSWER
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  assessmentLogs AssessmentLog[]
+}
+
+// 🆕 Add this NEW model to the bottom of your schema
+model AssessmentLog {
+  id Int @id @default(autoincrement())
+
+  enrollmentId Int
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  moduleId Int
+  module   Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  response  String  @db.Text
+  isCorrect Boolean @default(false)
+
+  createdAt DateTime @default(now())
 }
 
 model BotSession {
@@ -522,7 +539,7 @@ model TransactionLedger {
 // 💰 NEW: Dynamic Pricing Catalog
 model ServicePrice {
   id          Int      @id @default(autoincrement())
-  code        String   @unique  // e.g. "KYC_CHECK", "CLAIM_AI", "SMS_NOTIF"
+  code        String   @unique // e.g. "KYC_CHECK", "CLAIM_AI", "SMS_NOTIF"
   amount      Decimal  @default(0.00)
   description String?
   updatedAt   DateTime @updatedAt
@@ -533,36 +550,36 @@ model ServicePrice {
 // ==========================================
 
 model ComplianceLog {
-  id              String   @id @default(uuid())
-  transactionId   Int      @unique
-  transaction     Transaction @relation(fields: [transactionId], references: [id])
-  riskScore       Float    // 0.0 to 1.0
-  isPepFound      Boolean  @default(false)
-  isSanctionHit   Boolean  @default(false)
-  isCtrTriggered  Boolean  @default(false) // Cash Threshold Report (>R49,999)
-  status          String   // 'CLEARED', 'FLAGGED', 'BLOCKED'
-  adminNotes      String?
-  createdAt       DateTime @default(now())
+  id             String      @id @default(uuid())
+  transactionId  Int         @unique
+  transaction    Transaction @relation(fields: [transactionId], references: [id])
+  riskScore      Float // 0.0 to 1.0
+  isPepFound     Boolean     @default(false)
+  isSanctionHit  Boolean     @default(false)
+  isCtrTriggered Boolean     @default(false) // Cash Threshold Report (>R49,999)
+  status         String // 'CLEARED', 'FLAGGED', 'BLOCKED'
+  adminNotes     String?
+  createdAt      DateTime    @default(now())
 }
 
 // ⚙️ DYNAMIC FEE CONFIGURATION
 model FeeConfiguration {
-  id          Int      @id @default(autoincrement())
-  provider    String   // 'NETCASH', 'OZOW'
-  method      String   // 'CARD', 'EFT', 'CASH'
-  
+  id       Int    @id @default(autoincrement())
+  provider String // 'NETCASH', 'OZOW'
+  method   String // 'CARD', 'EFT', 'CASH'
+
   // Cost Structure (What they charge YOU)
-  baseFee     Float    // Fixed cost (e.g., R2.00)
-  percentFee  Float    // Percentage (e.g., 2.5%)
-  
+  baseFee    Float // Fixed cost (e.g., R2.00)
+  percentFee Float // Percentage (e.g., 2.5%)
+
   // Revenue Structure (What YOU charge the church)
-  seabeFixed  Float    @default(5.00) // Your flat markup
-  seabePercent Float   @default(0.0)  // Your % markup (if applicable)
-  
-  isActive    Boolean  @default(true) // Easy switch to turn off old rates
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
+  seabeFixed   Float @default(5.00) // Your flat markup
+  seabePercent Float @default(0.0) // Your % markup (if applicable)
+
+  isActive  Boolean  @default(true) // Easy switch to turn off old rates
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   // Optional: Link to specific churches if you negotiate custom rates
   // churches Church[] 
 }
@@ -571,33 +588,33 @@ model FeeConfiguration {
 // 💸 PAYOUT & SETTLEMENT LOGGING
 // ==========================================
 model PayoutLog {
-  id          Int      @id @default(autoincrement())
-  churchCode  String   // Which org got paid
-  amount      Float    // The total netSettlement paid out
-  txCount     Int      // How many transactions this covers
-  reference   String   @unique // Generated unique ID (e.g. PAY-AFM-1234)
-  status      String   // 'COMPLETED', 'FAILED'
-  adminId     String   // Who clicked the button
-  createdAt   DateTime @default(now())
+  id         Int      @id @default(autoincrement())
+  churchCode String // Which org got paid
+  amount     Float // The total netSettlement paid out
+  txCount    Int // How many transactions this covers
+  reference  String   @unique // Generated unique ID (e.g. PAY-AFM-1234)
+  status     String // 'COMPLETED', 'FAILED'
+  adminId    String // Who clicked the button
+  createdAt  DateTime @default(now())
 
   // A payout is made up of many transactions
   transactions Transaction[]
 }
 
 model BankDetail {
-  id            Int      @id @default(autoincrement())
-  bankName      String
-  accountName   String
-  accountNumber String
-  branchCode    String
-  accountType   String   @default("CURRENT") // CURRENT or SAVINGS
-  accountstatus Boolean  @default(false)
-  // 🔗 The Link back to the Organization
-  churchId      Int      @unique
-  church        Church   @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id            Int     @id @default(autoincrement())
+  bankName      String
+  accountName   String
+  accountNumber String
+  branchCode    String
+  accountType   String  @default("CURRENT") // CURRENT or SAVINGS
+  accountstatus Boolean @default(false)
+  // 🔗 The Link back to the Organization
+  churchId      Int     @unique
+  church        Church  @relation(fields: [churchId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // ==========================================
@@ -606,43 +623,43 @@ model BankDetail {
 
 // 1. Manage Products/Services (e.g., "Fade", "Braids", "Manicure")
 model Product {
-  id             Int          @id @default(autoincrement())
-  churchId       Int          // Links to the Organization (Salon)
-  church         Church       @relation(fields: [churchId], references: [id])
-  
-  name           String
-  description    String?
-  price          Float
-  durationMins   Int?         // Estimated time (e.g., 45 mins)
-  isActive       Boolean      @default(true)
-  
-  appointments   Appointment[]
-  
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  id       Int    @id @default(autoincrement())
+  churchId Int // Links to the Organization (Salon)
+  church   Church @relation(fields: [churchId], references: [id])
+
+  name         String
+  description  String?
+  price        Float
+  durationMins Int? // Estimated time (e.g., 45 mins)
+  isActive     Boolean @default(true)
+
+  appointments Appointment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // 2. Manage Bookings
 model Appointment {
-  id             Int          @id @default(autoincrement())
-  churchId       Int          // Links to the Organization (Salon)
-  church         Church       @relation(fields: [churchId], references: [id])
-  
-  memberId       Int          // Links to the Customer
-  member         Member       @relation(fields: [memberId], references: [id])
-  
-  productId      Int          // Links to the specific service booked
-  product        Product      @relation(fields: [productId], references: [id])
-  
-  bookingDate    DateTime     // The exact date and time of the appointment
-  status         ApptStatus   @default(PENDING)
-  depositPaid    Boolean      @default(false)
-  finalAmount    Float?       // The total price after adding products
-  addedItems     String?      // e.g., "Beard Oil, Black Dye"
-  notes          String?      // Optional notes from the client or barber
-  
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt			
+  id       Int    @id @default(autoincrement())
+  churchId Int // Links to the Organization (Salon)
+  church   Church @relation(fields: [churchId], references: [id])
+
+  memberId Int // Links to the Customer
+  member   Member @relation(fields: [memberId], references: [id])
+
+  productId Int // Links to the specific service booked
+  product   Product @relation(fields: [productId], references: [id])
+
+  bookingDate DateTime // The exact date and time of the appointment
+  status      ApptStatus @default(PENDING)
+  depositPaid Boolean    @default(false)
+  finalAmount Float? // The total price after adding products
+  addedItems  String? // e.g., "Beard Oil, Black Dye"
+  notes       String? // Optional notes from the client or barber
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // 3. Statuses for the Booking Engine
@@ -658,14 +675,14 @@ enum ApptStatus {
 // 💳 SEABE ID: SAVED PAYMENT METHODS
 // ==========================================
 model PaymentMethod {
-  id          Int      @id @default(autoincrement())
-  memberId    Int
-  member      Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  token       String   @unique // The Netcash secure token
-  cardBrand   String   // e.g., "Visa", "Mastercard"
-  last4       String   // e.g., "1234"
-  expMonth    String?  
-  expYear     String?
-  isDefault   Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  id        Int      @id @default(autoincrement())
+  memberId  Int
+  member    Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  token     String   @unique // The Netcash secure token
+  cardBrand String // e.g., "Visa", "Mastercard"
+  last4     String // e.g., "1234"
+  expMonth  String?
+  expYear   String?
+  isDefault Boolean  @default(true)
+  createdAt DateTime @default(now())
 }
