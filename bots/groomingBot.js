@@ -1,6 +1,7 @@
 // bots/groomingBot.js
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { chargeSavedToken } = require('../services/netcash');
 
 async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp) {
     const cleanMsg = incomingMsg.trim();
@@ -42,7 +43,6 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
         });
 
         if (salon) {
-            // Encode the orgId directly into the step string!
             const newStep = `MAIN_MENU|${salon.id}`;
             const newData = { orgName: salon.name };
             
@@ -65,7 +65,7 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
         return false; 
     }
 
-    // 🚨 FAILSAFE: If orgId is completely missing, gracefully reset.
+    // 🚨 FAILSAFE
     if (isNaN(orgId)) {
         await prisma.botSession.deleteMany({ where: { phone: phone } });
         if (session) { session.mode = null; session.step = null; session.data = null; }
@@ -74,10 +74,9 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
     }
 
     // ==========================================
-    // 2. THE FLOW: Booking & Menus
+    // 2. MAIN MENU
     // ==========================================
     if (step === 'MAIN_MENU') {
-        
         if (cleanMsg === '1' || cleanMsg === '2') {
             const services = await prisma.product.findMany({
                 where: { churchId: orgId, isActive: true },
@@ -95,11 +94,7 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
                 menu += `\nReply with the number of your choice (or *0* to cancel).`;
 
                 const newStep = `BOOKING_SERVICE|${orgId}`;
-                await prisma.botSession.update({
-                    where: { phone: phone },
-                    data: { step: newStep }
-                });
-                
+                await prisma.botSession.update({ where: { phone: phone }, data: { step: newStep } });
                 if (session) { session.step = newStep; }
                 await sendWhatsApp(phone, menu);
             } else {
@@ -122,7 +117,7 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
     }
 
     // ==========================================
-    // STEP: BOOKING_SERVICE -> Select from list
+    // 3. BOOKING_SERVICE -> Select from list
     // ==========================================
     if (step === 'BOOKING_SERVICE') {
         if (cleanMsg === '0') {
@@ -144,8 +139,6 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
         }
 
         const selectedService = services[index];
-
-        // 🚨 Encode EVERYTHING into the step string to bypass JSON entirely
         const newStep = `BOOKING_DATE|${orgId}|${selectedService.id}|${selectedService.price}`;
         const newData = { orgName: data.orgName, serviceName: selectedService.name };
 
@@ -160,8 +153,8 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
         return true;
     }
 
-// ==========================================
-    // STEP: BOOKING_DATE -> FINAL_CONFIRMATION
+    // ==========================================
+    // 4. BOOKING_DATE -> FINAL_CONFIRMATION
     // ==========================================
     if (step === 'BOOKING_DATE') {
         if (cleanMsg === '0') {
@@ -200,35 +193,72 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
             }
         });
 
-        // 🔍 Check for saved Seabe ID cards (Get the most recent one)
-        const savedCards = await prisma.paymentMethod.findFirst({ 
+        // 🔍 SEABE ID: Check for saved cards!
+        const savedCards = await prisma.paymentMethod.findFirst({
             where: { memberId: member.id },
             orderBy: { createdAt: 'desc' }
         });
     
         if (savedCards) {
-            // 🚨 We MUST update the session, NOT delete it, so the bot remembers them for the next step!
-            // Remember we use the String-Based state machine for Grooming!
             const newStep = `GROOMING_1CLICK_PAY|${orgId}|${serviceId}|${price}`;
-            
-            await prisma.botSession.update({
-                where: { phone: phone },
-                data: { step: newStep }
-            });
+            await prisma.botSession.update({ where: { phone: phone }, data: { step: newStep } });
             if (session) { session.step = newStep; }
 
-            await sendWhatsApp(phone, `✅ *Booking Held!*\n\nWould you like to prepay the *R${price.toFixed(2)}* using your saved *${savedCards.cardBrand} ending in ${savedCards.last4}* so you can just walk in and out?\n\n*1️⃣ Yes, Prepay now*\n*2️⃣ No, I'll pay in-store*`);
+            await sendWhatsApp(phone, `✅ *Booking Held!*\n\nWe've reserved your *${data.serviceName}* on *${cleanMsg}*.\n\nWould you like to prepay the *R${price.toFixed(2)}* using your saved *${savedCards.cardBrand} ending in ${savedCards.last4}* so you can just walk in and out?\n\n*1️⃣ Yes, Prepay now*\n*2️⃣ No, I'll pay in-store*`);
         } else {
-            // 🛑 Standard confirmation AND we delete the session because the booking flow is complete.
             const confirmation = `✅ *Booking Confirmed!*\n\nWe've locked in your *${data.serviceName || 'Service'}* on *${cleanMsg}*.\n\n📍 *${data.orgName || 'Salon'}*\n💰 Payment of *R${price.toFixed(2)}* can be made in-store after your appointment.\n\nSee you soon! ✂️`;
             await sendWhatsApp(phone, confirmation);
             
-            // Clean up session securely
+            // Clean up session
             await prisma.botSession.deleteMany({ where: { phone } });
             if (session) { session.mode = null; session.step = null; session.data = null; }
         }
         
         return true;
     }
+
+    // ==========================================
+    // 5. SEABE ID: 1-CLICK CHECKOUT EXECUTION
+    // ==========================================
+    if (step === 'GROOMING_1CLICK_PAY') {
+        const price = parseFloat(priceStr);
+
+        if (cleanMsg === '1') {
+            await sendWhatsApp(phone, "🔄 *Processing Payment...*");
+
+            let member = await prisma.member.findFirst({ where: { phone: phone } });
+            const savedCard = await prisma.paymentMethod.findFirst({
+                where: { memberId: member.id },
+                orderBy: { createdAt: 'desc' }
+            });
+
+            if (savedCard) {
+                const ref = `${orgId}-GROOMING-${phone.slice(-4)}-${Date.now().toString().slice(-4)}`;
+                const chargeResult = await chargeSavedToken(savedCard.token, price, ref);
+
+                if (chargeResult.success) {
+                    await prisma.transaction.create({
+                        data: {
+                            amount: price, type: 'PREPAID_APPOINTMENT', status: 'SUCCESS', reference: ref, method: 'SEABE_ID_TOKEN',
+                            description: 'Prepaid Salon Appointment', phone: phone, date: new Date(), church: { connect: { id: orgId } }
+                        }
+                    });
+                    await sendWhatsApp(phone, `✅ *Payment Successful!*\n\nYour appointment is fully paid. Just walk in, sit down, and relax!\n\nReply *Hi* to return to the main menu.`);
+                } else {
+                    await sendWhatsApp(phone, `⚠️ *Payment Failed.*\n\nYour bank declined the transaction. You can settle the R${price.toFixed(2)} in-store.\n\nReply *Hi* to return to the main menu.`);
+                }
+            }
+        } else {
+            await sendWhatsApp(phone, `✅ *No problem!*\n\nYou can settle the R${price.toFixed(2)} in-store. See you then!\n\nReply *Hi* to return to the main menu.`);
+        }
+
+        // End of flow, clean up session
+        await prisma.botSession.deleteMany({ where: { phone } });
+        if (session) { session.mode = null; session.step = null; session.data = null; }
+        return true;
+    }
+
+    return true; 
+}
 
 module.exports = { processGroomingMessage };
