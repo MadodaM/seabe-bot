@@ -1,5 +1,5 @@
 // routes/webhooks.js
-// VERSION: 4.3 (ITN Validated + Four-Pillar Ledger + FICA Risk + PDF Receipts)
+// VERSION: 4.4 (ITN Validated + Four-Pillar Ledger + FICA Risk + PDF Receipts + Seabe ID Vault)
 // BANK-GRADE SECURITY COMPLIANT (2026)
 const express = require('express');
 const router = express.Router();
@@ -19,7 +19,7 @@ const NETCASH_VALIDATE_URL = "https://paynow.netcash.co.za/site/validate.aspx";
  * 🔗 NETCASH ITN WEBHOOK
  * Handles real-time payment notifications with bank-grade validation.
  */
-router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true }), async (req, res) => {
+router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true }), express.json(), async (req, res) => {
     console.log("🕵️‍♂️ RAW NETCASH PAYLOAD:", req.body);
     // 1. Immediately acknowledge receipt to Netcash to prevent redundant retries
     res.status(200).send(); 
@@ -29,6 +29,11 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
         // 👇 1. Support the new 'Reference' variable
         const reference = payload.Reference || payload.p2 || payload.AccountReference || payload.MandateReference || 'UNKNOWN';
         console.log(`🔒 [WEBHOOK] Processing incoming ITN for Ref: ${reference}`);
+
+        // 💳 SEABE ID: Extract Token Variables
+        const token = payload.Token || payload.NIWSToken || payload.token;
+        const cardType = payload.CardType || payload.cardType;
+        const maskedCard = payload.MaskedCard || payload.maskedCard;
 
         // 👇 2. Smart Validation (Accepts both old and new Netcash formats)
         let isValid = false;
@@ -52,7 +57,7 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
         console.log(`✅ [WEBHOOK] ITN format accepted for Ref: ${reference}`);
 
         // 3. 🔍 FIND THE TRANSACTION IN MASTER LEDGER
-        const tx = await prisma.transaction.findUnique({
+        const tx = await prisma.transaction.findFirst({
             where: { reference: reference },
             include: { member: true, church: true }
         });
@@ -70,7 +75,7 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
 
         // 👇 3. Support the new 'Amount' variable
         const amountPaid = parseFloat(payload.Amount || payload.p4 || tx.amount || 0);
-        const isSuccessful = payload.TransactionAccepted === 'true' || payload.Status === 'Accepted' || payload.Reason === '000';
+        const isSuccessful = payload.TransactionAccepted === 'true' || payload.Status === 'Accepted' || payload.Reason === '000' || payload.TransactionStatus === '1';
         const failureReason = payload.Reason || 'Unknown';
         const reasonCode = payload.ReasonCode || '00';
 
@@ -115,8 +120,15 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
         if (isSuccessful) {
             console.log(`✅ [LEDGER] Payment cleared for ${reference}. Segregating funds...`);
 
+            // 🩹 FIX THE "DEPOSIT" BUG: Extract true type from Reference 
+            let correctType = tx.type;
+            const refParts = reference.split('-');
+            if ((correctType === 'DEPOSIT' || !correctType) && refParts.length > 1) {
+                correctType = refParts[1]; 
+            }
+
             // 💰 STEP 1: CALCULATE THE FOUR-PILLAR LEDGER SPLITS
-            const pricing = await calculateTransaction(amountPaid, 'STANDARD', tx.type || 'SEABE_RELAY', false);
+            const pricing = await calculateTransaction(amountPaid, 'STANDARD', correctType || 'SEABE_RELAY', false);
 
             // 🛡️ STEP 2: RUN FICA PEP & SANCTIONS SCANNER
             const riskData = await screenUserForRisk(
@@ -131,9 +143,10 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
                     where: { id: tx.id },
                     data: { 
                         status: 'SUCCESS',
+                        type: correctType, // 👈 Saved correct type to DB
                         netcashFee: pricing.netcashFee,
                         platformFee: pricing.platformFee,
-                        netSettlement: pricing.netSettlement,
+                        netSettlementAmount: pricing.netSettlement, // 👈 Uses the unified schema naming
                         method: 'NETCASH_ITN_VALIDATED',
                         date: new Date(),
                         amount: amountPaid // Ensures DB perfectly matches the gateway
@@ -154,6 +167,23 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
 
             console.log(`📈 Revenue Tracked: R${pricing.platformFee.toFixed(2)} | Settlement: R${pricing.netSettlement.toFixed(2)}`);
 
+            // 💳 STEP 3.5: SEABE ID VAULTING
+            if (token && tx.memberId) {
+                const existingToken = await prisma.paymentMethod.findUnique({ where: { token: token } });
+                if (!existingToken) {
+                    await prisma.paymentMethod.create({
+                        data: {
+                            memberId: tx.memberId,
+                            token: token,
+                            cardBrand: cardType || 'Card',
+                            last4: maskedCard ? maskedCard.slice(-4) : '****',
+                            isDefault: true
+                        }
+                    });
+                    console.log(`💳 [SEABE ID] Vaulted new ${cardType} for Member #${tx.memberId}`);
+                }
+            }
+
             // 📈 STEP 4: BUSINESS LOGIC ROUTING (Update Specific Modules)
             
             // 1. Revenue Recovery (Debtor Collections)
@@ -166,7 +196,7 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
             }
             
             // 2. Burial Society Premiums 
-            else if (reference.includes('-PREM-')) {
+            else if (reference.includes('-PREM-') || reference.includes('-ONCEOFF-')) {
                  if (tx.memberId) {
                      await prisma.member.update({
                          where: { id: tx.memberId },
@@ -178,38 +208,39 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
                      });
                  }
             }
-			
-			// ==========================================
+            
             // ✂️ 3. MERCHANT APPOINTMENTS (SALONS)
-            // ==========================================
-            else if (reference.startsWith('APPT-')) {
-                const apptId = parseInt(reference.split('-')[1]);
-                try {
-                    const appointment = await prisma.appointment.update({
-                        where: { id: apptId },
-                        data: { depositPaid: true, status: 'CONFIRMED' },
-                        include: { member: true, church: true, product: true }
-                    });
+            else if (reference.startsWith('APPT-') || reference.includes('-GROOMING-')) {
+                // Determine appointment ID either from standard ref (APPT-123) or custom 1-click ref
+                const apptIdStr = reference.split('-')[1];
+                const apptId = parseInt(apptIdStr);
+                
+                if (!isNaN(apptId)) {
+                    try {
+                        const appointment = await prisma.appointment.update({
+                            where: { id: apptId },
+                            data: { depositPaid: true, status: 'CONFIRMED' },
+                            include: { member: true, church: true, product: true }
+                        });
 
-                    // Fire off the automated WhatsApp Confirmation!
-                    if (appointment.member && appointment.member.phone) {
-                        const dateObj = new Date(appointment.bookingDate);
-                        const prettyDate = dateObj.toLocaleDateString('en-ZA', { weekday: 'short', month: 'short', day: 'numeric' });
-                        const prettyTime = dateObj.toLocaleTimeString('en-ZA', { hour: '2-digit', minute:'2-digit' });
+                        if (appointment.member && appointment.member.phone) {
+                            const dateObj = new Date(appointment.bookingDate);
+                            const prettyDate = dateObj.toLocaleDateString('en-ZA', { weekday: 'short', month: 'short', day: 'numeric' });
+                            const prettyTime = dateObj.toLocaleTimeString('en-ZA', { hour: '2-digit', minute:'2-digit' });
 
-                        const confirmMsg = `🎉 *Booking Confirmed!*\n\nHi ${appointment.member.firstName}, your deposit has been successfully received.\n\n*${appointment.church.name}* has locked in your slot for a *${appointment.product.name}* on *${prettyDate} at ${prettyTime}*.\n\nSee you then! ✂️`;
+                            const confirmMsg = `🎉 *Booking Confirmed!*\n\nHi ${appointment.member.firstName}, your payment has been successfully received.\n\n*${appointment.church.name}* has locked in your slot for a *${appointment.product.name}* on *${prettyDate} at ${prettyTime}*.\n\nSee you then! ✂️`;
 
-                        await sendWhatsApp(appointment.member.phone, confirmMsg);
+                            await sendWhatsApp(appointment.member.phone, confirmMsg);
+                        }
+                    } catch (e) {
+                        console.error("❌ Failed to process appointment webhook:", e);
                     }
-                } catch (e) {
-                    console.error("❌ Failed to process appointment webhook:", e);
                 }
             }
 
             // 📄 STEP 5: GENERATE PDF RECEIPT
             let pdfUrl = null;
             try {
-                // Ensure we pass the fully updated transaction with the church details
                 pdfUrl = await generateReceiptPDF(tx, tx.church);
                 console.log(`📄 [PDF] Official Receipt Generated: ${pdfUrl}`);
             } catch (pdfErr) {
@@ -218,12 +249,16 @@ router.post('/api/core/webhooks/payment', express.urlencoded({ extended: true })
 
             // 💬 STEP 6: SEND AUTOMATED RECEIPT
             const orgName = tx.church?.name || "Our Organization";
-            const msg = `✅ *Payment Successful*\n\n` +
-                        `Thank you! We have received your payment of *R${amountPaid.toFixed(2)}* for ${orgName}.\n\n` +
-                        `🧾 Ref: ${reference}\n\n` +
-                        `_Your official receipt is attached below. Reply Menu for dashboard._`;
+            let msg = `✅ *Payment Successful*\n\n` +
+                      `Thank you! We have received your payment of *R${amountPaid.toFixed(2)}* for ${orgName}.\n\n` +
+                      `🧾 Ref: ${reference}\n\n`;
             
-            // Send the WhatsApp! If PDF generation worked, it will attach perfectly.
+            if (token && !reference.includes('-MANDATE-')) {
+                msg += `🔒 _Your ${cardType || 'Card'} ending in ${maskedCard ? maskedCard.slice(-4) : '****'} has been securely saved for faster checkout next time._\n\n`;
+            }
+            
+            msg += `_Your official receipt is attached below. Reply Menu for dashboard._`;
+            
             await sendWhatsApp(tx.phone, msg, pdfUrl);
 
         } else {
