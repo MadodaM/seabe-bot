@@ -26,16 +26,17 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// 🛡️ Upload Config (Updated for AI Claims & CSVs)
+// 🛡️ Upload Config (Updated for LMS Media)
 const upload = multer({ 
     dest: 'uploads/',
-    limits: { fileSize: 5 * 1024 * 1024 },
+    limits: { fileSize: 15 * 1024 * 1024 }, // Increased to 15MB for audio/short video
     fileFilter: (req, file, cb) => {
-        const allowed = ['text/csv', 'image/jpeg', 'image/png', 'application/pdf'];
+        // 🚀 Added audio and video mimetypes!
+        const allowed = ['text/csv', 'image/jpeg', 'image/png', 'application/pdf', 'audio/mpeg', 'audio/ogg', 'video/mp4'];
         if (allowed.includes(file.mimetype) || file.originalname.endsWith('.csv')) {
             cb(null, true);
         } else {
-            cb(new Error('❌ Invalid File Type. CSV, JPG, PNG, or PDF only.'));
+            cb(new Error('❌ Invalid File Type. CSV, JPG, PNG, PDF, MP3, or MP4 only.'));
         }
     }
 });
@@ -990,6 +991,43 @@ module.exports = (app, { prisma }) => {
             // 2. Calculate Top-Level Metrics
             const totalStudents = enrollments.length;
             const completedCourses = enrollments.filter(e => e.status === 'COMPLETED').length;
+			
+			// 🚀 Fetch all Courses and their Modules for the Builder UI
+            const courses = await prisma.course.findMany({
+                where: { churchId: org.id },
+                include: { modules: { orderBy: { order: 'asc' } } }
+            });
+
+            let courseLibraryHtml = '';
+            courses.forEach(course => {
+                courseLibraryHtml += `<h4 style="margin-top:20px; color:#2c3e50; border-bottom:2px solid #eee; padding-bottom:5px;">📖 ${course.title}</h4>
+                <table style="margin-bottom:25px;">
+                    <thead><tr><th>Module</th><th>Content Summary</th><th>Media File</th><th style="text-align:right;">Action</th></tr></thead>
+                    <tbody>`;
+                
+                if (course.modules.length === 0) {
+                    courseLibraryHtml += `<tr><td colspan="4" style="text-align:center; color:#95a5a6;">No modules created for this course yet.</td></tr>`;
+                }
+
+                course.modules.forEach(mod => {
+                    const mediaBadge = mod.contentUrl ? `<a href="${mod.contentUrl}" target="_blank" class="badge" style="background:#27ae60; text-decoration:none;">🔗 View Media</a>` : `<span class="badge" style="background:#95a5a6;">No Media</span>`;
+                    courseLibraryHtml += `
+                        <tr>
+                            <td><strong>Day ${mod.order}</strong></td>
+                            <td>
+                                <strong>${mod.title}</strong><br>
+                                <span style="font-size:11px; color:#7f8c8d;">${mod.quizQuestion ? '🧠 Includes Quiz' : 'No Quiz Attached'}</span>
+                            </td>
+                            <td>${mediaBadge}</td>
+                            <td style="text-align:right;">
+                                <button onclick="openMediaModal(${mod.id}, '${mod.title.replace(/'/g, "\\'")}')" class="btn" style="background:#3498db; padding:6px 12px; font-size:11px; width:auto;">
+                                    📎 Attach Audio/Image
+                                </button>
+                            </td>
+                        </tr>`;
+                });
+                courseLibraryHtml += `</tbody></table>`;
+            });
             
             // Group by Course to see Uptake
             const courseUptake = {};
@@ -1110,6 +1148,81 @@ module.exports = (app, { prisma }) => {
                         <tbody>${studentRows.length > 0 ? studentRows : '<tr><td colspan="5" style="text-align:center; color:#999; padding:20px;">No enrollments found.</td></tr>'}</tbody>
                     </table>
                 </div>
+				
+				<div class="card" style="overflow-x:auto;">
+                    <h3 style="margin-top:0;">📚 Course Content Library</h3>
+                    <p style="font-size:12px; color:#7f8c8d; margin-top:-10px;">Attach MP3 voice notes, PDF worksheets, or Infographics to your daily modules.</p>
+                    ${courseLibraryHtml}
+                </div>
+
+                <div id="mediaModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:1000; justify-content:center; align-items:center;">
+                    <div style="background:white; width:90%; max-width:400px; border-radius:10px; padding:25px; box-shadow:0 10px 25px rgba(0,0,0,0.2);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee; padding-bottom:15px; margin-bottom:15px;">
+                            <h3 style="margin:0; color:#2c3e50;">Attach Media</h3>
+                            <button onclick="document.getElementById('mediaModal').style.display='none'" style="background:none; border:none; font-size:24px; cursor:pointer; color:#7f8c8d;">&times;</button>
+                        </div>
+                        <p style="font-size:13px; color:#555; margin-top:0;">Uploading file for: <strong id="modalModuleName" style="color:#3498db;"></strong></p>
+                        
+                        <form id="mediaUploadForm" onsubmit="handleMediaUpload(event)">
+                            <input type="hidden" id="uploadModuleId">
+                            <input type="file" id="mediaFileInput" accept="audio/mpeg, audio/ogg, image/jpeg, image/png, application/pdf, video/mp4" required style="width:100%; padding:10px; margin-bottom:15px; border:1px dashed #3498db; background:#f0f8ff;">
+                            
+                            <button type="submit" id="uploadMediaBtn" class="btn" style="background:#27ae60; width:100%;">🚀 Upload to Cloudinary</button>
+                            <div id="uploadStatus" style="font-size:12px; font-weight:bold; text-align:center; margin-top:10px; display:none;"></div>
+                        </form>
+                    </div>
+                </div>
+
+                <script>
+                    function openMediaModal(moduleId, moduleTitle) {
+                        document.getElementById('uploadModuleId').value = moduleId;
+                        document.getElementById('modalModuleName').innerText = moduleTitle;
+                        document.getElementById('mediaFileInput').value = ''; // Reset input
+                        document.getElementById('uploadStatus').style.display = 'none';
+                        document.getElementById('mediaModal').style.display = 'flex';
+                    }
+
+                    async function handleMediaUpload(e) {
+                        e.preventDefault();
+                        const btn = document.getElementById('uploadMediaBtn');
+                        const status = document.getElementById('uploadStatus');
+                        const moduleId = document.getElementById('uploadModuleId').value;
+                        const fileInput = document.getElementById('mediaFileInput');
+
+                        if (!fileInput.files[0]) return;
+
+                        btn.innerText = "⏳ Uploading...";
+                        btn.disabled = true;
+                        status.style.display = "block";
+                        status.style.color = "#f39c12";
+                        status.innerText = "Compressing and securing file on Cloudinary...";
+
+                        const formData = new FormData();
+                        formData.append('mediaFile', fileInput.files[0]);
+
+                        try {
+                            const currentPath = window.location.pathname.replace(/\\/$/, ""); 
+                            const res = await fetch(currentPath + '/modules/' + moduleId + '/upload', {
+                                method: 'POST',
+                                body: formData
+                            });
+
+                            const data = await res.json();
+                            if (data.success) {
+                                status.style.color = "#27ae60";
+                                status.innerText = "✅ Upload Successful! Reloading...";
+                                setTimeout(() => window.location.reload(), 1000);
+                            } else {
+                                throw new Error(data.error);
+                            }
+                        } catch (err) {
+                            status.style.color = "#c0392b";
+                            status.innerText = "❌ Error: " + err.message;
+                            btn.innerText = "🚀 Upload to Cloudinary";
+                            btn.disabled = false;
+                        }
+                    }
+                </script>
 
                 <div id="answersModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:1000; justify-content:center; align-items:center;">
                     <div style="background:white; width:90%; max-width:600px; border-radius:10px; padding:25px; box-shadow:0 10px 25px rgba(0,0,0,0.2); max-height:80vh; overflow-y:auto;">
@@ -1176,6 +1289,41 @@ module.exports = (app, { prisma }) => {
         } catch (error) {
             console.error("LMS Dashboard Error:", error);
             res.send(renderPage(req.org, 'academy', '<div class="card" style="color:red; font-weight:bold;">System Error Loading Academy Dashboard. Check Server Logs.</div>'));
+        }
+    });
+	
+	// ==========================================
+    // 📎 API: UPLOAD MODULE MEDIA TO CLOUDINARY
+    // ==========================================
+    router.post('/admin/:code/academy/modules/:moduleId/upload', checkSession, (req, res, next) => {
+        upload.single('mediaFile')(req, res, (err) => {
+            if (err) return res.status(400).json({ success: false, error: err.message });
+            next();
+        });
+    }, async (req, res) => {
+        try {
+            if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded." });
+            
+            // 1. Upload to Cloudinary (resource_type: "auto" intelligently detects images vs audio)
+            const result = await cloudinary.uploader.upload(req.file.path, {
+                resource_type: "auto", 
+                folder: `seabe_lms/${req.params.code}`
+            });
+
+            // 2. Update the Module in the database
+            await prisma.module.update({
+                where: { id: parseInt(req.params.moduleId) },
+                data: { contentUrl: result.secure_url }
+            });
+
+            // 3. Clean up the temporary local file
+            const fs = require('fs');
+            fs.unlinkSync(req.file.path);
+
+            res.json({ success: true, url: result.secure_url });
+        } catch (error) {
+            console.error("Module Upload Error:", error);
+            res.status(500).json({ success: false, error: "Cloudinary upload failed." });
         }
     });
 	
