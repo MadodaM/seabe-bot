@@ -1315,7 +1315,14 @@ module.exports = (app, { prisma }) => {
             // 🚀 THE MAGIC: If it's a video, tell Cloudinary to instantly crush it for WhatsApp!
             if (isVideo) {
                 uploadOptions.eager = [
-                    { width: 480, crop: "scale", quality: "auto:eco", video_codec: "h264" }
+                    { 
+                        width: 480, 
+                        crop: "scale", 
+                        quality: "auto:low", // 👈 Switched to 'low' to guarantee < 16MB
+                        video_codec: "h264", 
+                        audio_codec: "aac",  // 👈 WhatsApp requires AAC audio
+                        format: "mp4"        // 👈 Force the .mp4 container
+                    }
                 ];
             }
 
