@@ -29,9 +29,9 @@ cloudinary.config({
 // 🛡️ Upload Config (Updated for LMS Media)
 const upload = multer({ 
     dest: 'uploads/',
-    limits: { fileSize: 15 * 1024 * 1024 }, // Increased to 15MB for audio/short video
+    // 👇 Increased to 30MB so we can accept larger videos to compress
+    limits: { fileSize: 30 * 1024 * 1024 }, 
     fileFilter: (req, file, cb) => {
-        // 🚀 Added audio and video mimetypes!
         const allowed = ['text/csv', 'image/jpeg', 'image/png', 'application/pdf', 'audio/mpeg', 'audio/ogg', 'video/mp4'];
         if (allowed.includes(file.mimetype) || file.originalname.endsWith('.csv')) {
             cb(null, true);
@@ -1304,23 +1304,38 @@ module.exports = (app, { prisma }) => {
         try {
             if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded." });
             
-            // 1. Upload to Cloudinary (resource_type: "auto" intelligently detects images vs audio)
-            const result = await cloudinary.uploader.upload(req.file.path, {
+            // 1. Check if it's a video so we only apply heavy compression to videos, not PDFs/Images
+            const isVideo = req.file.mimetype.startsWith('video/');
+            
+            const uploadOptions = {
                 resource_type: "auto", 
                 folder: `seabe_lms/${req.params.code}`
-            });
+            };
 
-            // 2. Update the Module in the database
+            // 🚀 THE MAGIC: If it's a video, tell Cloudinary to instantly crush it for WhatsApp!
+            if (isVideo) {
+                uploadOptions.eager = [
+                    { width: 480, crop: "scale", quality: "auto:eco", video_codec: "h264" }
+                ];
+            }
+
+            // 2. Upload to Cloudinary
+            const result = await cloudinary.uploader.upload(req.file.path, uploadOptions);
+
+            // 3. Grab the correct URL (Use the compressed 'eager' URL for video, standard URL for everything else)
+            const finalUrl = (isVideo && result.eager) ? result.eager[0].secure_url : result.secure_url;
+
+            // 4. Update the Module in the database
             await prisma.module.update({
                 where: { id: parseInt(req.params.moduleId) },
-                data: { contentUrl: result.secure_url }
+                data: { contentUrl: finalUrl }
             });
 
-            // 3. Clean up the temporary local file
+            // 5. Clean up the temporary local file
             const fs = require('fs');
             fs.unlinkSync(req.file.path);
 
-            res.json({ success: true, url: result.secure_url });
+            res.json({ success: true, url: finalUrl });
         } catch (error) {
             console.error("Module Upload Error:", error);
             res.status(500).json({ success: false, error: "Cloudinary upload failed." });
