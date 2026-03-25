@@ -7,26 +7,28 @@ const prisma = require('./prisma-client');
 const { sendWhatsApp } = require('./twilioClient');
 
 const startDripCampaign = () => {
-    console.log("⏰ LMS Drip Engine Started: Enforcing 1-Lesson-Per-Day rule...");
+    console.log("⏰ LMS Drip Engine Started: Enforcing Lesson Delivery rule...");
 
+    // Runs every minute to check if anyone is due for a lesson
     cron.schedule('* * * * *', async () => {
         try {
             // ⏱️ TIMERS:
-            // First Lesson Timer: 30 minutes
-            const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000); 
-            // Subsequent Lessons Timer: 24 Hours
+            // First Lesson Timer: 5 minutes after enrollment
+            const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000); 
+            // Subsequent Lessons Timer: 24 Hours after their last quiz answer
             const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
+            // Fetch students who are ACTIVE, not waiting on a quiz, and due for a lesson
             const pendingDeliveries = await prisma.enrollment.findMany({
                 where: {
                     status: 'ACTIVE',
                     quizState: 'IDLE',
                     OR: [
-                        // Rule 1: If it's their FIRST lesson (progress = 1), send 30 mins after enrollment
-                        { progress: 1, updatedAt: { lte: thirtyMinutesAgo } },
+                        // Rule 1: FIRST lesson (progress 0). Send 5 mins after enrollment.
+                        { progress: 0, updatedAt: { lte: fiveMinutesAgo } },
                         
-                        // Rule 2: If it's lesson 2+, wait 24 FULL HOURS since they passed the last quiz
-                        { progress: { gt: 1 }, updatedAt: { lte: twentyFourHoursAgo } }
+                        // Rule 2: Lesson 2+ (progress >= 1). Wait 24 hours since last update.
+                        { progress: { gte: 1 }, updatedAt: { lte: twentyFourHoursAgo } }
                     ]
                 },
                 include: { 
@@ -40,12 +42,13 @@ const startDripCampaign = () => {
             }
 
             for (const enrollment of pendingDeliveries) {
-                // Find the exact module they are supposed to be on
-                const moduleToSend = enrollment.course.modules.find(m => m.order === enrollment.progress);
+                // Calculate the NEXT module they should receive (Progress + 1)
+                const nextModuleOrder = enrollment.progress + 1;
+                const moduleToSend = enrollment.course.modules.find(m => m.order === nextModuleOrder);
 
-                // 🛑 THE INFINITE LOOP BREAKER
+                // 🛑 THE INFINITE LOOP BREAKER (Graduation)
                 if (!moduleToSend) {
-                    console.log(`✅ Progress ${enrollment.progress} exceeds available modules. Marking course as COMPLETED for ${enrollment.member?.phone}`);
+                    console.log(`🎓 Marking course as COMPLETED for ${enrollment.member?.phone}`);
                     await prisma.enrollment.update({
                         where: { id: enrollment.id },
                         data: { 
@@ -63,16 +66,26 @@ const startDripCampaign = () => {
 
                 // 🟢 SEND THE LESSON
                 if (moduleToSend && enrollment.member) {
-                    const lessonMessage = `📖 *${enrollment.course.title}*\nModule ${moduleToSend.order}: ${moduleToSend.title}\n\n${moduleToSend.dailyLessonText}\n\n❓ *Quick Assessment:*\n${moduleToSend.quizQuestion}\n\n_(Reply to this message with your answer to proceed!)_`;
+                    // Check if this module actually has a quiz question
+                    const hasQuiz = moduleToSend.quizQuestion && moduleToSend.quizQuestion.trim().length > 0;
+                    
+                    let lessonMessage = `📖 *${enrollment.course.title}*\nModule ${moduleToSend.order}: ${moduleToSend.title}\n\n${moduleToSend.dailyLessonText || moduleToSend.content}`;
+
+                    if (hasQuiz) {
+                        lessonMessage += `\n\n❓ *Quick Assessment:*\n${moduleToSend.quizQuestion}\n\n_(Reply to this message with your answer to proceed to the next lesson!)_`;
+                    } else {
+                        lessonMessage += `\n\n_(Reply "Next" when you are ready to continue.)_`;
+                    }
 
                     await sendWhatsApp(enrollment.member.phone, lessonMessage);
 
-                    // Lock them into "Quiz Mode"
+                    // 🔒 UPDATE PROGRESS AND STATE
                     await prisma.enrollment.update({
                         where: { id: enrollment.id },
                         data: { 
-                            quizState: 'AWAITING_QUIZ',
-                            updatedAt: new Date() 
+                            progress: moduleToSend.order, // Update their progress to the module we just sent
+                            quizState: hasQuiz ? 'AWAITING_ANSWER' : 'IDLE', // Lock them if there's a quiz!
+                            updatedAt: new Date() // Reset the 24-hour timer!
                         }
                     });
                 }
