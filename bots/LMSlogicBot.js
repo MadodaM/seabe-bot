@@ -1,9 +1,9 @@
 // bots/LMSlogicBot.js
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // 🛠️ Modular Imports
-const { evaluateQuiz } = require('../services/aiQuizEvaluator');
 const { calculateTransaction } = require('../services/pricingEngine');
 
 /**
@@ -13,9 +13,10 @@ const { calculateTransaction } = require('../services/pricingEngine');
 async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, member, sendWhatsApp) {
     
     // ================================================
-    // 🛑 0. LMS INTERCEPTOR: Catch Quiz Answers
+    // 🛑 0. LMS INTERCEPTOR: AI Quiz Evaluator
     // ================================================
     if (member) {
+        // Find enrollment securely locked in a quiz
         const activeEnrollment = await prisma.enrollment.findFirst({
             where: { memberId: member.id, status: 'ACTIVE', quizState: 'AWAITING_ANSWER' },
             include: { course: true, member: true }
@@ -26,46 +27,65 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                 where: { courseId: activeEnrollment.courseId, order: activeEnrollment.progress }
             });
 
-            if (currentModule) {
-                // Log their answer
-                await prisma.assessmentLog.create({
-                    data: {
-                        enrollmentId: activeEnrollment.id,
-                        moduleId: currentModule.id,
-                        response: rawMsg, // Use raw text so casing is preserved
-                        isCorrect: true 
+            if (currentModule && currentModule.quizQuestion) {
+                await sendWhatsApp(cleanPhone, "⏳ *Grading your answer...*");
+
+                try {
+                    // 🧠 Call Gemini AI to evaluate the answer
+                    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+                    const aiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+                    const prompt = `You are an encouraging and knowledgeable teacher evaluating a student's answer.
+                    Course: ${activeEnrollment.course.title}
+                    Lesson Material: ${currentModule.dailyLessonText || currentModule.content || 'General Knowledge'}
+                    Question: ${currentModule.quizQuestion}
+                    Correct Answer Context: ${currentModule.quizAnswer || 'Use your own knowledge based on the lesson'}
+                    
+                    Student's Answer: "${rawMsg}"
+
+                    Evaluate if the student's answer is fundamentally correct or demonstrates a good understanding of the material.
+                    Return ONLY a raw JSON object (no markdown, no backticks) in this exact format:
+                    {"isCorrect": true/false, "feedback": "A short, encouraging explanation of why they are right or wrong."}`;
+
+                    const result = await aiModel.generateContent(prompt);
+                    const aiResponse = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
+
+                    // 💾 Log their answer to the database
+                    await prisma.assessmentLog.create({
+                        data: {
+                            enrollmentId: activeEnrollment.id,
+                            moduleId: currentModule.id,
+                            response: rawMsg,
+                            isCorrect: aiResponse.isCorrect 
+                        }
+                    });
+
+                    if (aiResponse.isCorrect) {
+                        // ✅ PASS: Unlock state to trigger tomorrow's lesson
+                        await prisma.enrollment.update({
+                            where: { id: activeEnrollment.id },
+                            data: { quizState: 'IDLE', updatedAt: new Date() }
+                        });
+
+                        const replyMsg = `✅ *Correct!*\n\n${aiResponse.feedback}\n\n_Your next lesson will arrive automatically tomorrow. Keep up the great work!_ 🎓`;
+                        await sendWhatsApp(cleanPhone, replyMsg);
+                    } else {
+                        // ❌ FAIL: Keep them locked, ask to try again
+                        const replyMsg = `❌ *Not quite!*\n\n${aiResponse.feedback}\n\n_Please try again. Reply with your new answer!_ 💡`;
+                        await sendWhatsApp(cleanPhone, replyMsg);
                     }
-                });
-
-                // Unlock state to trigger tomorrow's lesson
-                await prisma.enrollment.update({
-                    where: { id: activeEnrollment.id },
-                    data: { quizState: 'IDLE', updatedAt: new Date() }
-                });
-
-                const replyMsg = `✅ *Answer Recorded!*\n\nGreat job, ${activeEnrollment.member.firstName}! Your response for Module ${currentModule.order} is safely logged in your student portal.\n\n_Your next lesson will arrive automatically tomorrow. Keep up the momentum!_ 🎓`;
-                await sendWhatsApp(cleanPhone, replyMsg);
+                } catch (error) {
+                    console.error("AI Evaluation Error:", error);
+                    await sendWhatsApp(cleanPhone, "⚠️ I had a little trouble grading that just now. Please try sending your answer again.");
+                }
+                
                 return { handled: true, clearSessionFlag: false };
             }
         }
     }
 
     // ================================================
-    // 🎓 1. AI QUIZ EVALUATOR (Phase B Alternative)
-    // ================================================
-    if (member) {
-        const pendingQuiz = await prisma.enrollment.findFirst({
-            where: { memberId: member.id, quizState: 'AWAITING_QUIZ', status: 'ACTIVE' },
-            include: { course: { include: { modules: true } } }
-        });
-        if (pendingQuiz) {
-            await evaluateQuiz(incomingMsg, cleanPhone, member, pendingQuiz, sendWhatsApp);
-            return { handled: true, clearSessionFlag: false }; 
-        }
-    }
-
-    // ================================================
-    // 🎓 2. COURSE ENROLLMENT (Phase A)
+    // 🎓 1. COURSE ENROLLMENT (Phase A)
     // ================================================
     const lmsTriggers = ['mentorship', 'grow', 'learn', 'courses'];
     if (lmsTriggers.includes(incomingMsg)) {
@@ -129,9 +149,9 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
     }
 
     // ================================================
-    // 🎓 3. ON-DEMAND LESSONS (Phase C: Resume/Replay)
+    // 🎓 2. ON-DEMAND LESSONS (Phase C: Resume/Replay)
     // ================================================
-    const lessonKeywords = ['resume', 'replay', 'lesson']; // Removed 'learn' to prevent conflict with Phase A
+    const lessonKeywords = ['resume', 'replay', 'lesson']; 
     if (lessonKeywords.includes(incomingMsg)) {
         const enrollment = await prisma.enrollment.findFirst({
             where: { memberId: member.id, status: 'ACTIVE' },
@@ -154,7 +174,7 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                 msg += `🧠 *Quiz:* ${module.quizQuestion || module.quiz}\n_Reply with your answer to get instant feedback!_`;
                 await prisma.enrollment.update({
                     where: { id: enrollment.id },
-                    data: { quizState: 'AWAITING_ANSWER' }
+                    data: { quizState: 'AWAITING_ANSWER' } // 👈 STANDARDIZED!
                 });
             }
             await sendWhatsApp(cleanPhone, msg);
@@ -165,7 +185,7 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
     }
 
     // ================================================
-    // 👤 4. MY PROFILE & COURSES MENU
+    // 👤 3. MY PROFILE & COURSES MENU
     // ================================================
     const profileKeywords = ['my profile', 'profile', 'my courses', 'settings'];
     if (profileKeywords.includes(incomingMsg)) {
@@ -284,7 +304,7 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
     }
 
     if (session.step === 'UPDATE_NAME_FIRST') {
-        session.newFirstName = rawMsg.trim(); // Use raw text for proper capitalization
+        session.newFirstName = rawMsg.trim(); 
         session.step = 'UPDATE_NAME_LAST';
         await sendWhatsApp(cleanPhone, `Thanks ${session.newFirstName}. Now, please reply with your *Surname*:`);
         return { handled: true, clearSessionFlag: false };
@@ -297,10 +317,9 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
             data: { firstName: session.newFirstName, lastName: newLastName }
         });
         await sendWhatsApp(cleanPhone, `✅ Profile Updated!\n\nNice to meet you, *${session.newFirstName} ${newLastName}*.\n\nReply *Menu* to continue.`);
-        return { handled: true, clearSessionFlag: true }; // Clear session step completely
+        return { handled: true, clearSessionFlag: true }; 
     }
 
-    // If the message doesn't match any LMS logic, return false so the main router can handle it
     return { handled: false, clearSessionFlag: false };
 }
 
