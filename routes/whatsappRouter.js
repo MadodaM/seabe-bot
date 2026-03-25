@@ -3,23 +3,23 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const axios = require('axios');
 const sgMail = require('@sendgrid/mail'); 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // 🛠️ Modular Imports
 const { sendWhatsApp } = require('../services/twilioClient');
-const { evaluateQuiz } = require('../services/aiQuizEvaluator');
 const { getAISupportReply } = require('../services/aiSupport');
 const { handleSocietyMessage } = require('../bots/societyBot');
 const { handleChurchMessage } = require('../bots/churchBot');
 const { handleStokvelMessage } = require('../bots/stokvelBot');
 const { processGroomingMessage } = require('../bots/groomingBot');
+const { processLmsMessage } = require('../bots/LMSlogicBot'); // 🚀 NEW: Our LMS Controller!
 const { processTwilioClaim } = require('../services/aiClaimWorker');
-const { calculateTransaction } = require('../services/pricingEngine'); // 🚀 NEW: Pricing Engine
+const { calculateTransaction } = require('../services/pricingEngine');
 
 router.post('/', (req, res) => {
-    const incomingMsg = (req.body.Body || '').trim().toLowerCase();
+    const rawMsg = req.body.Body || '';
+    const incomingMsg = rawMsg.trim().toLowerCase();
     const cleanPhone = (req.body.From || '').replace('whatsapp:', '');
 
     // 1. Respond to Twilio IMMEDIATELY
@@ -56,27 +56,23 @@ router.post('/', (req, res) => {
 
                 if (member) {
                     session.churchCode = member.churchCode;
-                    // 👇 FIX 1: Correctly assign STOKVEL mode
                     if (explicitType === 'BURIAL_SOCIETY') session.mode = 'SOCIETY';
                     else if (explicitType === 'STOKVEL_SAVINGS') session.mode = 'STOKVEL';
                     else session.mode = 'CHURCH';
                     session.step = null; 
                 } else {
-                    // 👇 FIX 2: Add Stokvel to the error labels so it doesn't say "undefined"
                     const labels = { 'BURIAL_SOCIETY': 'Burial Society', 'CHURCH': 'Church', 'NON_PROFIT': 'Non-Profit', 'STOKVEL_SAVINGS': 'Stokvel / Savings Club' };
                     await sendWhatsApp(cleanPhone, `⚠️ You are not currently linked to a ${labels[explicitType]}.\n\nReply *Join* to search for one.`);
                     return;
                 }
             } else {
                 const activeOrgCode = session.churchCode || session.orgCode;
-                
                 if (activeOrgCode) {
                     member = await prisma.member.findFirst({
                         where: { phone: cleanPhone, churchCode: activeOrgCode },
                         include: { church: true, society: true }
                     });
                 }
-                
                 if (!member) {
                     member = await prisma.member.findFirst({
                         where: { phone: cleanPhone },
@@ -96,7 +92,7 @@ router.post('/', (req, res) => {
                 
                 if (member) {
                     await prisma.enrollment.updateMany({
-                        where: { memberId: member.id, quizState: 'AWAITING_QUIZ' },
+                        where: { memberId: member.id, quizState: { in: ['AWAITING_QUIZ', 'AWAITING_ANSWER'] } },
                         data: { quizState: 'IDLE', updatedAt: new Date() } 
                     });
                 }
@@ -114,29 +110,22 @@ router.post('/', (req, res) => {
                 return;
             }
 
-			// ================================================
+            // ================================================
             // ✂️ PERSONAL CARE / GROOMING INTERCEPTOR
             // ================================================
             const handledByGrooming = await processGroomingMessage(incomingMsg, cleanPhone, session, sendWhatsApp);
             if (handledByGrooming) {
-                // The grooming bot directly updates the DB, so we clear the local session
-                // to prevent the 'finally' block from accidentally overwriting it with old data.
                 session = {}; 
                 return; 
             }
 
             // ================================================
-            // 🎓 LMS Phase B: AI QUIZ EVALUATOR
+            // 🎓 LMS / ACADEMY ROUTER
             // ================================================
-            if (member) {
-                const pendingQuiz = await prisma.enrollment.findFirst({
-                    where: { memberId: member.id, quizState: 'AWAITING_QUIZ', status: 'ACTIVE' },
-                    include: { course: { include: { modules: true } } }
-                });
-                if (pendingQuiz) {
-                    await evaluateQuiz(incomingMsg, cleanPhone, member, pendingQuiz, sendWhatsApp);
-                    return; 
-                }
+            const lmsResult = await processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, member, sendWhatsApp);
+            if (lmsResult.handled) {
+                if (lmsResult.clearSessionFlag) clearSessionFlag = true;
+                return; // Stop processing, the LMS bot successfully handled the message!
             }
 
             // ================================================
@@ -194,70 +183,7 @@ router.post('/', (req, res) => {
             }
 
             // ================================================
-            // 🎓 LMS Phase A: COURSE ENROLLMENT
-            // ================================================
-            const lmsTriggers = ['mentorship', 'grow', 'learn', 'courses'];
-            if (lmsTriggers.includes(incomingMsg)) {
-                if (!member || !member.church) {
-                    await sendWhatsApp(cleanPhone, "⚠️ You must be linked to an organization to view courses. Reply *Join* first.");
-                    return;
-                }
-                const courses = await prisma.course.findMany({
-                    where: { churchId: member.church.id },
-                    orderBy: { price: 'asc' }
-                });
-
-                if (courses.length === 0) {
-                    await sendWhatsApp(cleanPhone, "📚 *Learning Centre*\n\nThere are currently no active courses available. Check back later!");
-                    return;
-                }
-
-                let msg = `📚 *Learning & Mentorship Centre*\nSelect a course to enroll:\n\n`;
-                courses.forEach((c, index) => {
-                    msg += `*${index + 1}. ${c.title}*\nCost: ${c.price === 0 ? 'FREE' : 'R' + c.price}\n\n`;
-                });
-                msg += `Reply with the *Number* of the course you wish to join.`;
-
-                session.step = 'AWAITING_COURSE_SELECTION';
-                session.availableCourses = courses; 
-                await sendWhatsApp(cleanPhone, msg);
-                return;
-            }
-
-            if (session.step === 'AWAITING_COURSE_SELECTION') {
-                const selectedIndex = parseInt(incomingMsg) - 1;
-                const courses = session.availableCourses;
-
-                if (selectedIndex >= 0 && selectedIndex < courses.length) {
-                    const selectedCourse = courses[selectedIndex];
-                    const enrollment = await prisma.enrollment.create({
-                        data: {
-                            memberId: member.id,
-                            courseId: selectedCourse.id,
-                            status: selectedCourse.price === 0 ? 'ACTIVE' : 'PENDING_PAYMENT'
-                        }
-                    });
-
-                    if (selectedCourse.price === 0) {
-                        session.step = 'LMS_ACTIVE';
-                        await sendWhatsApp(cleanPhone, `🎉 You are now enrolled in *${selectedCourse.title}*!\n\nLook out for your first module tomorrow morning at 07:00 AM.`);
-                    } else {
-                        // 🚀 PRICING ENGINE INTERCEPTION
-                        const pricing = calculateTransaction(selectedCourse.price, 'LMS_COURSE', 'DEFAULT', true);
-                        const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
-                        const paymentLink = `${host}/pay?enrollmentId=${enrollment.id}&amount=${pricing.totalChargedToUser}`;
-                        
-                        await sendWhatsApp(cleanPhone, `🎓 *${selectedCourse.title}*\n\nCourse Fee: *R${pricing.baseAmount.toFixed(2)}*\nService Fee: *R${pricing.totalFees.toFixed(2)}*\n*Total Due: R${pricing.totalChargedToUser.toFixed(2)}*\n\nTo unlock your modules, please complete your payment.\n\n💳 *Pay securely here:*\n👉 ${paymentLink}\n\nOnce paid, your modules will unlock automatically!`);
-                    }
-                    clearSessionFlag = true; 
-                } else {
-                    await sendWhatsApp(cleanPhone, "Invalid selection. Please reply with a valid course number.");
-                }
-                return;
-            }
-
-            // ================================================
-            // 🔍 UNIVERSAL JOIN & QUOTE FLOW
+            // 🔍 UNIVERSAL JOIN & QUOTE FLOW (Untouched)
             // ================================================
             const joinSteps = ['SEARCH', 'JOIN_SELECT', 'CHOOSE_MEMBER_TYPE', 'ENTER_POLICY_NUMBER', 'SELECT_QUOTE_PLAN', 'AWAITING_QUOTE_ACCEPTANCE'];
             if (incomingMsg === 'join' || joinSteps.includes(session.step)) {
@@ -374,8 +300,6 @@ router.post('/', (req, res) => {
                         const botNum = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
                         const quoteLink = `${host}/quote.html?code=${session.churchCode}&phone=${cleanPhone}&bot=${botNum}`;
 
-                        // 🚀 DYNAMIC PRICING: Calculate Final Debit Order Amount
-                        // We use 'DEBIT_ORDER' method to get the correct R5.00 fee
                         const pricing = await calculateTransaction(plan.monthlyPremium, 'STANDARD', 'DEBIT_ORDER', true);
 
                         const msg = `*Quote: ${plan.planName}*\n` +
@@ -425,7 +349,7 @@ router.post('/', (req, res) => {
                                 lastName: 'Member',
                                 church: { connect: { id: session.churchId } }, 
                                 status: 'PENDING_KYC',
-								kycStatus: 'PENDING',
+                                kycStatus: 'PENDING',
                                 monthlyPremium: session.monthlyPremium
                             }
                         });
@@ -473,7 +397,7 @@ router.post('/', (req, res) => {
                                     lastName: extractedData.lastName, 
                                     idNumber: extractedData.idNumber, 
                                     isIdVerified: true, 
-									kycStatus: 'APPROVED', // 👈 NEW: Instantly verified on Dashboard
+                                    kycStatus: 'APPROVED', 
                                     monthlyPremium: session.monthlyPremium,
                                     policyNumber: session.policyNumber
                                 }
@@ -504,11 +428,10 @@ router.post('/', (req, res) => {
             if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ADDRESS') {
                 const addressUrl = req.body.MediaUrl0;
                 try {
-                    // 1. Fetch member AND include the Church relation to know the org type
                     const memberRecord = await prisma.member.findFirst({ 
                         where: { phone: cleanPhone, churchCode: session.churchCode },
                         orderBy: { id: 'desc' },
-                        include: { church: true } // 👈 NEW: Include the organization details
+                        include: { church: true } 
                     });
                     
                     if (memberRecord) {
@@ -518,7 +441,6 @@ router.post('/', (req, res) => {
                         
                         let welcomeMsg = "";
 
-                        // 2. DYNAMIC WELCOME MESSAGES
                         if (memberRecord.isIdVerified) {
                             if (orgType === 'BURIAL_SOCIETY') {
                                 welcomeMsg = `🎉 *REGISTRATION COMPLETE & POLICY ACTIVE!*\n\nPolicy Number: *${memberRecord.policyNumber || 'N/A'}*\nMonthly Premium: *R${(memberRecord.monthlyPremium || 0).toFixed(2)}*\n\nYour policy is now fully active. You can reply with *Menu* at any time to view your policy details or make a payment.`;
@@ -530,12 +452,10 @@ router.post('/', (req, res) => {
                                 welcomeMsg = `🎉 *REGISTRATION COMPLETE!*\n\nWelcome to *${orgName}*. Your member profile is now fully active and verified.\n\nReply *Amen* or *Menu* at any time to access your dashboard and courses.`;
                             }
                         } else {
-                            // 3. DYNAMIC PENDING MESSAGES (If AI failed and manual review is needed)
                             const accountLabel = orgType === 'BURIAL_SOCIETY' ? 'policy' : (orgType === 'STOKVEL_SAVINGS' ? 'savings profile' : 'account');
                             welcomeMsg = `✅ *Documents Received!*\n\nYour Proof of Address and ID have been securely vaulted for Admin Review. You will receive a WhatsApp notification as soon as your ${accountLabel} is officially activated!`;
                         }
 
-                        // 4. Update the Database
                         await prisma.member.update({
                             where: { id: memberRecord.id },
                             data: { 
@@ -562,7 +482,6 @@ router.post('/', (req, res) => {
                 const code = member?.church?.code || member?.society?.code || session.churchCode;
                 const churchId = member?.churchId || 1;
                 
-                // 💰 1. CHARGE THE SOCIETY FOR THE AI SCAN
                 try {
                     const { getPrice } = require('../services/pricing');
                     const claimCost = await getPrice('CLAIM_AI'); 
@@ -585,7 +504,6 @@ router.post('/', (req, res) => {
                     console.error("🛑 BILLING FAILED (CRITICAL):", e.message);
                 }
 
-                // 🤖 2. TRIGGER THE FORENSIC WORKER
                 processTwilioClaim(cleanPhone, req.body.MediaUrl0, code);
                 clearSessionFlag = true;
                 await sendWhatsApp(cleanPhone, "⏳ *Document Received!*\n\nOur Gemini AI is now processing the claim. This usually takes 10-15 seconds. I will message you once the scan is complete.");
@@ -600,224 +518,16 @@ router.post('/', (req, res) => {
                 return;
             }
 
-			// ================================================
-            // 🎓 LMS Phase C: ON-DEMAND LESSONS (Resume/Replay)
-            // ================================================
-            const lessonKeywords = ['resume', 'learn', 'replay', 'lesson'];
-            if (lessonKeywords.includes(incomingMsg)) {
-                // 1. Find active enrollment
-                const enrollment = await prisma.enrollment.findFirst({
-                    where: { memberId: member.id, status: 'ACTIVE' },
-                    include: { course: { include: { modules: true } } }
-                });
-
-                if (!enrollment) {
-                    await sendWhatsApp(cleanPhone, "❌ You are not enrolled in any active courses.\n\nReply *Courses* to browse our catalogue.");
-                    return;
-                }
-
-                // 2. Determine Day (Handle 0 progress as Day 1)
-                const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress;
-                
-                // 3. Find Module (Support 'day' or 'dayNumber' column)
-                const module = enrollment.course.modules.find(m => m.day === targetDay || m.dayNumber === targetDay);
-
-                if (module) {
-                    let msg = `🎓 *${incomingMsg === 'replay' ? 'REPLAY' : 'RESUMING'}: ${enrollment.course.title}* (Day ${targetDay})\n\n`;
-                    msg += `*${module.title}*\n\n`;
-                    msg += `${module.content}\n\n`;
-                    
-                    if (module.quiz) {
-                        msg += `🧠 *Quiz:* ${module.quiz}\n_Reply with your answer to get instant feedback!_`;
-                        
-                        // Update state so the AI Evaluator knows to listen for an answer
-                        await prisma.enrollment.update({
-                            where: { id: enrollment.id },
-                            data: { quizState: 'AWAITING_QUIZ' }
-                        });
-                    }
-                    
-                    await sendWhatsApp(cleanPhone, msg);
-                } else {
-                    await sendWhatsApp(cleanPhone, `✅ You are all caught up for Day ${targetDay}! The next lesson will arrive tomorrow morning.`);
-                }
-                return;
-            }
-
-
             if (!member.church) {
                 await sendWhatsApp(cleanPhone, "⚠️ You are not currently linked to any organization. Please reply *Join* to search for yours.");
-                return;
-            }
-
-// ================================================
-            // 👤 MY PROFILE & COURSES MENU
-            // ================================================
-            const profileKeywords = ['my profile', 'profile', 'my courses', 'settings'];
-            if (profileKeywords.includes(incomingMsg)) {
-                if (!member) {
-                    await sendWhatsApp(cleanPhone, "⚠️ You are not registered yet. Reply *Join* to start.");
-                    return;
-                }
-
-                // 1. Fetch Active Enrollments
-                const enrollments = await prisma.enrollment.findMany({
-                    where: { memberId: member.id, status: 'ACTIVE' },
-                    include: { course: true }
-                });
-
-                let menuMsg = `👤 *USER PROFILE: ${member.firstName} ${member.lastName}*\n\n`;
-                menuMsg += `*Active Courses:* ${enrollments.length}\n`;
-                
-                if (enrollments.length > 0) {
-                    enrollments.forEach((e, i) => {
-                        const progress = e.progress || 0;
-                        menuMsg += `\n📚 *${i + 1}. ${e.course.title}*\n   - Current Day: ${progress}\n   - Status: Active`;
-                    });
-                    menuMsg += `\n\n👇 *Reply with an option:*\n`;
-                    menuMsg += `*View 1* - To open course #1\n`;
-                    menuMsg += `*Update Name* - To change your profile name`;
-                } else {
-                    menuMsg += `\nYou have no active courses.\nReply *Courses* to browse catalog.\n\n👇 *Options:*\n*Update Name* - Change profile details`;
-                }
-
-                session.step = 'PROFILE_MENU';
-                // Store enrollments in session for easy access in next step
-                // We map them to a simple index object for safety
-                session.myCourses = enrollments.map(e => ({ id: e.id, title: e.course.title, progress: e.progress || 0 }));
-                
-                await sendWhatsApp(cleanPhone, menuMsg);
-                return;
-            }
-
-            // --- HANDLE PROFILE MENU SELECTIONS ---
-            if (session.step === 'PROFILE_MENU') {
-                
-                // A. Handle "View X" (Select Course)
-                if (incomingMsg.startsWith('view ')) {
-                    const index = parseInt(incomingMsg.split(' ')[1]) - 1;
-                    const courses = session.myCourses || [];
-
-                    if (courses[index]) {
-                        const selectedCourse = courses[index];
-                        session.selectedEnrollmentId = selectedCourse.id;
-                        session.step = 'COURSE_ACTIONS';
-                        
-                        let msg = `📚 *${selectedCourse.title}*\n`;
-                        msg += `You are currently on Day ${selectedCourse.progress}.\n\n`;
-                        msg += `👇 *What would you like to do?*\n`;
-                        msg += `1. *Resume* (Get today's lesson)\n`;
-                        msg += `2. *Previous* (Go back to yesterday's lesson)\n`;
-                        msg += `3. *Back* (Return to profile)`;
-                        
-                        await sendWhatsApp(cleanPhone, msg);
-                    } else {
-                        await sendWhatsApp(cleanPhone, "⚠️ Invalid course number. Please reply with 'View 1', 'View 2', etc.");
-                    }
-                    return;
-                }
-
-                // B. Handle "Update Name"
-                if (incomingMsg === 'update name') {
-                    session.step = 'UPDATE_NAME_FIRST';
-                    await sendWhatsApp(cleanPhone, "📝 Please reply with your *First Name*:");
-                    return;
-                }
-            }
-
-            // --- HANDLE COURSE ACTIONS (Resume / Previous) ---
-            if (session.step === 'COURSE_ACTIONS') {
-                const enrollmentId = session.selectedEnrollmentId;
-                
-                // Fetch fresh data to ensure accuracy
-                const enrollment = await prisma.enrollment.findUnique({
-                    where: { id: enrollmentId },
-                    include: { course: { include: { modules: true } } }
-                });
-
-                if (!enrollment) {
-                    await sendWhatsApp(cleanPhone, "⚠️ Error loading course. Type *Profile* to restart.");
-                    return;
-                }
-
-                if (incomingMsg === '1' || incomingMsg === 'resume') {
-                    // Same logic as "Resume" keyword
-                    const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress;
-                    const module = enrollment.course.modules.find(m => m.day === targetDay || m.dayNumber === targetDay);
-                    
-                    if (module) {
-                        let msg = `🎓 *RESUMING: ${enrollment.course.title}* (Day ${targetDay})\n\n*${module.title}*\n\n${module.content}`;
-                        if (module.quiz) msg += `\n\n🧠 *Quiz:* ${module.quiz}\n_Reply with answer!_`;
-                        await sendWhatsApp(cleanPhone, msg);
-                        // Reset session so they can answer quiz
-                        session.step = null; 
-                        // Update DB to await quiz if needed
-                        if(module.quiz) await prisma.enrollment.update({ where: { id: enrollment.id }, data: { quizState: 'AWAITING_QUIZ' }});
-                    } else {
-                        await sendWhatsApp(cleanPhone, "✅ You are up to date!");
-                    }
-                    return;
-                }
-
-                if (incomingMsg === '2' || incomingMsg === 'previous') {
-                    // Calculate Previous Day
-                    const currentDay = enrollment.progress || 1;
-                    const prevDay = currentDay > 1 ? currentDay - 1 : 1;
-
-                    if (prevDay === currentDay && currentDay === 1) {
-                        await sendWhatsApp(cleanPhone, "⚠️ You are on Day 1. There is no previous lesson.");
-                        return;
-                    }
-
-                    const module = enrollment.course.modules.find(m => m.day === prevDay || m.dayNumber === prevDay);
-                    
-                    if (module) {
-                        // NOTE: We do NOT decrement 'progress' in DB, we just show the content.
-                        let msg = `⏮️ *PREVIOUS LESSON: ${enrollment.course.title}* (Day ${prevDay})\n\n*${module.title}*\n\n${module.content}`;
-                        await sendWhatsApp(cleanPhone, msg);
-                    } else {
-                        await sendWhatsApp(cleanPhone, `⚠️ Could not find content for Day ${prevDay}.`);
-                    }
-                    return;
-                }
-
-                if (incomingMsg === '3' || incomingMsg === 'back') {
-                    // Trigger the profile menu again manually
-                    session.step = null;
-                    // Recursive call to show profile or just instruct user
-                    await sendWhatsApp(cleanPhone, "🔙 Returned to main menu. Reply *Profile* to see your list again.");
-                    return;
-                }
-            }
-
-            // --- HANDLE NAME UPDATES ---
-            if (session.step === 'UPDATE_NAME_FIRST') {
-                session.newFirstName = req.body.Body.trim(); // Use raw casing (e.g. "John")
-                session.step = 'UPDATE_NAME_LAST';
-                await sendWhatsApp(cleanPhone, `Thanks ${session.newFirstName}. Now, please reply with your *Surname*:`);
-                return;
-            }
-
-            if (session.step === 'UPDATE_NAME_LAST') {
-                const newLastName = req.body.Body.trim();
-                
-                await prisma.member.update({
-                    where: { id: member.id },
-                    data: { firstName: session.newFirstName, lastName: newLastName }
-                });
-
-                session.step = null; // Clear session
-                await sendWhatsApp(cleanPhone, `✅ Profile Updated!\n\nNice to meet you, *${session.newFirstName} ${newLastName}*.\n\nReply *Menu* to continue.`);
                 return;
             }
 
             // ================================================
             // 🏛️ BRANCH ROUTING (CHURCH, NPO, PROVIDERS)
             // ================================================
-            
-            // 👇 FIX 3: Add 'stokvel' to the array
-			const menuKeywords = ['society', 'amen', 'hi', 'hello', 'menu', 'dashboard', 'npo', 'stokvel'];
-			const mappedMsg = menuKeywords.includes(incomingMsg) ? 'menu' : incomingMsg;
+            const menuKeywords = ['society', 'amen', 'hi', 'hello', 'menu', 'dashboard', 'npo', 'stokvel'];
+            const mappedMsg = menuKeywords.includes(incomingMsg) ? 'menu' : incomingMsg;
 
             if (!session.mode && member.church) {
                 if (member.church.type === 'BURIAL_SOCIETY') session.mode = 'SOCIETY';
@@ -834,8 +544,8 @@ router.post('/', (req, res) => {
                 await handleChurchMessage(cleanPhone, mappedMsg, session, member);
                 return;
             }
-			
-			if (session.mode === 'STOKVEL') {
+            
+            if (session.mode === 'STOKVEL') {
                 await handleStokvelMessage(cleanPhone, mappedMsg, session, member);
                 return;
             }
