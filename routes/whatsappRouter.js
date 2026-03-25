@@ -21,6 +21,17 @@ router.post('/', (req, res) => {
     const rawMsg = req.body.Body || '';
     const incomingMsg = rawMsg.trim().toLowerCase();
     const cleanPhone = (req.body.From || '').replace('whatsapp:', '');
+	
+	// 🚀 NEW: Extract and split the WhatsApp Profile Name
+    const profileName = req.body.ProfileName || '';
+    let fName = 'Member';
+    let lName = '.'; // Fallback
+
+    if (profileName && profileName.trim() !== '') {
+        const nameParts = profileName.trim().split(' ');
+        fName = nameParts[0];
+        lName = nameParts.slice(1).join(' ') || '.';
+    }
 
     // 1. Respond to Twilio IMMEDIATELY
     res.type('text/xml').send('<Response></Response>');
@@ -80,6 +91,17 @@ router.post('/', (req, res) => {
                         include: { church: true, society: true }
                     });
                     if (member) session.churchCode = member.churchCode;
+                }
+            }
+			
+			// If we found the member, but they still have the default fallback name, silently upgrade them!
+            if (member && (member.firstName === 'Member' || member.firstName === 'Pending')) {
+                if (fName !== 'Member') { // Only hit the database if Twilio actually gave us a real name
+                    member = await prisma.member.update({
+                        where: { id: member.id },
+                        data: { firstName: fName, lastName: lName },
+                        include: { church: true, society: true }
+                    });
                 }
             }
 
@@ -190,7 +212,7 @@ router.post('/', (req, res) => {
                 
                 if (incomingMsg === 'join') {
                     session.step = 'SEARCH';
-                    await sendWhatsApp(cleanPhone, "🔍 Let's find your organization!\n\nPlease reply with their name (e.g., 'AFM' or 'Kgosigadi'):");
+                    await sendWhatsApp(cleanPhone, "🔍 Let's find your organization!\n\nPlease reply with their name (e.g., 'Church' or 'Kgosigadi'):");
                     return;
                 }
 
@@ -233,8 +255,8 @@ router.post('/', (req, res) => {
                                 await prisma.member.create({
                                     data: { 
                                         phone: cleanPhone, 
-                                        firstName: 'Member', 
-                                        lastName: 'New', 
+                                        firstName: fName, // 👈 Uses WhatsApp Name
+                                        lastName: lName,  // 👈 Uses WhatsApp Name
                                         church: { connect: { id: org.id } }, 
                                         status: 'ACTIVE' 
                                     }
@@ -345,8 +367,8 @@ router.post('/', (req, res) => {
                         await prisma.member.create({
                             data: {
                                 phone: cleanPhone,
-                                firstName: 'Pending',
-                                lastName: 'Member',
+                                firstName: fName, // 👈 Uses WhatsApp Name
+                                lastName: lName,  // 👈 Uses WhatsApp Name
                                 church: { connect: { id: session.churchId } }, 
                                 status: 'PENDING_KYC',
                                 kycStatus: 'PENDING',
