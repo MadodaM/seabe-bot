@@ -268,7 +268,7 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                     msg += `\n\n🧠 *Quiz:* ${module.quizQuestion}\n_Reply with answer!_`;
                     await prisma.enrollment.update({ where: { id: enrollment.id }, data: { quizState: 'AWAITING_ANSWER' }});
                 }
-                await sendWhatsApp(cleanPhone, msg);
+                await sendWhatsApp(cleanPhone, msg, module.contentUrl);;
                 session.step = null; 
             } else {
                 await sendWhatsApp(cleanPhone, "✅ You are up to date!");
