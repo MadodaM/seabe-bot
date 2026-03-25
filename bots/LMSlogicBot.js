@@ -13,19 +13,23 @@ const { evaluateQuiz } = require('../services/aiQuizEvaluator');
  */
 async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, member, sendWhatsApp) {
     
+    // 🚀 THE ESCAPE HATCH: Don't grade system commands!
+    const systemCommands = ['menu', 'profile', 'my profile', 'my courses', 'courses', 'exit', 'cancel', 'home', 'join'];
+
     // ================================================
     // 🛑 0. LMS INTERCEPTOR: AI Quiz Evaluator
     // ================================================
-    // 🚀 FIX: We now search by phone number so we find their active quizzes across ALL organizations
-    const activeEnrollment = await prisma.enrollment.findFirst({
-        where: { member: { phone: cleanPhone }, status: 'ACTIVE', quizState: 'AWAITING_ANSWER' },
-        include: { course: true, member: true }
-    });
-
-    if (activeEnrollment) {
-        const currentModule = await prisma.module.findFirst({
-            where: { courseId: activeEnrollment.courseId, order: activeEnrollment.progress }
+    if (member && !systemCommands.includes(incomingMsg)) {
+        // Find enrollment securely locked in a quiz
+        const activeEnrollment = await prisma.enrollment.findFirst({
+            where: { member: { phone: cleanPhone }, status: 'ACTIVE', quizState: 'AWAITING_ANSWER' },
+            include: { course: true, member: true }
         });
+
+        if (activeEnrollment) {
+            const currentModule = await prisma.module.findFirst({
+                where: { courseId: activeEnrollment.courseId, order: activeEnrollment.progress }
+            });
 
         if (currentModule && currentModule.quizQuestion) {
             await sendWhatsApp(cleanPhone, "⏳ *Grading your answer...*");
