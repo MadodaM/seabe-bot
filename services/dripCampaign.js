@@ -77,7 +77,7 @@ const startDripCampaign = () => {
                         lessonMessage += `\n\n_(Reply "Next" when you are ready to continue.)_`;
                     }
 
-                    await sendWhatsApp(enrollment.member.phone, lessonMessage);
+                    await sendWhatsApp(enrollment.member.phone, lessonMessage, moduleToSend.contentUrl);
 
                     // 🔒 UPDATE PROGRESS AND STATE
                     await prisma.enrollment.update({

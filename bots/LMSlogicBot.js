@@ -176,7 +176,7 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                     data: { quizState: 'AWAITING_ANSWER' } 
                 });
             }
-            await sendWhatsApp(cleanPhone, msg);
+            await sendWhatsApp(cleanPhone, msg, module.contentUrl);
         } else {
             await sendWhatsApp(cleanPhone, `✅ You are all caught up! The next lesson will arrive tomorrow.`);
         }
@@ -288,7 +288,7 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
             const module = enrollment.course.modules.find(m => m.day === prevDay || m.dayNumber === prevDay || m.order === prevDay);
             if (module) {
                 let msg = `⏮️ *PREVIOUS LESSON: ${enrollment.course.title}* (Day ${prevDay})\n\n*${module.title}*\n\n${module.content || module.dailyLessonText}`;
-                await sendWhatsApp(cleanPhone, msg);
+                await sendWhatsApp(cleanPhone, msg, module.contentUrl);
             } else {
                 await sendWhatsApp(cleanPhone, `⚠️ Could not find content for Day ${prevDay}.`);
             }
