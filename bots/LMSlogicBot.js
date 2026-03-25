@@ -5,6 +5,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // 🛠️ Modular Imports
 const { calculateTransaction } = require('../services/pricingEngine');
+const { evaluateQuiz } = require('../services/aiQuizEvaluator');
 
 /**
  * Handles all LMS / Academy logic. 
@@ -15,72 +16,66 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
     // ================================================
     // 🛑 0. LMS INTERCEPTOR: AI Quiz Evaluator
     // ================================================
-    if (member) {
-        // Find enrollment securely locked in a quiz
-        const activeEnrollment = await prisma.enrollment.findFirst({
-            where: { memberId: member.id, status: 'ACTIVE', quizState: 'AWAITING_ANSWER' },
-            include: { course: true, member: true }
+    // 🚀 FIX: We now search by phone number so we find their active quizzes across ALL organizations
+    const activeEnrollment = await prisma.enrollment.findFirst({
+        where: { member: { phone: cleanPhone }, status: 'ACTIVE', quizState: 'AWAITING_ANSWER' },
+        include: { course: true, member: true }
+    });
+
+    if (activeEnrollment) {
+        const currentModule = await prisma.module.findFirst({
+            where: { courseId: activeEnrollment.courseId, order: activeEnrollment.progress }
         });
 
-        if (activeEnrollment) {
-            const currentModule = await prisma.module.findFirst({
-                where: { courseId: activeEnrollment.courseId, order: activeEnrollment.progress }
-            });
+        if (currentModule && currentModule.quizQuestion) {
+            await sendWhatsApp(cleanPhone, "⏳ *Grading your answer...*");
 
-            if (currentModule && currentModule.quizQuestion) {
-                await sendWhatsApp(cleanPhone, "⏳ *Grading your answer...*");
+            try {
+                const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+                const aiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-                try {
-                    // 🧠 Call Gemini AI to evaluate the answer
-                    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-                    const aiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+                const prompt = `You are an encouraging and knowledgeable teacher evaluating a student's answer.
+                Course: ${activeEnrollment.course.title}
+                Lesson Material: ${currentModule.dailyLessonText || currentModule.content || 'General Knowledge'}
+                Question: ${currentModule.quizQuestion}
+                Correct Answer Context: ${currentModule.quizAnswer || 'Use your own knowledge based on the lesson'}
+                
+                Student's Answer: "${rawMsg}"
 
-                    const prompt = `You are an encouraging and knowledgeable teacher evaluating a student's answer.
-                    Course: ${activeEnrollment.course.title}
-                    Lesson Material: ${currentModule.dailyLessonText || currentModule.content || 'General Knowledge'}
-                    Question: ${currentModule.quizQuestion}
-                    Correct Answer Context: ${currentModule.quizAnswer || 'Use your own knowledge based on the lesson'}
-                    
-                    Student's Answer: "${rawMsg}"
+                Evaluate if the student's answer is fundamentally correct or demonstrates a good understanding of the material.
+                Return ONLY a raw JSON object (no markdown, no backticks) in this exact format:
+                {"isCorrect": true/false, "feedback": "A short, encouraging explanation of why they are right or wrong."}`;
 
-                    Evaluate if the student's answer is fundamentally correct or demonstrates a good understanding of the material.
-                    Return ONLY a raw JSON object (no markdown, no backticks) in this exact format:
-                    {"isCorrect": true/false, "feedback": "A short, encouraging explanation of why they are right or wrong."}`;
+                const result = await aiModel.generateContent(prompt);
+                const aiResponse = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
 
-                    const result = await aiModel.generateContent(prompt);
-                    const aiResponse = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
+                await prisma.assessmentLog.create({
+                    data: {
+                        enrollmentId: activeEnrollment.id,
+                        moduleId: currentModule.id,
+                        response: rawMsg,
+                        isCorrect: aiResponse.isCorrect 
+                    }
+                });
 
-                    // 💾 Log their answer to the database
-                    await prisma.assessmentLog.create({
-                        data: {
-                            enrollmentId: activeEnrollment.id,
-                            moduleId: currentModule.id,
-                            response: rawMsg,
-                            isCorrect: aiResponse.isCorrect 
-                        }
+                if (aiResponse.isCorrect) {
+                    await prisma.enrollment.update({
+                        where: { id: activeEnrollment.id },
+                        data: { quizState: 'IDLE', updatedAt: new Date() }
                     });
 
-                    if (aiResponse.isCorrect) {
-                        // ✅ PASS: Unlock state to trigger tomorrow's lesson
-                        await prisma.enrollment.update({
-                            where: { id: activeEnrollment.id },
-                            data: { quizState: 'IDLE', updatedAt: new Date() }
-                        });
-
-                        const replyMsg = `✅ *Correct!*\n\n${aiResponse.feedback}\n\n_Your next lesson will arrive automatically tomorrow. Keep up the great work!_ 🎓`;
-                        await sendWhatsApp(cleanPhone, replyMsg);
-                    } else {
-                        // ❌ FAIL: Keep them locked, ask to try again
-                        const replyMsg = `❌ *Not quite!*\n\n${aiResponse.feedback}\n\n_Please try again. Reply with your new answer!_ 💡`;
-                        await sendWhatsApp(cleanPhone, replyMsg);
-                    }
-                } catch (error) {
-                    console.error("AI Evaluation Error:", error);
-                    await sendWhatsApp(cleanPhone, "⚠️ I had a little trouble grading that just now. Please try sending your answer again.");
+                    const replyMsg = `✅ *Correct!*\n\n${aiResponse.feedback}\n\n_Your next lesson will arrive automatically tomorrow. Keep up the great work!_ 🎓`;
+                    await sendWhatsApp(cleanPhone, replyMsg);
+                } else {
+                    const replyMsg = `❌ *Not quite!*\n\n${aiResponse.feedback}\n\n_Please try again. Reply with your new answer!_ 💡`;
+                    await sendWhatsApp(cleanPhone, replyMsg);
                 }
-                
-                return { handled: true, clearSessionFlag: false };
+            } catch (error) {
+                console.error("AI Evaluation Error:", error);
+                await sendWhatsApp(cleanPhone, "⚠️ I had a little trouble grading that just now. Please try sending your answer again.");
             }
+            
+            return { handled: true, clearSessionFlag: false };
         }
     }
 
@@ -153,8 +148,9 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
     // ================================================
     const lessonKeywords = ['resume', 'replay', 'lesson']; 
     if (lessonKeywords.includes(incomingMsg)) {
+        // 🚀 FIX: Search by phone to catch enrollments across all their orgs
         const enrollment = await prisma.enrollment.findFirst({
-            where: { memberId: member.id, status: 'ACTIVE' },
+            where: { member: { phone: cleanPhone }, status: 'ACTIVE' },
             include: { course: { include: { modules: true } } }
         });
 
@@ -174,7 +170,7 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                 msg += `🧠 *Quiz:* ${module.quizQuestion || module.quiz}\n_Reply with your answer to get instant feedback!_`;
                 await prisma.enrollment.update({
                     where: { id: enrollment.id },
-                    data: { quizState: 'AWAITING_ANSWER' } // 👈 STANDARDIZED!
+                    data: { quizState: 'AWAITING_ANSWER' } 
                 });
             }
             await sendWhatsApp(cleanPhone, msg);
@@ -194,8 +190,9 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
             return { handled: true, clearSessionFlag: false };
         }
 
+        // 🚀 FIX: Gather enrollments globally via phone number
         const enrollments = await prisma.enrollment.findMany({
-            where: { memberId: member.id, status: 'ACTIVE' },
+            where: { member: { phone: cleanPhone }, status: 'ACTIVE' },
             include: { course: true }
         });
 
@@ -312,10 +309,13 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
 
     if (session.step === 'UPDATE_NAME_LAST') {
         const newLastName = rawMsg.trim();
-        await prisma.member.update({
-            where: { id: member.id },
+        
+        // 🚀 FIX: Update ALL profiles linked to this phone number!
+        await prisma.member.updateMany({
+            where: { phone: cleanPhone },
             data: { firstName: session.newFirstName, lastName: newLastName }
         });
+        
         await sendWhatsApp(cleanPhone, `✅ Profile Updated!\n\nNice to meet you, *${session.newFirstName} ${newLastName}*.\n\nReply *Menu* to continue.`);
         return { handled: true, clearSessionFlag: true }; 
     }
