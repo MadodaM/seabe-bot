@@ -1,5 +1,5 @@
 // routes/link.js
-// VERSION: 4.2 (Strict Prisma Compliance, Fee Splits, Obsolete Routes Removed)
+// VERSION: 4.3 (Strict Prisma Compliance, Multi-Tenant Menus & Dynamic Services/Courses)
 const express = require('express');
 const router = express.Router();
 const netcash = require('../services/netcash');
@@ -13,12 +13,23 @@ module.exports = (app, { prisma }) => {
     router.get('/link/:code', async (req, res) => {
         try {
             const { code } = req.params;
+            
+            // 💡 Fetch Org + All possible Menu Items (Filtered safely in memory below)
             const org = await prisma.church.findUnique({ 
                 where: { code: code.toUpperCase() },
-                include: { events: { where: { status: 'ACTIVE' } } }
+                include: { 
+                    events: true,
+                    products: true,
+                    courses: true
+                }
             });
 
             if (!org) return res.status(404).send("<h3>Error: Organization not found.</h3>");
+
+            // Filter Active Items safely
+            const activeEvents = (org.events || []).filter(e => e.status.toUpperCase() === 'ACTIVE');
+            const activeProducts = (org.products || []).filter(p => p.isActive);
+            const liveCourses = (org.courses || []).filter(c => c.status === 'LIVE' || c.status === 'ACTIVE');
 
             // --- 💡 DYNAMIC MENU & BRANDING ---
             let optionsHtml = '';
@@ -40,15 +51,57 @@ module.exports = (app, { prisma }) => {
                     <option value="JOIN_FEE" data-type="VARIABLE">Joining Fee 📝</option>
                     <option value="DONATION" data-type="VARIABLE">General Donation 🤝</option>`;
             
+            } else if (org.type === 'STOKVEL_SAVINGS') {
+                orgIcon = '💰';
+                orgLabel = 'Savings Club';
+                themeColor = '#f39c12';
+                optionsHtml = `
+                    <option value="CONTRIBUTION" data-type="VARIABLE" selected>Monthly Contribution 💰</option>
+                    <option value="DEPOSIT" data-type="VARIABLE">Once-off Deposit 📥</option>
+                    <option value="PENALTY" data-type="VARIABLE">Late Fee / Penalty ⚠️</option>`;
+            
             } else if (org.type === 'NON_PROFIT') {
                 orgIcon = '🤝';
                 orgLabel = 'Non-Profit';
                 themeColor = '#27ae60';
                 optionsHtml = `<option value="DONATION" data-type="VARIABLE" selected>General Donation 💖</option>`;
-            } else {
+            
+            } else if (org.type === 'SERVICE_PROVIDER' || org.type === 'PERSONAL_CARE') {
+                orgIcon = '✂️';
+                orgLabel = 'Booking & Services';
+                themeColor = '#e67e22';
+                
+                if (activeProducts.length > 0) {
+                    optionsHtml = activeProducts.map(p => `<option value="SERVICE_${p.id}" data-type="FIXED" data-price="${p.price}">${p.name} - R${p.price.toFixed(2)}</option>`).join('');
+                    optionsHtml += `<option value="OTHER_SERVICE" data-type="VARIABLE">Other Amount / Custom Service</option>`;
+                } else {
+                    optionsHtml = `<option value="SERVICE" data-type="VARIABLE" selected>Service Payment ✂️</option>`;
+                }
+            
+            } else if (org.type === 'ACADEMY' || org.type === 'COACHING') {
+                orgIcon = '🎓';
+                orgLabel = 'Academy';
+                themeColor = '#3498db';
+                
+                if (liveCourses.length > 0) {
+                    optionsHtml = liveCourses.map(c => `<option value="COURSE_${c.id}" data-type="FIXED" data-price="${c.price}">${c.title} - R${c.price.toFixed(2)}</option>`).join('');
+                    optionsHtml += `<option value="DONATION" data-type="VARIABLE">Sponsor a Student 📚</option>`;
+                } else {
+                    optionsHtml = `<option value="COURSE_FEE" data-type="VARIABLE" selected>Course Registration Fee 🎓</option>`;
+                }
+            
+            } else { // DEFAULT CHURCH
                 optionsHtml = `
                     <option value="OFFERING" data-type="VARIABLE" selected>General Offering 🎁</option>
-                    <option value="TITHE" data-type="VARIABLE">Tithe (10%) 🏛️</option>`;
+                    <option value="TITHE" data-type="VARIABLE">Tithe (10%) 🏛️</option>
+                    <option value="DONATION" data-type="VARIABLE">Building Fund / Donation 🧱</option>`;
+            }
+
+            // --- 🎟️ UNIVERSAL EVENTS APPEND ---
+            if (activeEvents.length > 0) {
+                optionsHtml += `<optgroup label="🎟️ Upcoming Events">`;
+                optionsHtml += activeEvents.map(e => `<option value="EVENT_${e.id}" data-type="FIXED" data-price="${e.price}">${e.name} Ticket - R${e.price.toFixed(2)}</option>`).join('');
+                optionsHtml += `</optgroup>`;
             }
 
             // --- 🎨 FULL UI RENDER ---
@@ -86,7 +139,7 @@ module.exports = (app, { prisma }) => {
                     </div>
                     <form action="/link/${code}/process" method="POST">
                         <div class="input-group">
-                            <label>Contribution Type</label>
+                            <label>Select Item / Service</label>
                             <select name="type" id="pType" onchange="upd()" required>${optionsHtml}</select>
                         </div>
                         <div class="input-group">
@@ -99,7 +152,7 @@ module.exports = (app, { prisma }) => {
                             <input type="email" name="email" placeholder="Email Address (For Invoice)" required style="margin-bottom:10px">
                             <input type="tel" name="phone" placeholder="WhatsApp Number" required>
                         </div>
-                        <button type="submit" class="btn">Proceed to Secure Pay</button>
+                        <button type="submit" class="btn" onclick="this.innerHTML='Loading Checkout...';">Proceed to Secure Pay</button>
                     </form>
                     <div class="secure-footer">🔒 Encrypted Payment via Seabe Digital</div>
                 </div>
@@ -112,17 +165,22 @@ module.exports = (app, { prisma }) => {
                             i.value = o.getAttribute('data-price');
                             i.readOnly = true;
                             i.style.background = "#f9f9f9";
+                            i.style.color = "#555";
                         } else {
                             i.value = '';
                             i.readOnly = false;
                             i.style.background = "#fff";
+                            i.style.color = "#000";
                         }
                     }
-                    upd();
+                    upd(); // Run on load
                 </script>
             </body>
             </html>`);
-        } catch (e) { res.status(500).send("System Error."); }
+        } catch (e) { 
+            console.error("Link Page Error:", e);
+            res.status(500).send("System Error Loading Link."); 
+        }
     });
 
     // ==========================================
@@ -149,10 +207,11 @@ module.exports = (app, { prisma }) => {
                 where: { phone: cleanPhone, churchCode: org.code }
             });
 
-            // 4. Generate Reference
-            const ref = `WEB-${code}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
+            // 4. Generate Reference (Sanitize type just in case of weird characters)
+            const safeType = type.replace(/[^A-Z0-9_]/ig, '').substring(0, 15);
+            const ref = `WEB-${code}-${safeType}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
 
-            // 5. 💡 THE FIX: Use Strict Prisma Syntax & Log Fee Splits!
+            // 5. 💡 Use Strict Prisma Syntax & Log Fee Splits
             await prisma.transaction.create({
                 data: { 
                     reference: ref, 
@@ -189,9 +248,6 @@ module.exports = (app, { prisma }) => {
             res.status(500).send("Processing Error."); 
         }
     });
-
-    // NOTE: Section 3 (WhatsApp Link Bouncer) was DELETED. 
-    // It is completely replaced by the secure `app.get('/secure-pay/:token')` route in index.js.
 
     app.use('/', router); 
 };
