@@ -26,8 +26,13 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
         });
 
         if (activeEnrollment) {
-            const currentModule = await prisma.module.findFirst({
-                where: { courseId: activeEnrollment.courseId, order: activeEnrollment.progress }
+            // 💡 FIX: Safely use the exact ID we saved in the Cron Job!
+            if (!activeEnrollment.currentModuleId) {
+                return { handled: false, clearSessionFlag: false };
+            }
+
+            const currentModule = await prisma.module.findUnique({
+                where: { id: activeEnrollment.currentModuleId }
             });
 
             if (currentModule && currentModule.quizQuestion) {
@@ -162,8 +167,16 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
             return { handled: true, clearSessionFlag: false };
         }
 
-        const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress;
-        const module = enrollment.course.modules.find(m => m.day === targetDay || m.dayNumber === targetDay || m.order === targetDay);
+        // 💡 FIX: Look up by the exact Database ID, not the day number
+        let module;
+        if (enrollment.currentModuleId) {
+            module = enrollment.course.modules.find(m => m.id === enrollment.currentModuleId);
+        } else {
+            // Fallback: If they just enrolled and Cron hasn't run yet, grab the very first lesson
+            module = enrollment.course.modules.sort((a, b) => a.dayNumber - b.dayNumber)[0];
+        }
+        
+        const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress; // Used only for text display
 
         if (module) {
             let msg = `🎓 *${incomingMsg === 'replay' ? 'REPLAY' : 'RESUMING'}: ${enrollment.course.title}* (Day ${targetDay})\n\n`;
@@ -259,16 +272,25 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
         }
 
         if (incomingMsg === '1' || incomingMsg === 'resume') {
-            const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress;
-            const module = enrollment.course.modules.find(m => m.day === targetDay || m.dayNumber === targetDay || m.order === targetDay);
+            let module;
+            if (enrollment.currentModuleId) {
+                module = enrollment.course.modules.find(m => m.id === enrollment.currentModuleId);
+            } else {
+                module = enrollment.course.modules.sort((a, b) => a.dayNumber - b.dayNumber)[0];
+            }
+            
+            const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress; 
             
             if (module) {
+                // 💡 Restored the message builder!
                 let msg = `🎓 *RESUMING: ${enrollment.course.title}* (Day ${targetDay})\n\n*${module.title}*\n\n${module.content || module.dailyLessonText}`;
-                if (module.quizQuestion) {
-                    msg += `\n\n🧠 *Quiz:* ${module.quizQuestion}\n_Reply with answer!_`;
+                
+                if (module.quizQuestion || module.quiz) {
+                    msg += `\n\n🧠 *Quiz:* ${module.quizQuestion || module.quiz}\n_Reply with answer!_`;
                     await prisma.enrollment.update({ where: { id: enrollment.id }, data: { quizState: 'AWAITING_ANSWER' }});
                 }
-                await sendWhatsApp(cleanPhone, msg, module.contentUrl);;
+                
+                await sendWhatsApp(cleanPhone, msg, module.contentUrl);
                 session.step = null; 
             } else {
                 await sendWhatsApp(cleanPhone, "✅ You are up to date!");
