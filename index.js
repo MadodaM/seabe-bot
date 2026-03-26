@@ -7,11 +7,20 @@ const bodyParser = require('body-parser');
 const path = require('path');
 const multer = require('multer');
 const axios = require('axios'); 
+const prisma = require('./services/db');
+const cookieParser = require('cookie-parser');
+const rateLimit = require('express-rate-limit');// ==========================================
+// SEABE PLATFORM - VERSION 4.1 (Stable)
+// ==========================================
+require('dotenv').config();
+const express = require('express');
+const bodyParser = require('body-parser');
+const path = require('path');
+const multer = require('multer');
+const axios = require('axios'); 
 const sgMail = require('@sendgrid/mail'); 
 const prisma = require('./services/db');
 const netcash = require('./services/netcash');
-//const prisma = require('./services/db'); // or './services/prisma-client' depending on your setup
-//const { PrismaClient } = require('@prisma/client');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 const { globalLimiter } = require('./middleware/rateLimiter');
@@ -30,40 +39,36 @@ const webhooksRoute = require('./routes/webhooks');
 const crmClaimsRoute = require('./routes/crmClaims');
 const ficaPortalRoutes = require('./routes/ficaPortal');
 const mandatesRouter = require('./routes/mandates');
-const webhookRouter = require('./routes/webhooks'); // Yes, this is duplicated in imports but used differently below
+const webhookRouter = require('./routes/webhooks');
 
 const app = express();
 app.use(globalLimiter); 
 
-// Route to serve the Credit Passport UI for testing
-app.get('/passport-test', (req, res) => {
-    res.sendFile(path.join(__dirname, 'views', 'credit-passport.html'));
-});
-app.use('/', require('./routes/checkout'));
-//const prisma = new PrismaClient();
-const upload = multer({ dest: 'uploads/' }); 
-
 // 🛡️ TRUST PROXY (Required for Render/Heroku)
 app.set('trust proxy', 1);
 
+// 🛠️ SET VIEW ENGINE (Crucial for rendering .ejs files!)
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+
 if (process.env.SENDGRID_KEY) sgMail.setApiKey(process.env.SENDGRID_KEY);
+
+const upload = multer({ dest: 'uploads/' }); 
 
 // ==========================================
 // 1. GLOBAL MIDDLEWARES
 // ==========================================
 app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // Required for Twilio and Netcash ITN form data
+app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/public', express.static(path.join(__dirname, 'public')));
-
-// Raw Body for specific webhooks (if needed)
 app.use(bodyParser.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
 // Rate Limiter
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 300, // Increased limit so you don't block yourself
+  windowMs: 15 * 60 * 1000, 
+  max: 300, 
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -72,9 +77,7 @@ app.use(limiter);
 // ==========================================
 // 2. HELPER FUNCTIONS
 // ==========================================
-// We need this because web.js expects it
 const syncToHubSpot = async (data) => {
-    // Placeholder for HubSpot Logic
     if(process.env.NODE_ENV === 'development') console.log("📝 HubSpot Sync:", data);
 };
 
@@ -82,96 +85,61 @@ const syncToHubSpot = async (data) => {
 // 3. MOUNT ROUTES
 // ==========================================
 
-// A. Special Routes (No Auth / Webhooks)
+// Route to serve the Credit Passport UI for testing
+app.get('/passport-test', (req, res) => {
+    res.sendFile(path.join(__dirname, 'views', 'credit-passport.html'));
+});
+app.use('/', require('./routes/checkout'));
+
 app.use('/api/fica', ficaPortalRoutes);
 app.use('/mandate', mandatesRouter);
-app.use(webhookRouter); // Netcash Webhooks
+app.use(webhookRouter); 
 app.get('/ping', (req, res) => res.status(200).send("Heartbeat received. Seabe Engine is awake."));
 
-// B. Static Legal Pages
 app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacy.html')));
 app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
 
-// C. MAIN SYSTEM MODULES
-// We wrap these in try/catch so one module crash doesn't kill the server,
-// BUT we log the error loudly so you know if it failed.
+try { require('./routes/platform')(app, { prisma }); } catch (e) { console.error("⚠️ Platform routes failed:", e.message); }
+try { require('./routes/admin')(app, { prisma }); } catch (e) { console.error("⚠️ Admin routes failed:", e.message); }
 
-// 1. Platform (Internal)
 try { 
-    require('./routes/platform')(app, { prisma }); 
-} catch (e) { console.error("⚠️ Platform routes failed:", e.message); }
-
-// 2. Admin Dashboard
-try { 
-    require('./routes/admin')(app, { prisma }); 
-} catch (e) { console.error("⚠️ Admin routes failed:", e.message); }
-
-//Campaigns
-app.get('/seabe-pay', (req, res) => {
-    res.render('seabe-pay'); // Renders the views/seabe-pay.ejs file
-});
-
-
-// 3. PUBLIC WEBSITE (The one giving you 404)
-try { 
-    // We must pass syncToHubSpot here
     require('./routes/web')(app, upload, { prisma, syncToHubSpot }); 
-    console.log("✅ Web Routes Loaded (Home, Register, Pay)");
-} catch (e) { 
-    console.error("❌ CRITICAL: Web routes failed to load!");
-    console.error(e); // This will show you exactly why it failed
-}
+    console.log("✅ Web Routes Loaded");
+} catch (e) { console.error("❌ CRITICAL: Web routes failed!", e); }
+
 try { 
     require('./routes/adminPricing')(app, { prisma }); 
     console.log("✅ Pricing Dashboard Loaded");
 } catch (e) { console.error("⚠️ Pricing routes failed:", e.message); }
 
-// D. API & WhatsApp
 app.use('/api/whatsapp', require('./routes/whatsappRouter'));
 app.use('/api/public', require('./routes/quoteGenerator')); 
 
-// E. Legacy / Specific Features
 try { app.use('/kyc', require('./routes/kyc').router); } catch(e){}
 try { app.use('/api/surepol', require('./routes/surepol')); } catch(e){}
 try { app.use('/api/prospect', require('./routes/prospectKYC')); } catch(e){}
 try { require('./routes/link')(app, { prisma }); } catch (e) {}
 try { require('./routes/collectionbot')(app, { prisma }); } catch (e) {}
 
-// F. Catch-Alls (Must be last)
-app.use('/', blastEngineRoute);
-app.use('/', webhooksRoute);
-app.use('/', crmClaimsRoute);
-try { app.use('/', require('./routes/paymentRoutes')); } catch(e){}
+// ==========================================
+// 🚀 SEABE PAY LANDING PAGE ROUTES
+// ==========================================
+app.get('/seabe-pay', (req, res) => {
+    res.render('seabe-pay'); 
+});
 
 app.post('/api/demo-request', async (req, res) => {
     const { fullName, shopName, businessType, teamSize, whatsappNumber } = req.body;
-
     try {
-        // Option A: Save lead to your Prisma database (if you create a Lead table)
-        /*
-        await prisma.lead.create({
-            data: { fullName, shopName, businessType, teamSize, phone: whatsappNumber }
-        });
-        */
-
         console.log(`🚀 New Seabe Pay Lead: ${shopName} (${fullName})`);
-
-        // Option B: Automatically WhatsApp the admin (YOU) that a new lead came in!
-        const adminPhone = "+27872657872"; // Replace with your actual phone number
-        const alertMessage = `🚨 *NEW SEABE PAY LEAD* 🚨\n\n*Name:* ${fullName}\n*Shop:* ${shopName}\n*Type:* ${businessType}\n*Size:* ${teamSize} chairs\n*WhatsApp:* ${whatsappNumber}\n\n_Tap their number to message them right now!_`;
-        
-        // Use your existing Twilio/WhatsApp send function here
-        // await sendWhatsApp(adminPhone, alertMessage);
-
-        // Render a simple success message (or redirect to a thank you page)
         res.send(`
             <div style="font-family: sans-serif; text-align: center; margin-top: 50px;">
                 <h1 style="color: #2563EB;">Request Received!</h1>
                 <p>Thank you, ${fullName}. Our team will contact you on WhatsApp shortly.</p>
-                <a href="/seabe-pay" style="color: #4B5563;">Return to home</a>
+                <br>
+                <a href="/seabe-pay" style="color: #4B5563; text-decoration: underline;">Return to home</a>
             </div>
         `);
-
     } catch (error) {
         console.error("Lead capture error:", error);
         res.status(500).send("Something went wrong. Please try again.");
@@ -181,118 +149,53 @@ app.post('/api/demo-request', async (req, res) => {
 // ============================================================
 // 🔒 SECURE AES-256 PAYMENT ROUTER (NETCASH)
 // ============================================================
-    app.get('/secure-pay/:token', async (req, res) => {
-        try {
-            const { decryptReference, generateAutoPostForm } = require('./services/netcash');
-            
-            // 1. Decrypt the military-grade token
-            const reference = decryptReference(req.params.token);
-            if (!reference) {
-                return res.status(400).send("<h1>Link Expired or Invalid</h1><p>Please request a new payment link via WhatsApp.</p>");
-            }
+app.get('/secure-pay/:token', async (req, res) => {
+    try {
+        const { decryptReference, generateAutoPostForm } = require('./services/netcash');
+        const reference = decryptReference(req.params.token);
+        if (!reference) return res.status(400).send("<h1>Link Expired or Invalid</h1>");
 
-            // 2. Fetch the Ledger Record
-            const transaction = await prisma.transaction.findUnique({
-                where: { reference: reference },
-                include: { church: true, member: true }
-            });
+        const transaction = await prisma.transaction.findUnique({
+            where: { reference: reference },
+            include: { church: true, member: true }
+        });
 
-            if (!transaction) return res.status(404).send("Transaction not found in ledger.");
-            
-            // Prevent double payments
-            if (transaction.status === 'SUCCESS') {
-                return res.send("<h1>Payment Already Received</h1><p>This transaction has already been settled successfully.</p>");
-            }
+        if (!transaction) return res.status(404).send("Transaction not found in ledger.");
+        if (transaction.status === 'SUCCESS') return res.send("<h1>Payment Already Received</h1>");
 
-            // 3. 🏷️ DYNAMIC BRANDING & DESCRIPTION
-            const churchName = transaction.church ? transaction.church.name : 'Seabe Digital';
-            
-            // Format the type cleanly (e.g., converts "DEBIT_ORDER" to "DEBIT ORDER", or "TITHE" to "TITHE")
-            const txType = transaction.type ? transaction.type.replace(/_/g, ' ') : 'Payment';
-            
-            const userEmail = transaction.member ? transaction.member.email : '';
+        const churchName = transaction.church ? transaction.church.name : 'Seabe Digital';
+        const txType = transaction.type ? transaction.type.replace(/_/g, ' ') : 'Payment';
+        const userEmail = transaction.member ? transaction.member.email : '';
 
-            // 4. Build the payload for Netcash
-            const txData = {
-                reference: transaction.reference,
-                amount: transaction.amount,
-                // ✨ THE MAGIC: Passes "Org Name - Type" (e.g., "Grace Community - TITHE") to Netcash p3
-                description: `${churchName} - ${txType}`, 
-                phone: transaction.phone || '',
-                email: userEmail || ''
-            };
+        const txData = {
+            reference: transaction.reference,
+            amount: transaction.amount,
+            description: `${churchName} - ${txType}`, 
+            phone: transaction.phone || '',
+            email: userEmail || ''
+        };
 
-            // 5. Generate and send the Auto-Post loading screen
-            const html = generateAutoPostForm(txData);
-            res.send(html);
+        const html = generateAutoPostForm(txData);
+        res.send(html);
+    } catch (error) {
+        console.error("Secure Link Error:", error);
+        res.status(500).send("Secure link generation failed.");
+    }
+});
+    
+app.all('/api/netcash/success', (req, res) => {
+    res.send(`<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Payment Successful</title></head><body style="font-family: sans-serif; text-align: center; padding: 50px;"><h1>✅ Payment Successful!</h1><p>Your receipt has been sent via WhatsApp.</p></body></html>`);
+});
 
-        } catch (error) {
-            console.error("Secure Link Error:", error);
-            res.status(500).send("Secure link generation failed.");
-        }
-    });
-	
-// ============================================================
-    // 🌐 USER BROWSER REDIRECTS (From Netcash back to Seabe)
-    // ============================================================
+app.all('/api/netcash/decline', (req, res) => {
+    res.send(`<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Payment Cancelled</title></head><body style="font-family: sans-serif; text-align: center; padding: 50px;"><h1>⚠️ Payment Incomplete</h1><p>Your transaction was cancelled or declined.</p></body></html>`);
+}); 
 
-    // 1. When the user completes payment successfully
-    app.all('/api/netcash/success', (req, res) => {
-        res.send(`
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Payment Successful</title>
-                <style>
-                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f8fafc; text-align: center; padding: 20px; }
-                    .card { background: white; padding: 40px 20px; border-radius: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); max-width: 400px; width: 100%; border: 1px solid #e2e8f0; }
-                    .icon { font-size: 64px; margin-bottom: 20px; }
-                    h1 { color: #0f172a; margin: 0 0 10px 0; font-size: 24px; font-weight: 800; }
-                    p { color: #64748b; margin: 0 0 30px 0; line-height: 1.5; }
-                    .btn { background: #14b8a6; color: white; text-decoration: none; padding: 14px 24px; border-radius: 12px; font-weight: bold; display: inline-block; width: 80%; box-sizing: border-box; }
-                </style>
-            </head>
-            <body>
-                <div class="card">
-                    <div class="icon">✅</div>
-                    <h1>Payment Successful!</h1>
-                    <p>Thank you. Your transaction has been securely processed. Your receipt has been sent via WhatsApp.</p>
-                    <a href="https://wa.me/27100000000" class="btn">Return to WhatsApp</a>
-                </div>
-            </body>
-            </html>
-        `);
-    });
-
-    // 2. When the user cancels or the card declines
-    app.all('/api/netcash/decline', (req, res) => {
-        res.send(`
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Payment Cancelled</title>
-                <style>
-                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f8fafc; text-align: center; padding: 20px; }
-                    .card { background: white; padding: 40px 20px; border-radius: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); max-width: 400px; width: 100%; border: 1px solid #e2e8f0; }
-                    .icon { font-size: 64px; margin-bottom: 20px; }
-                    h1 { color: #0f172a; margin: 0 0 10px 0; font-size: 24px; font-weight: 800; }
-                    p { color: #64748b; margin: 0 0 30px 0; line-height: 1.5; }
-                    .btn { background: #64748b; color: white; text-decoration: none; padding: 14px 24px; border-radius: 12px; font-weight: bold; display: inline-block; width: 80%; box-sizing: border-box; }
-                </style>
-            </head>
-            <body>
-                <div class="card">
-                    <div class="icon">⚠️</div>
-                    <h1>Payment Incomplete</h1>
-                    <p>Your transaction was cancelled or declined. No funds were deducted from your account.</p>
-                    <a href="https://wa.me/27872657872" class="btn">Return to WhatsApp</a>
-                </div>
-            </body>
-            </html>
-        `);
-    });	
+// F. Catch-Alls (Must be last so they don't block seabe-pay!)
+app.use('/', blastEngineRoute);
+app.use('/', webhooksRoute);
+app.use('/', crmClaimsRoute);
+try { app.use('/', require('./routes/paymentRoutes')); } catch(e){}
 
 // ==========================================
 // 4. CRON & SERVER INIT
@@ -320,6 +223,78 @@ if (process.env.NODE_ENV !== 'test') {
 if (process.env.HOST_URL) {
     const SELF_URL = `https://${process.env.HOST_URL}/ping`;
     setInterval(() => { axios.get(SELF_URL).catch(() => {}); }, 600000);
+}
+
+module.exports = app;
+const { globalLimiter } = require('./middleware/rateLimiter');
+
+// Cron Services
+const { startCronJobs } = require('./services/scheduler');
+const { startCourseEngine } = require('./services/courseCron');
+const { startDripCampaign } = require('./services/dripCampaign');
+const { startBillingEngine } = require('./services/billingCron');
+const { startBatchEngine } = require('./services/batchCron');  
+const { startWeeklyReportEngine } = require('./services/weeklyReportCron');
+
+const app = express();
+app.use(globalLimiter); 
+app.set('trust proxy', 1);
+app.set('view engine', 'ejs'); // 🛠️ EJS Engine initialized
+app.set('views', path.join(__dirname, 'views'));
+
+// Middlewares
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/public', express.static(path.join(__dirname, 'public')));
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 300 }));
+
+// Helper
+const syncToHubSpot = async (data) => { if(process.env.NODE_ENV === 'development') console.log("📝 HubSpot Sync:", data); };
+
+// ==========================================
+// 🚀 MOUNT ROUTES
+// ==========================================
+app.use('/', require('./routes/checkout'));
+app.use('/api/fica', require('./routes/ficaPortal'));
+app.use('/mandate', require('./routes/mandates'));
+app.use(require('./routes/webhooks')); 
+app.get('/ping', (req, res) => res.status(200).send("Heartbeat received. Seabe Engine is awake."));
+app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacy.html')));
+
+try { require('./routes/platform')(app, { prisma }); } catch (e) {}
+try { require('./routes/admin')(app, { prisma }); } catch (e) {}
+try { require('./routes/web')(app, multer({ dest: 'uploads/' }), { prisma, syncToHubSpot }); } catch (e) {}
+try { require('./routes/adminPricing')(app, { prisma }); } catch (e) {}
+
+app.use('/api/whatsapp', require('./routes/whatsappRouter'));
+app.use('/api/public', require('./routes/quoteGenerator')); 
+
+// ✂️ THE MAGIC: 100 lines of Seabe Pay logic reduced to one line!
+app.use('/seabe-pay', require('./routes/seabePay'));
+
+// Legacy Catch-Alls
+try { app.use('/kyc', require('./routes/kyc').router); } catch(e){}
+app.use('/', require('./routes/blastEngine'));
+app.use('/', require('./routes/crmClaims'));
+
+// ==========================================
+// ⚙️ SERVER INIT & CRON
+// ==========================================
+const PORT = process.env.PORT || 10000;
+if (process.env.NODE_ENV !== 'test') {
+    app.listen(PORT, () => {
+        console.log(`✅ Seabe Engine running securely on port ${PORT}`);
+        try {
+            startCronJobs(); startDripCampaign(); startBillingEngine();
+            startWeeklyReportEngine(); startBatchEngine(); startCourseEngine();       
+        } catch (e) { console.log("⚠️ Scheduler module failed to start."); }
+    });
+}
+
+if (process.env.HOST_URL) {
+    setInterval(() => { axios.get(`https://${process.env.HOST_URL}/ping`).catch(() => {}); }, 600000);
 }
 
 module.exports = app;
