@@ -26,17 +26,28 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
         });
 
         if (activeEnrollment) {
-            // 💡 FIX: Safely use the exact ID we saved in the Cron Job!
-            if (!activeEnrollment.currentModuleId) {
+            // 💡 FIX: Self-healing lookup for legacy enrollments!
+            let currentModule;
+            
+            if (activeEnrollment.currentModuleId) {
+                currentModule = await prisma.module.findUnique({
+                    where: { id: activeEnrollment.currentModuleId }
+                });
+            } else {
+                // If ID is missing, calculate their current module based on progress
+                const modules = await prisma.module.findMany({
+                    where: { courseId: activeEnrollment.courseId },
+                    orderBy: { order: 'asc' }
+                });
+                const targetIndex = activeEnrollment.progress > 0 ? activeEnrollment.progress - 1 : 0;
+                currentModule = modules[targetIndex];
+            }
+
+            if (!currentModule || !currentModule.quizQuestion) {
                 return { handled: false, clearSessionFlag: false };
             }
 
-            const currentModule = await prisma.module.findUnique({
-                where: { id: activeEnrollment.currentModuleId }
-            });
-
-            if (currentModule && currentModule.quizQuestion) {
-                await sendWhatsApp(cleanPhone, "⏳ *Grading your answer...*");
+            await sendWhatsApp(cleanPhone, "⏳ *Grading your answer...*");
 
                 try {
                     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -235,11 +246,12 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
         if (enrollment.currentModuleId) {
             module = enrollment.course.modules.find(m => m.id === enrollment.currentModuleId);
         } else {
-            // Fallback: If they just enrolled and Cron hasn't run yet, grab the very first lesson
-            module = enrollment.course.modules.sort((a, b) => a.order - b.order)[0];
+            const sortedModules = enrollment.course.modules.sort((a, b) => a.order - b.order);
+            const targetIndex = enrollment.progress > 0 ? enrollment.progress - 1 : 0;
+            module = sortedModules[targetIndex] || sortedModules[0];
         }
         
-        const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress; // Used only for text display
+        const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress;
 
         if (module) {
             let msg = `🎓 *${incomingMsg === 'replay' ? 'REPLAY' : 'RESUMING'}: ${enrollment.course.title}* (Day ${targetDay})\n\n`;
@@ -335,14 +347,17 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
         }
 
         if (incomingMsg === '1' || incomingMsg === 'resume') {
+            // 💡 FIX: Self-healing fallback here too!
             let module;
             if (enrollment.currentModuleId) {
                 module = enrollment.course.modules.find(m => m.id === enrollment.currentModuleId);
             } else {
-                module = enrollment.course.modules.sort((a, b) => a.order - b.order)[0];
+                const sortedModules = enrollment.course.modules.sort((a, b) => a.order - b.order);
+                const targetIndex = enrollment.progress > 0 ? enrollment.progress - 1 : 0;
+                module = sortedModules[targetIndex] || sortedModules[0];
             }
             
-            const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress; 
+            const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress;
             
             if (module) {
                 // 💡 Restored the message builder!
