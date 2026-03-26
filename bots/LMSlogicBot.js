@@ -72,7 +72,7 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                             data: { quizState: 'IDLE', updatedAt: new Date() }
                         });
 
-                        const replyMsg = `✅ *Correct!*\n\n${aiResponse.feedback}\n\n_Your next lesson will arrive automatically tomorrow. Keep up the great work!_ 🎓`;
+                        const replyMsg = `✅ *Correct!*\n\n${aiResponse.feedback}\n\n_Your next lesson will arrive automatically tomorrow, or reply *Next* to continue right now!_ 🚀🎓`;
                         await sendWhatsApp(cleanPhone, replyMsg);
                     } else {
                         const replyMsg = `❌ *Not quite!*\n\n${aiResponse.feedback}\n\n_Please try again. Reply with your new answer!_ 💡`;
@@ -150,6 +150,69 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
             await sendWhatsApp(cleanPhone, "Invalid selection. Please reply with a valid course number.");
             return { handled: true, clearSessionFlag: false };
         }
+    }
+
+	// ================================================
+    // 🚀 BINGE LEARNING (The "Next" Trigger)
+    // ================================================
+    const bingeKeywords = ['next', 'next lesson', 'continue'];
+    if (bingeKeywords.includes(incomingMsg)) {
+        const enrollment = await prisma.enrollment.findFirst({
+            where: { member: { phone: cleanPhone }, status: 'ACTIVE' },
+            include: { course: { include: { modules: { orderBy: { dayNumber: 'asc' } } } } } // 💡 Must be ordered!
+        });
+
+        if (!enrollment) {
+            await sendWhatsApp(cleanPhone, "❌ You are not enrolled in any active courses.\n\nReply *Courses* to browse our catalogue.");
+            return { handled: true, clearSessionFlag: false };
+        }
+
+        // 🛑 BINGE GATE 1: Are they stuck on a quiz?
+        if (enrollment.quizState === 'AWAITING_ANSWER') {
+            await sendWhatsApp(cleanPhone, "⚠️ Hold up! You need to answer and pass your current quiz before I can give you the next lesson! 🧠");
+            return { handled: true, clearSessionFlag: false };
+        }
+
+        // 🟢 BINGE GATE 2: Load the next module using the Array Index
+        const nextModuleIndex = enrollment.progress || 0; 
+        const nextModule = enrollment.course.modules[nextModuleIndex];
+
+        if (nextModule) {
+            // Assemble the beautiful WhatsApp Lesson
+            let lessonMessage = `🎓 *${enrollment.course.title}* (Day ${nextModuleIndex + 1})\n\n`;
+            lessonMessage += `*${nextModule.title}*\n\n`;
+            lessonMessage += `${nextModule.content || nextModule.dailyLessonText}\n\n`;
+
+            if (nextModule.quizQuestion || nextModule.quiz) {
+                lessonMessage += `🧠 *Today's Quiz:*\n${nextModule.quizQuestion || nextModule.quiz}\n\n`;
+                lessonMessage += `_Reply with your answer to chat with our AI tutor!_`;
+            } else {
+                lessonMessage += `_Reply *Next* when you are ready to continue!_`; // If no quiz, invite them to keep going
+            }
+
+            // Send the lesson
+            await sendWhatsApp(cleanPhone, lessonMessage, nextModule.contentUrl);
+
+            // UPDATE THE DATABASE
+            await prisma.enrollment.update({
+                where: { id: enrollment.id },
+                data: {
+                    progress: nextModuleIndex + 1,
+                    currentModuleId: nextModule.id,
+                    quizState: (nextModule.quizQuestion || nextModule.quiz) ? 'AWAITING_ANSWER' : 'IDLE',
+                    updatedAt: new Date()
+                }
+            });
+        } else {
+            // 🎓 TRUE GRADUATION: No more modules left!
+            await sendWhatsApp(cleanPhone, `🎉 *CONGRATULATIONS, ${member.firstName}!* 🎉\n\nYou have officially passed all modules and completed *${enrollment.course.title}*!\n\nWe hope you enjoyed the journey. Reply *Menu* to explore more resources or check your dashboard for your certificate.`);
+            
+            await prisma.enrollment.update({
+                where: { id: enrollment.id },
+                data: { status: 'COMPLETED', completedAt: new Date() }
+            });
+        }
+        return { handled: true, clearSessionFlag: false };
     }
 
     // ================================================
