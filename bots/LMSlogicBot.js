@@ -97,12 +97,11 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                 return { handled: true, clearSessionFlag: false };
             }
         }
-    }
-
-    // ================================================
-    // 🎓 1. COURSE ENROLLMENT (Phase A)
-    // ================================================
-    const lmsTriggers = ['mentorship', 'grow', 'learn', 'courses'];
+    
+	// ================================================
+	// 🎓 1. COURSE ENROLLMENT (Phase A)
+	// ================================================
+	const lmsTriggers = ['mentorship', 'grow', 'learn', 'courses'];
     if (lmsTriggers.includes(incomingMsg)) {
         if (!member || !member.church) {
             await sendWhatsApp(cleanPhone, "⚠️ You must be linked to an organization to view courses. Reply *Join* first.");
