@@ -159,7 +159,7 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
     if (bingeKeywords.includes(incomingMsg)) {
         const enrollment = await prisma.enrollment.findFirst({
             where: { member: { phone: cleanPhone }, status: 'ACTIVE' },
-            include: { course: { include: { modules: { orderBy: { dayNumber: 'asc' } } } } } // 💡 Must be ordered!
+            include: { course: { include: { modules: { orderBy: { order: 'asc' } } } } } // 💡 Must be ordered!
         });
 
         if (!enrollment) {
@@ -236,7 +236,7 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
             module = enrollment.course.modules.find(m => m.id === enrollment.currentModuleId);
         } else {
             // Fallback: If they just enrolled and Cron hasn't run yet, grab the very first lesson
-            module = enrollment.course.modules.sort((a, b) => a.dayNumber - b.dayNumber)[0];
+            module = enrollment.course.modules.sort((a, b) => a.order - b.order)[0];
         }
         
         const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress; // Used only for text display
@@ -339,7 +339,7 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
             if (enrollment.currentModuleId) {
                 module = enrollment.course.modules.find(m => m.id === enrollment.currentModuleId);
             } else {
-                module = enrollment.course.modules.sort((a, b) => a.dayNumber - b.dayNumber)[0];
+                module = enrollment.course.modules.sort((a, b) => a.order - b.order)[0];
             }
             
             const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress; 
