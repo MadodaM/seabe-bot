@@ -378,19 +378,22 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
 
         if (incomingMsg === '2' || incomingMsg === 'previous') {
             const currentDay = enrollment.progress || 1;
-            const prevDay = currentDay > 1 ? currentDay - 1 : 1;
-
-            if (prevDay === currentDay && currentDay === 1) {
+            
+            if (currentDay <= 1) {
                 await sendWhatsApp(cleanPhone, "⚠️ You are on Day 1. There is no previous lesson.");
                 return { handled: true, clearSessionFlag: false };
             }
 
-            const module = enrollment.course.modules.find(m => m.day === prevDay || m.dayNumber === prevDay || m.order === prevDay);
+            // 💡 FIX: Use the sorted array index to safely grab yesterday's module
+            const prevIndex = currentDay - 2; // (progress 2 is array index 1. Previous is index 0)
+            const sortedModules = enrollment.course.modules.sort((a, b) => a.order - b.order);
+            const module = sortedModules[prevIndex];
+
             if (module) {
-                let msg = `⏮️ *PREVIOUS LESSON: ${enrollment.course.title}* (Day ${prevDay})\n\n*${module.title}*\n\n${module.content || module.dailyLessonText}`;
+                let msg = `⏮️ *PREVIOUS LESSON: ${enrollment.course.title}* (Day ${currentDay - 1})\n\n*${module.title}*\n\n${module.content || module.dailyLessonText}`;
                 await sendWhatsApp(cleanPhone, msg, module.contentUrl);
             } else {
-                await sendWhatsApp(cleanPhone, `⚠️ Could not find content for Day ${prevDay}.`);
+                await sendWhatsApp(cleanPhone, `⚠️ Could not find content for Day ${currentDay - 1}.`);
             }
             return { handled: true, clearSessionFlag: false };
         }
