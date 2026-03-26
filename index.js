@@ -106,6 +106,12 @@ try {
     require('./routes/admin')(app, { prisma }); 
 } catch (e) { console.error("⚠️ Admin routes failed:", e.message); }
 
+//Campaigns
+app.get('/seabe-pay', (req, res) => {
+    res.render('seabe-pay'); // Renders the views/seabe-pay.ejs file
+});
+
+
 // 3. PUBLIC WEBSITE (The one giving you 404)
 try { 
     // We must pass syncToHubSpot here
@@ -136,6 +142,41 @@ app.use('/', blastEngineRoute);
 app.use('/', webhooksRoute);
 app.use('/', crmClaimsRoute);
 try { app.use('/', require('./routes/paymentRoutes')); } catch(e){}
+
+app.post('/api/demo-request', async (req, res) => {
+    const { fullName, shopName, businessType, teamSize, whatsappNumber } = req.body;
+
+    try {
+        // Option A: Save lead to your Prisma database (if you create a Lead table)
+        /*
+        await prisma.lead.create({
+            data: { fullName, shopName, businessType, teamSize, phone: whatsappNumber }
+        });
+        */
+
+        console.log(`🚀 New Seabe Pay Lead: ${shopName} (${fullName})`);
+
+        // Option B: Automatically WhatsApp the admin (YOU) that a new lead came in!
+        const adminPhone = "+27872657872"; // Replace with your actual phone number
+        const alertMessage = `🚨 *NEW SEABE PAY LEAD* 🚨\n\n*Name:* ${fullName}\n*Shop:* ${shopName}\n*Type:* ${businessType}\n*Size:* ${teamSize} chairs\n*WhatsApp:* ${whatsappNumber}\n\n_Tap their number to message them right now!_`;
+        
+        // Use your existing Twilio/WhatsApp send function here
+        // await sendWhatsApp(adminPhone, alertMessage);
+
+        // Render a simple success message (or redirect to a thank you page)
+        res.send(`
+            <div style="font-family: sans-serif; text-align: center; margin-top: 50px;">
+                <h1 style="color: #2563EB;">Request Received!</h1>
+                <p>Thank you, ${fullName}. Our team will contact you on WhatsApp shortly.</p>
+                <a href="/seabe-pay" style="color: #4B5563;">Return to home</a>
+            </div>
+        `);
+
+    } catch (error) {
+        console.error("Lead capture error:", error);
+        res.status(500).send("Something went wrong. Please try again.");
+    }
+});
 
 // ============================================================
 // 🔒 SECURE AES-256 PAYMENT ROUTER (NETCASH)
