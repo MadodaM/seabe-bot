@@ -462,6 +462,7 @@ model Enrollment {
 
   // 🚀 STATE MACHINE (New)
   quizState String @default("IDLE") // IDLE, AWAITING_ANSWER
+  currentModuleId Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
