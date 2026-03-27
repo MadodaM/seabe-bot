@@ -10,23 +10,32 @@ if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
 }
 
 const sendWhatsApp = async (to, body, mediaUrl = null) => {
-    if (!twilioClient) return console.log("⚠️ Twilio Keys Missing for Course Delivery!");
+    if (!twilioClient) return console.log("⚠️ Twilio Keys Missing!");
     const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
-    
     let cleanTo = to.replace(/\D/g, '');
     if (cleanTo.startsWith('0')) cleanTo = '27' + cleanTo.substring(1);
     
     try {
-        const messagePayload = {
-            from: `whatsapp:${cleanTwilioNumber}`,
-            to: `whatsapp:+${cleanTo}`,
-            body: body
-        };
-        if (mediaUrl) messagePayload.mediaUrl = [mediaUrl];
+        // 1. IF THERE IS MEDIA, SEND IT FIRST (Standalone)
+        if (mediaUrl) {
+            await twilioClient.messages.create({
+                from: `whatsapp:${cleanTwilioNumber}`,
+                to: `whatsapp:+${cleanTo}`,
+                mediaUrl: [mediaUrl]
+            });
+        }
 
-        await twilioClient.messages.create(messagePayload);
+        // 2. THEN SEND THE TEXT BODY (No character limits!)
+        if (body && body.trim() !== '') {
+            await twilioClient.messages.create({
+                from: `whatsapp:${cleanTwilioNumber}`,
+                to: `whatsapp:+${cleanTo}`,
+                body: body
+            });
+        }
+        
     } catch (err) {
-        console.error("❌ LMS Twilio Send Error:", err.message);
+        console.error("❌ Twilio Send Error:", err.message);
     }
 };
 
