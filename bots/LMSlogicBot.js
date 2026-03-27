@@ -65,7 +65,24 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                     Return ONLY a raw JSON object (no markdown, no backticks) in this exact format:
                     {"isCorrect": true/false, "feedback": "A short, encouraging explanation of why they are right or wrong."}`;
 
-                    const result = await aiModel.generateContent(prompt);
+                    // 🔄 AUTO-RETRY LOGIC FOR 503 ERRORS
+                    let result;
+                    let retries = 3;
+                    
+                    while (retries > 0) {
+                        try {
+                            result = await aiModel.generateContent(prompt);
+                            break; // If successful, break out of the loop
+                        } catch (apiError) {
+                            if (apiError.status === 503 && retries > 1) {
+                                console.log(`⏳ Gemini busy. Retrying in 2s... (${retries - 1} attempts left)`);
+                                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+                                retries--;
+                            } else {
+                                throw apiError; // If it's not a 503 or we are out of retries, trigger the main catch block
+                            }
+                        }
+                    }
                     const aiResponse = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
 
                     await prisma.assessmentLog.create({
