@@ -95,9 +95,15 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                     });
 
                     if (aiResponse.isCorrect) {
+                        // 🟢 MERGED UPDATE: Clears the quiz, resets strikes, and resets the clock!
                         await prisma.enrollment.update({
                             where: { id: activeEnrollment.id },
-                            data: { quizState: 'IDLE', updatedAt: new Date() }
+                            data: { 
+                                quizState: 'IDLE', 
+                                updatedAt: new Date(),
+                                reminderCount: 0,              // Reset strikes to zero
+                                lastActivityAt: new Date()     // Reset the timer
+                            }
                         });
 
                         const replyMsg = `✅ *Correct!*\n\n${aiResponse.feedback}\n\n_Your next lesson will arrive automatically tomorrow, or reply *Next* to continue right now!_ 🚀🎓`;
@@ -110,6 +116,17 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                     console.error("AI Evaluation Error:", error);
                     await sendWhatsApp(cleanPhone, "⚠️ I had a little trouble grading that just now. Please try sending your answer again.");
                 }
+				
+				// Inside your AI Grader success block:
+				await prisma.enrollment.update({
+				where: { id: enrollment.id },
+				data: {
+        
+				reminderCount: 0,              // 🟢 Reset strikes to zero
+				lastActivityAt: new Date()     // 🟢 Reset the timer
+    }
+});
+				
                 
                 return { handled: true, clearSessionFlag: false };
             }
