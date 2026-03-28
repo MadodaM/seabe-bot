@@ -12,7 +12,7 @@
     <div class="bg-gray-900 text-white shadow-md">
         <div class="max-w-4xl mx-auto px-4 py-4 flex justify-between items-center">
             <h1 class="text-2xl font-bold"><i class="fa-solid fa-hammer text-blue-400 mr-3"></i>Course Builder</h1>
-            <a href="/admin/<%= orgCode %>/academy" class="text-gray-300 hover:text-white transition">...</a>
+            <a href="/admin/<%= orgCode %>/academy" class="text-gray-300 hover:text-white transition"><i class="fa-solid fa-xmark mr-2"></i> Cancel</a>
         </div>
     </div>
 
@@ -66,4 +66,60 @@
                             <input type="text" name="moduleQuizzes[]" placeholder="What is the most important metric for a barber?" class="w-full px-4 py-2 mb-2 rounded border outline-none focus:border-blue-500 text-sm">
                             
                             <label class="block text-xs font-bold text-blue-700 mb-1">Target Answer (Context for the AI Grader)</label>
-                            <input type="text" name="moduleAnswers[]" placeholder="Client retention rate
+                            <input type="text" name="moduleAnswers[]" placeholder="Client retention rate." class="w-full px-4 py-2 rounded border outline-none focus:border-blue-500 text-sm">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-lg py-4 mt-6 rounded-xl shadow-lg transition transform hover:-translate-y-1">
+                <i class="fa-solid fa-cloud-arrow-up mr-2"></i> Save Course & Publish to WhatsApp
+            </button>
+        </form>
+    </div>
+
+    <script>
+        let dayCount = 1;
+
+        function addModule() {
+            dayCount++;
+            const container = document.getElementById('modulesContainer');
+            
+            const html = `
+                <div class="module-card bg-gray-50 rounded-lg p-5 border border-gray-200 relative mt-6">
+                    <button type="button" onclick="this.parentElement.remove(); updateDayBadges();" class="absolute top-4 right-16 text-red-500 hover:text-red-700 text-sm font-bold"><i class="fa-solid fa-trash"></i></button>
+                    <div class="absolute top-4 right-4 bg-gray-800 text-white text-xs font-bold px-2 py-1 rounded day-badge">Day ${dayCount}</div>
+                    
+                    <label class="block text-sm font-bold text-gray-700 mb-2">Lesson Title</label>
+                    <input type="text" name="moduleTitles[]" required placeholder="Lesson title..." class="w-full px-4 py-2 mb-4 rounded border outline-none focus:border-blue-500">
+                    
+                    <label class="block text-sm font-bold text-gray-700 mb-2">Lesson Text (WhatsApp Body)</label>
+                    <textarea name="moduleContents[]" required rows="4" placeholder="Type out the lesson here..." class="w-full px-4 py-2 mb-4 rounded border outline-none focus:border-blue-500"></textarea>
+
+                    <label class="block text-sm font-bold text-gray-700 mb-2">Video URL (Optional)</label>
+                    <input type="url" name="moduleUrls[]" placeholder="https://..." class="w-full px-4 py-2 mb-4 rounded border outline-none focus:border-blue-500 text-sm">
+
+                    <div class="bg-blue-50 p-4 rounded-lg border border-blue-100">
+                        <label class="block text-sm font-bold text-blue-900 mb-2"><i class="fa-solid fa-robot mr-1"></i> AI Quiz Question (Optional)</label>
+                        <input type="text" name="moduleQuizzes[]" placeholder="Ask a question..." class="w-full px-4 py-2 mb-2 rounded border outline-none focus:border-blue-500 text-sm">
+                        
+                        <label class="block text-xs font-bold text-blue-700 mb-1">Target Answer (Context for AI)</label>
+                        <input type="text" name="moduleAnswers[]" placeholder="The correct concept..." class="w-full px-4 py-2 rounded border outline-none focus:border-blue-500 text-sm">
+                    </div>
+                </div>
+            `;
+            
+            container.insertAdjacentHTML('beforeend', html);
+            updateDayBadges();
+        }
+
+        function updateDayBadges() {
+            const badges = document.querySelectorAll('.day-badge');
+            dayCount = badges.length;
+            badges.forEach((badge, index) => {
+                badge.innerText = 'Day ' + (index + 1);
+            });
+        }
+    </script>
+</body>
+</html>
