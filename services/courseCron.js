@@ -39,6 +39,64 @@ const sendWhatsApp = async (to, body, mediaUrl = null) => {
     }
 };
 
+// ==========================================
+// 🚨 THE 6-HOUR NUDGE & KICK ENGINE
+// ==========================================
+// This runs at the top of every hour to check for ghosting students
+cron.schedule('0 * * * *', async () => {
+    console.log("🔍 Running 6-Hour Accountability Sweep...");
+    
+    // Calculate the time 6 hours ago
+    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
+
+    try {
+        // Find students who are active, haven't been nudged 3 times yet, and have been quiet for 6+ hours
+        const stalledStudents = await prisma.enrollment.findMany({
+            where: {
+                status: 'ACTIVE',
+                lastActivityAt: { lte: sixHoursAgo }
+            },
+            include: { course: true }
+        });
+
+        for (const student of stalledStudents) {
+            if (student.reminderCount >= 3) {
+                // ❌ STRIKE 3: Unsubscribe them
+                await prisma.enrollment.update({
+                    where: { id: student.id },
+                    data: { status: 'UNSUBSCRIBED' } // Or 'DROPPED'
+                });
+
+                await sendWhatsApp(
+                    student.userPhone, 
+                    `🛑 *Course Paused.*\n\nWe haven't received your quiz answer for *${student.course.title}*. To keep the academy fair, your enrollment has been paused.\n\nWhen you are ready to commit, reply with *Resume* to pick up where you left off.`
+                );
+                console.log(`❌ Unsubscribed student ${student.userPhone} from ${student.course.title} due to inactivity.`);
+
+            } else {
+                // ⚠️ STRIKE 1 OR 2: Nudge them
+                const newCount = student.reminderCount + 1;
+                
+                await prisma.enrollment.update({
+                    where: { id: student.id },
+                    data: { 
+                        reminderCount: newCount,
+                        lastActivityAt: new Date() // Reset the 6-hour clock
+                    }
+                });
+
+                await sendWhatsApp(
+                    student.userPhone, 
+                    `⏳ *Reminder (${newCount}/3)*\n\nYou have a pending quiz question for *${student.course.title}*! \n\nPlease reply with your answer to unlock your next lesson. If we don't hear from you, your enrollment will be paused.`
+                );
+                console.log(`⚠️ Sent Reminder ${newCount} to ${student.userPhone}`);
+            }
+        }
+    } catch (error) {
+        console.error("❌ Error in Nudge Engine:", error);
+    }
+});
+
 const startCourseEngine = () => {
     console.log("🎓 WhatsApp LMS Delivery Engine Initialized. Scheduled DAILY at 08:30 AM (SAST).");
 

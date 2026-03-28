@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Academy Ledger | Seabe Digital</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans antialiased">
+
+    <div class="bg-gray-900 text-white shadow-md">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+            <h1 class="text-2xl font-bold"><i class="fa-solid fa-graduation-cap text-blue-400 mr-3"></i>Academy Ledger</h1>
+            <a href="/" class="text-gray-300 hover:text-white transition"><i class="fa-solid fa-arrow-left mr-2"></i> Back to Main</a>
+        </div>
+    </div>
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+            <div>
+                <h2 class="text-3xl font-extrabold text-gray-900">Your Courses</h2>
+                <p class="text-gray-500 mt-1">Manage your WhatsApp curriculum and track active student enrollments.</p>
+            </div>
+            <a href="/admin/courses/new" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition transform hover:-translate-y-0.5">
+                <i class="fa-solid fa-plus mr-2"></i> Create New Course
+            </a>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-gray-50 border-b border-gray-200 text-xs text-gray-500 uppercase tracking-wider">
+                            <th class="py-4 px-6 font-bold">Course Title</th>
+                            <th class="py-4 px-6 font-bold">Price</th>
+                            <th class="py-4 px-6 font-bold">Curriculum length</th>
+                            <th class="py-4 px-6 font-bold text-center">Active Students</th>
+                            <th class="py-4 px-6 font-bold text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                        <% if (courses && courses.length > 0) { %>
+                            <% courses.forEach(course => { %>
+                                <tr class="hover:bg-blue-50 transition duration-150">
+                                    <td class="py-5 px-6">
+                                        <div class="font-bold text-gray-900 text-lg"><%= course.title %></div>
+                                        <div class="text-xs text-gray-400 font-mono mt-1">ID: <%= course.id %></div>
+                                    </td>
+                                    <td class="py-5 px-6">
+                                        <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-bold bg-green-100 text-green-800">
+                                            R <%= course.price %>
+                                        </span>
+                                    </td>
+                                    <td class="py-5 px-6 text-gray-600 font-medium">
+                                        <i class="fa-solid fa-layer-group text-blue-400 mr-2"></i> <%= course.modules ? course.modules.length : 0 %> Days
+                                    </td>
+                                    <td class="py-5 px-6 text-center">
+                                        <span class="font-bold text-xl text-blue-600"><%= course.enrollments ? course.enrollments.length : 0 %></span>
+                                    </td>
+                                    <td class="py-5 px-6 text-right">
+                                        <a href="/admin/courses/<%= course.id %>/edit" class="text-gray-400 hover:text-blue-600 mx-2 transition" title="Edit Course">
+                                            <i class="fa-solid fa-pen-to-square text-xl"></i>
+                                        </a>
+                                        <button class="text-gray-400 hover:text-red-600 mx-2 transition" title="Delete Course">
+                                            <i class="fa-solid fa-trash text-xl"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                            <% }) %>
+                        <% } else { %>
+                            <tr>
+                                <td colspan="5" class="py-16 text-center text-gray-500">
+                                    <div class="text-5xl mb-4"><i class="fa-solid fa-folder-open text-gray-300"></i></div>
+                                    <p class="text-xl font-bold text-gray-700">No courses found.</p>
+                                    <p class="text-md mt-2">Click "Create New Course" to build your first WhatsApp curriculum.</p>
+                                </td>
+                            </tr>
+                        <% } %>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
