@@ -2722,11 +2722,18 @@ module.exports = (app, { prisma }) => {
             const org = req.org;
             const { title, price } = req.body;
             
-            const titles = [].concat(req.body['moduleTitles[]'] || []);
-            const contents = [].concat(req.body['moduleContents[]'] || []);
-            const urls = [].concat(req.body['moduleUrls[]'] || []);
-            const quizzes = [].concat(req.body['moduleQuizzes[]'] || []);
-            const answers = [].concat(req.body['moduleAnswers[]'] || []);
+            // 💡 FIX: Express body-parser strips the "[]" from the HTML names!
+            // We now check for the clean name first.
+            const titles = [].concat(req.body.moduleTitles || req.body['moduleTitles[]'] || []);
+            const contents = [].concat(req.body.moduleContents || req.body['moduleContents[]'] || []);
+            const urls = [].concat(req.body.moduleUrls || req.body['moduleUrls[]'] || []);
+            const quizzes = [].concat(req.body.moduleQuizzes || req.body['moduleQuizzes[]'] || []);
+            const answers = [].concat(req.body.moduleAnswers || req.body['moduleAnswers[]'] || []);
+
+            // Check to ensure at least one lesson exists before building the array
+            if (titles.length === 0 || !titles[0]) {
+                return res.status(400).send("Error: You must add at least one lesson to the course.");
+            }
 
             const modulesData = titles.map((moduleTitle, index) => ({
                 title: moduleTitle,
@@ -2747,7 +2754,7 @@ module.exports = (app, { prisma }) => {
                 }
             });
 
-            console.log(`✅ Successfully published new course: ${title}`);
+            console.log(`✅ Successfully published new course: ${title} with ${modulesData.length} lessons`);
             
             // Redirect back to their specific Academy dashboard
             res.redirect(`/admin/${org.code}/academy`);
