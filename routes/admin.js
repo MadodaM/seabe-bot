@@ -1107,6 +1107,9 @@ module.exports = (app, { prisma }) => {
                         <h2 style="margin:0; color:#00d2d3;">🎓 Academy Mission Control</h2>
                         <p style="margin:5px 0 0 0; font-size:13px; color:#b2bec3;">Track student progress, course uptake, and WhatsApp delivery logs.</p>
                     </div>
+					<a href="/admin/${req.org.code}/courses/new" class="btn" style="background:#00d2d3; color:#1e272e; width:auto; text-decoration:none;">
+                        + Create New Course
+                    </a>
                 </div>
 
                 <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:20px; margin-bottom:20px;">
@@ -2702,6 +2705,59 @@ module.exports = (app, { prisma }) => {
             res.status(500).json({ error: "Failed to fetch quote data" });
         }
     });
+	
+	// ==========================================
+    // 🎨 RENDER THE VISUAL COURSE BUILDER
+    // ==========================================
+    router.get('/admin/:code/courses/new', checkSession, (req, res) => {
+        // Renders the EJS form, passing the org code so the form knows where to submit!
+        res.render('course-builder', { orgCode: req.org.code });
+    });
+
+    // ==========================================
+    // 💾 SAVE THE NEW COURSE & REDIRECT
+    // ==========================================
+    router.post('/admin/:code/courses', checkSession, async (req, res) => {
+        try {
+            const org = req.org;
+            const { title, price } = req.body;
+            
+            const titles = [].concat(req.body['moduleTitles[]'] || []);
+            const contents = [].concat(req.body['moduleContents[]'] || []);
+            const urls = [].concat(req.body['moduleUrls[]'] || []);
+            const quizzes = [].concat(req.body['moduleQuizzes[]'] || []);
+            const answers = [].concat(req.body['moduleAnswers[]'] || []);
+
+            const modulesData = titles.map((moduleTitle, index) => ({
+                title: moduleTitle,
+                content: contents[index],
+                contentUrl: urls[index] || null,
+                quizQuestion: quizzes[index] || null,
+                quizAnswer: answers[index] || null,
+                order: index + 1
+            }));
+
+            // Save course strictly to the logged-in admin's organization
+            await prisma.course.create({
+                data: {
+                    title: title,
+                    price: parseFloat(price),
+                    churchId: org.id,
+                    modules: { create: modulesData }
+                }
+            });
+
+            console.log(`✅ Successfully published new course: ${title}`);
+            
+            // Redirect back to their specific Academy dashboard
+            res.redirect(`/admin/${org.code}/academy`);
+
+        } catch (error) {
+            console.error("❌ Error saving course:", error);
+            res.status(500).send("Failed to save the course.");
+        }
+    });
+	
 
     app.use('/', router);
 	
