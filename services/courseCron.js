@@ -25,7 +25,7 @@ const sendWhatsApp = async (to, body, mediaUrl = null) => {
             });
         }
 
-        // 2. THEN SEND THE TEXT BODY (No character limits!)
+        // 2. THEN SEND THE TEXT BODY
         if (body && body.trim() !== '') {
             await twilioClient.messages.create({
                 from: `whatsapp:${cleanTwilioNumber}`,
@@ -39,31 +39,27 @@ const sendWhatsApp = async (to, body, mediaUrl = null) => {
     }
 };
 
-// ==========================================
-// 🚨 THE 6-HOUR NUDGE & KICK ENGINE
-// ==========================================
 const startCourseEngine = () => {
     console.log("🎓 WhatsApp LMS Delivery Engine Initialized. Scheduled DAILY at 08:30 AM (SAST).");
 
-    // 1. THE ACCOUNTABILITY SWEEP (Runs at the top of every hour)
+    // ==========================================
+    // 🚨 1. THE 6-HOUR NUDGE & KICK ENGINE
+    // ==========================================
     cron.schedule('0 * * * *', async () => {
         console.log("🔍 Running 6-Hour Accountability Sweep...");
-        
         const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
 
         try {
-            // Check for students who OWE an answer, and haven't updated in 6 hours
             const stalledStudents = await prisma.enrollment.findMany({
                 where: {
                     status: 'ACTIVE',
-                    quizState: 'AWAITING_ANSWER', // Only target those who need to reply
-                    updatedAt: { lte: sixHoursAgo } // Matches the delivery engine timestamp
+                    quizState: 'AWAITING_ANSWER',
+                    updatedAt: { lte: sixHoursAgo }
                 },
                 include: { course: true, member: true }
             });
 
             for (const student of stalledStudents) {
-                // Ensure we have a valid Twilio phone number format
                 let cleanPhone = student.member.phone.replace(/\D/g, '');
                 if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
 
@@ -88,7 +84,7 @@ const startCourseEngine = () => {
                         where: { id: student.id },
                         data: { 
                             reminderCount: newCount,
-                            updatedAt: new Date() // Reset the 6-hour clock so we don't spam them!
+                            updatedAt: new Date() // Reset the 6-hour clock
                         }
                     });
 
@@ -104,27 +100,19 @@ const startCourseEngine = () => {
         }
     });
 
-    // 2. THE DAILY DELIVERY ENGINE (Minute 30, Hour 8, Every Single Day)
-    cron.schedule('30 8 * * *', async () => {
-        // ... (Keep all your existing Daily Delivery logic exactly the same here!) ...
-        console.log("⏰ [CRON] Waking up Course Delivery Engine...");
-
-const startCourseEngine = () => {
-    console.log("🎓 WhatsApp LMS Delivery Engine Initialized. Scheduled DAILY at 08:30 AM (SAST).");
-
-    // Cron expression: Minute 30, Hour 8, Every Single Day
+    // ==========================================
+    // 🎓 2. THE DAILY DELIVERY ENGINE
+    // ==========================================
     cron.schedule('30 8 * * *', async () => {
         console.log("⏰ [CRON] Waking up Course Delivery Engine...");
 
         try {
-            // 1. Fetch all ACTIVE enrollments
             const activeEnrollments = await prisma.enrollment.findMany({
                 where: { status: 'ACTIVE' },
                 include: {
                     member: true,
                     course: {
                         include: { 
-                            // 💡 FIXED: Sort modules using the exact column 'order'
                             modules: { orderBy: { order: 'asc' } } 
                         }
                     }
@@ -139,13 +127,12 @@ const startCourseEngine = () => {
             console.log(`🚀 [CRON] Delivering daily lessons to ${activeEnrollments.length} students...`);
             let lessonsDelivered = 0;
 
-            // 2. Process each student's journey
             for (const enrollment of activeEnrollments) {
                 const student = enrollment.member;
                 const course = enrollment.course;
                 const lastProgress = enrollment.progress || 0; 
                 
-                // 🛑 THE ACADEMIC GATE: Verify they passed yesterday's quiz
+                // 🛑 Verify they passed yesterday's quiz
                 if (lastProgress > 0 && enrollment.currentModuleId) {
                     const passedQuiz = await prisma.assessmentLog.findFirst({
                         where: {
@@ -162,11 +149,9 @@ const startCourseEngine = () => {
                     }
                 }
 
-                // 🟢 SAFE TO ADVANCE: Grab the next module using the Array Index
                 const todaysModule = course.modules[lastProgress];
 
                 if (todaysModule) {
-                    // Assemble the beautiful WhatsApp Lesson
                     let lessonMessage = `🎓 *${course.title}* (Day ${lastProgress + 1})\n\n`;
                     lessonMessage += `*${todaysModule.title}*\n\n`;
                     lessonMessage += `${todaysModule.content || todaysModule.dailyLessonText}\n\n`;
@@ -178,11 +163,9 @@ const startCourseEngine = () => {
                         lessonMessage += `_Reply *Next* when you are ready to continue!_`; 
                     }
 
-                    // Send the lesson
                     await sendWhatsApp(student.phone, lessonMessage, todaysModule.contentUrl);
                     lessonsDelivered++;
 
-                    // 4. UPDATE THE DATABASE
                     await prisma.enrollment.update({
                         where: { id: enrollment.id },
                         data: { 
@@ -196,7 +179,6 @@ const startCourseEngine = () => {
                     console.log(`✅ Sent Day ${lastProgress + 1} to ${student.phone}`);
                     
                 } else {
-                    // 🎓 TRUE GRADUATION: No more modules left!
                     await sendWhatsApp(student.phone, `🎉 *CONGRATULATIONS, ${student.firstName}!* 🎉\n\nYou have officially passed all modules and completed *${course.title}*!\n\nWe hope you enjoyed the journey. Reply *Menu* to explore more resources or check your dashboard to download your digital certificate.`);
                     
                     await prisma.enrollment.update({
@@ -216,6 +198,6 @@ const startCourseEngine = () => {
         scheduled: true,
         timezone: "Africa/Johannesburg" 
     });
-};
+}; // <-- This is the little bracket that caused all the chaos!
 
 module.exports = { startCourseEngine };
