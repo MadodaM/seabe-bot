@@ -42,60 +42,72 @@ const sendWhatsApp = async (to, body, mediaUrl = null) => {
 // ==========================================
 // 🚨 THE 6-HOUR NUDGE & KICK ENGINE
 // ==========================================
-// This runs at the top of every hour to check for ghosting students
-cron.schedule('0 * * * *', async () => {
-    console.log("🔍 Running 6-Hour Accountability Sweep...");
-    
-    // Calculate the time 6 hours ago
-    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
+const startCourseEngine = () => {
+    console.log("🎓 WhatsApp LMS Delivery Engine Initialized. Scheduled DAILY at 08:30 AM (SAST).");
 
-    try {
-        // Find students who are active, haven't been nudged 3 times yet, and have been quiet for 6+ hours
-        const stalledStudents = await prisma.enrollment.findMany({
-            where: {
-                status: 'ACTIVE',
-                lastActivityAt: { lte: sixHoursAgo }
-            },
-            include: { course: true }
-        });
+    // 1. THE ACCOUNTABILITY SWEEP (Runs at the top of every hour)
+    cron.schedule('0 * * * *', async () => {
+        console.log("🔍 Running 6-Hour Accountability Sweep...");
+        
+        const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
 
-        for (const student of stalledStudents) {
-            if (student.reminderCount >= 3) {
-                // ❌ STRIKE 3: Unsubscribe them
-                await prisma.enrollment.update({
-                    where: { id: student.id },
-                    data: { status: 'UNSUBSCRIBED' } // Or 'DROPPED'
-                });
+        try {
+            // Check for students who OWE an answer, and haven't updated in 6 hours
+            const stalledStudents = await prisma.enrollment.findMany({
+                where: {
+                    status: 'ACTIVE',
+                    quizState: 'AWAITING_ANSWER', // Only target those who need to reply
+                    updatedAt: { lte: sixHoursAgo } // Matches the delivery engine timestamp
+                },
+                include: { course: true, member: true }
+            });
 
-                await sendWhatsApp(
-                    student.userPhone, 
-                    `🛑 *Course Paused.*\n\nWe haven't received your quiz answer for *${student.course.title}*. To keep the academy fair, your enrollment has been paused.\n\nWhen you are ready to commit, reply with *Resume* to pick up where you left off.`
-                );
-                console.log(`❌ Unsubscribed student ${student.userPhone} from ${student.course.title} due to inactivity.`);
+            for (const student of stalledStudents) {
+                // Ensure we have a valid Twilio phone number format
+                let cleanPhone = student.member.phone.replace(/\D/g, '');
+                if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
 
-            } else {
-                // ⚠️ STRIKE 1 OR 2: Nudge them
-                const newCount = student.reminderCount + 1;
-                
-                await prisma.enrollment.update({
-                    where: { id: student.id },
-                    data: { 
-                        reminderCount: newCount,
-                        lastActivityAt: new Date() // Reset the 6-hour clock
-                    }
-                });
+                if (student.reminderCount >= 3) {
+                    // ❌ STRIKE 3: Unsubscribe them
+                    await prisma.enrollment.update({
+                        where: { id: student.id },
+                        data: { status: 'UNSUBSCRIBED' } 
+                    });
 
-                await sendWhatsApp(
-                    student.userPhone, 
-                    `⏳ *Reminder (${newCount}/3)*\n\nYou have a pending quiz question for *${student.course.title}*! \n\nPlease reply with your answer to unlock your next lesson. If we don't hear from you, your enrollment will be paused.`
-                );
-                console.log(`⚠️ Sent Reminder ${newCount} to ${student.userPhone}`);
+                    await sendWhatsApp(
+                        cleanPhone, 
+                        `🛑 *Course Paused.*\n\nWe haven't received your quiz answer for *${student.course.title}*. To keep the academy fair, your enrollment has been paused.\n\nWhen you are ready to commit, reply with *Resume* to pick up where you left off.`
+                    );
+                    console.log(`❌ Unsubscribed student ${cleanPhone} from ${student.course.title} due to inactivity.`);
+
+                } else {
+                    // ⚠️ STRIKE 1 OR 2: Nudge them
+                    const newCount = (student.reminderCount || 0) + 1;
+                    
+                    await prisma.enrollment.update({
+                        where: { id: student.id },
+                        data: { 
+                            reminderCount: newCount,
+                            updatedAt: new Date() // Reset the 6-hour clock so we don't spam them!
+                        }
+                    });
+
+                    await sendWhatsApp(
+                        cleanPhone, 
+                        `⏳ *Reminder (${newCount}/3)*\n\nYou have a pending quiz question for *${student.course.title}*! \n\nPlease reply with your answer to unlock your next lesson. If we don't hear from you, your enrollment will be paused.`
+                    );
+                    console.log(`⚠️ Sent Reminder ${newCount} to ${cleanPhone}`);
+                }
             }
+        } catch (error) {
+            console.error("❌ Error in Nudge Engine:", error);
         }
-    } catch (error) {
-        console.error("❌ Error in Nudge Engine:", error);
-    }
-});
+    });
+
+    // 2. THE DAILY DELIVERY ENGINE (Minute 30, Hour 8, Every Single Day)
+    cron.schedule('30 8 * * *', async () => {
+        // ... (Keep all your existing Daily Delivery logic exactly the same here!) ...
+        console.log("⏰ [CRON] Waking up Course Delivery Engine...");
 
 const startCourseEngine = () => {
     console.log("🎓 WhatsApp LMS Delivery Engine Initialized. Scheduled DAILY at 08:30 AM (SAST).");
