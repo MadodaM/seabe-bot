@@ -143,11 +143,20 @@ const startCourseEngine = () => {
                     });
 
                     if (!passedQuiz) {
-                        console.log(`🚧 Skipping ${student.phone} - Has not passed Day ${lastProgress} yet.`);
-                        await sendWhatsApp(student.phone, `Friendly reminder, ${student.firstName}! 🧠\n\nYou still need to pass your quiz for Day ${lastProgress} of *${course.title}* before we can unlock the next lesson.\n\nReply *Courses* to resume your quiz!`);
-                        continue; 
+                        // ❌ KICK THEM FOR GHOSTING A FULL DAY
+                        await prisma.enrollment.update({
+                            where: { id: enrollment.id },
+                            data: { status: 'UNSUBSCRIBED' }
+                        });
+                        
+                        await sendWhatsApp(
+                            student.phone, 
+                            `🛑 *Course Paused.*\n\nWe noticed you didn't finish yesterday's lesson for *${course.title}*. To keep the academy fair and ensure you are keeping up, your enrollment has been paused.\n\nReply *Resume* when you are ready to pick up where you left off.`
+                        );
+                        
+                        console.log(`❌ Unsubscribed ${student.phone} - Inactive for 24+ hours.`);
+                        continue; // Skip to the next student
                     }
-                }
 
                 const todaysModule = course.modules[lastProgress];
 
