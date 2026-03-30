@@ -15,6 +15,7 @@ const { handleNPOMessage } = require('../bots/NPOCbot'); // 🚀 FIXED IMPORT PA
 const { handleStokvelMessage } = require('../bots/stokvelBot');
 const { processGroomingMessage } = require('../bots/groomingBot');
 const { processLmsMessage } = require('../bots/LMSlogicBot'); 
+const { handleSupportOrTypo } = require('../services/nlpSupportEngine');
 const { processTwilioClaim } = require('../services/aiClaimWorker');
 const { calculateTransaction } = require('../services/pricingEngine');
 
@@ -565,36 +566,40 @@ router.post('/', (req, res) => {
             }
 
             // 🚀 ROUTES
+            let botResult = { handled: false };
+
             if (session.mode === 'SOCIETY') {
-                await handleSocietyMessage(cleanPhone, mappedMsg, session, member);
-                return;
+                botResult = await handleSocietyMessage(cleanPhone, mappedMsg, session, member) || {};
+            } 
+            else if (session.mode === 'CHURCH') {
+                botResult = await handleChurchMessage(cleanPhone, mappedMsg, session, member) || {};
+            } 
+            else if (session.mode === 'STOKVEL') {
+                botResult = await handleStokvelMessage(cleanPhone, mappedMsg, session, member) || {};
+            } 
+            else if (session.mode === 'NPO') {
+                botResult = await handleNPOMessage(cleanPhone, mappedMsg, session, member) || {};
             }
 
-            if (session.mode === 'CHURCH') {
-                await handleChurchMessage(cleanPhone, mappedMsg, session, member);
-                return;
-            }
-            
-            if (session.mode === 'STOKVEL') {
-                await handleStokvelMessage(cleanPhone, mappedMsg, session, member);
-                return;
-            }
-            
-            // 🚀 FIXED: Route to the new NPO Bot properly
-            if (session.mode === 'NPO') {
-                await handleNPOMessage(cleanPhone, mappedMsg, session, member);
-                return;
+            // If the domain bot knew the answer, stop here!
+            if (botResult.handled) {
+                return; 
             }
 
             // ================================================
-            // 🤖 AI FALLBACK
+            // 🤖 AI NLP FALLBACK & TYPO CATCHER
             // ================================================
-            const aiResponse = await getAISupportReply(incomingMsg, cleanPhone, member?.firstName);
-            await sendWhatsApp(cleanPhone, aiResponse);
+            // If we reach this line, the user typed something unknown (like "corses").
+            // Unleash the Hybrid NLP engine to catch the typo!
+            
+            const orgName = member?.church?.name || 'Seabe';
+            await handleSupportOrTypo(incomingMsg, cleanPhone, orgName);
+            return;
 
-        } catch (e) { // 👈 THIS IS THE BRACKET YOU WERE MISSING
+        } catch (e) { 
             console.error("❌ ROUTER CRASH:", e);
-        } finally {   // 👈 THIS RUNS NO MATTER WHAT HAPPENS ABOVE
+        } finally {
+		
             // ================================================
             // 💾 THE MAGIC: AUTO-SAVE SESSION TO DATABASE
             // ================================================

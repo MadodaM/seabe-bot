@@ -380,6 +380,21 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
         console.error("❌ CRITICAL Church Bot Error:", e);
         await sendWhatsApp(cleanPhone, "⚠️ System error loading church menu. Please try again in a few minutes.");
     }
+	
+	// --- FINAL SEND ---
+        if (reply) {
+            await sendWhatsApp(cleanPhone, reply);
+            return { handled: true }; // 👈 Tell the router we answered the customer!
+        }
+        
+        return { handled: false }; // 👈 Tell the router "I don't know this word!"
+
+    } catch (e) { 
+        console.error("❌ CRITICAL Bot Error:", e);
+        await sendWhatsApp(cleanPhone, "⚠️ System error loading the menu. Please try again in a few minutes.");
+        return { handled: true }; 
+    }
+}
 }
 
 module.exports = { handleChurchMessage };
