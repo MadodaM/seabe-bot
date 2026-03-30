@@ -15,7 +15,7 @@ const { handleNPOMessage } = require('../bots/NPOCbot'); // 🚀 FIXED IMPORT PA
 const { handleStokvelMessage } = require('../bots/stokvelBot');
 const { processGroomingMessage } = require('../bots/groomingBot');
 const { processLmsMessage } = require('../bots/LMSlogicBot'); 
-const { handleSupportOrTypo } = require('../services/SupportEngine');
+const { handleSupportOrTypo } = require('../services/supportEngine');
 const { processTwilioClaim } = require('../services/aiClaimWorker');
 const { calculateTransaction } = require('../services/pricingEngine');
 
