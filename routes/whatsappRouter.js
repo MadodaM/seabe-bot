@@ -11,10 +11,10 @@ const { sendWhatsApp } = require('../services/twilioClient');
 const { getAISupportReply } = require('../services/aiSupport');
 const { handleSocietyMessage } = require('../bots/societyBot');
 const { handleChurchMessage } = require('../bots/churchBot');
-const { handleNPOMessage } = require('../bots/NPOCbot');
+const { handleNPOMessage } = require('../bots/NPOCbot'); // 🚀 FIXED IMPORT PATH
 const { handleStokvelMessage } = require('../bots/stokvelBot');
 const { processGroomingMessage } = require('../bots/groomingBot');
-const { processLmsMessage } = require('../bots/LMSlogicBot'); // 🚀 NEW: Our LMS Controller!
+const { processLmsMessage } = require('../bots/LMSlogicBot'); 
 const { processTwilioClaim } = require('../services/aiClaimWorker');
 const { calculateTransaction } = require('../services/pricingEngine');
 
@@ -22,8 +22,8 @@ router.post('/', (req, res) => {
     const rawMsg = req.body.Body || '';
     const incomingMsg = rawMsg.trim().toLowerCase();
     const cleanPhone = (req.body.From || '').replace('whatsapp:', '');
-	
-	// 🚀 NEW: Extract and split the WhatsApp Profile Name
+    
+    // Extract and split the WhatsApp Profile Name
     const profileName = req.body.ProfileName || '';
     let fName = 'Member';
     let lName = '.'; // Fallback
@@ -70,6 +70,7 @@ router.post('/', (req, res) => {
                     session.churchCode = member.churchCode;
                     if (explicitType === 'BURIAL_SOCIETY') session.mode = 'SOCIETY';
                     else if (explicitType === 'STOKVEL_SAVINGS') session.mode = 'STOKVEL';
+                    else if (explicitType === 'NON_PROFIT') session.mode = 'NPO';
                     else session.mode = 'CHURCH';
                     session.step = null; 
                 } else {
@@ -94,10 +95,10 @@ router.post('/', (req, res) => {
                     if (member) session.churchCode = member.churchCode;
                 }
             }
-			
-			// If we found the member, but they still have the default fallback name, silently upgrade them!
+            
+            // Upgrade default names silently
             if (member && (member.firstName === 'Member' || member.firstName === 'Pending')) {
-                if (fName !== 'Member') { // Only hit the database if Twilio actually gave us a real name
+                if (fName !== 'Member') { 
                     member = await prisma.member.update({
                         where: { id: member.id },
                         data: { firstName: fName, lastName: lName },
@@ -124,7 +125,8 @@ router.post('/', (req, res) => {
                 if (member && member.church) {
                     if (member.church.type === 'BURIAL_SOCIETY') resetMsg += "\nReply *Society* for your main menu.";
                     else if (member.church.type === 'CHURCH') resetMsg += "\nReply *Amen* for your church menu, or *Courses* to learn.";
-                    else resetMsg += "\nReply *NPO* for your dashboard, or *Courses* for our learning center.";
+                    else if (member.church.type === 'NON_PROFIT') resetMsg += "\nReply *NPO* for your dashboard, or *Courses* for our learning center.";
+                    else resetMsg += "\nReply *Menu* for your dashboard.";
                 } else {
                     resetMsg += "\nReply *Amen* for Church, *Society* for Burial, or *NPO* for NGOs.";
                 }
@@ -148,7 +150,7 @@ router.post('/', (req, res) => {
             const lmsResult = await processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, member, sendWhatsApp);
             if (lmsResult.handled) {
                 if (lmsResult.clearSessionFlag) clearSessionFlag = true;
-                return; // Stop processing, the LMS bot successfully handled the message!
+                return; 
             }
 
             // ================================================
@@ -206,7 +208,7 @@ router.post('/', (req, res) => {
             }
 
             // ================================================
-            // 🔍 UNIVERSAL JOIN & QUOTE FLOW (Untouched)
+            // 🔍 UNIVERSAL JOIN & QUOTE FLOW
             // ================================================
             const joinSteps = ['SEARCH', 'JOIN_SELECT', 'CHOOSE_MEMBER_TYPE', 'ENTER_POLICY_NUMBER', 'SELECT_QUOTE_PLAN', 'AWAITING_QUOTE_ACCEPTANCE'];
             if (incomingMsg === 'join' || joinSteps.includes(session.step)) {
@@ -256,8 +258,8 @@ router.post('/', (req, res) => {
                                 await prisma.member.create({
                                     data: { 
                                         phone: cleanPhone, 
-                                        firstName: fName, // 👈 Uses WhatsApp Name
-                                        lastName: lName,  // 👈 Uses WhatsApp Name
+                                        firstName: fName, 
+                                        lastName: lName,  
                                         church: { connect: { id: org.id } }, 
                                         status: 'ACTIVE' 
                                     }
@@ -368,8 +370,8 @@ router.post('/', (req, res) => {
                         await prisma.member.create({
                             data: {
                                 phone: cleanPhone,
-                                firstName: fName, // 👈 Uses WhatsApp Name
-                                lastName: lName,  // 👈 Uses WhatsApp Name
+                                firstName: fName, 
+                                lastName: lName,  
                                 church: { connect: { id: session.churchId } }, 
                                 status: 'PENDING_KYC',
                                 kycStatus: 'PENDING',
@@ -552,14 +554,15 @@ router.post('/', (req, res) => {
             const menuKeywords = ['society', 'amen', 'hi', 'hello', 'menu', 'dashboard', 'npo', 'stokvel'];
             const mappedMsg = menuKeywords.includes(incomingMsg) ? 'menu' : incomingMsg;
 
+            // 🚀 FIXED: Initialize NPO Mode correctly
             if (!session.mode && member.church) {
                 if (member.church.type === 'BURIAL_SOCIETY') session.mode = 'SOCIETY';
                 else if (member.church.type === 'STOKVEL_SAVINGS') session.mode = 'STOKVEL';
-                else if (member.church.type === 'NON_PROFIT') session.mode = 'NPO'; // 👈 ADD THIS LINE
+                else if (member.church.type === 'NON_PROFIT') session.mode = 'NPO';
                 else session.mode = 'CHURCH';
             }
-            }
 
+            // 🚀 ROUTES
             if (session.mode === 'SOCIETY') {
                 await handleSocietyMessage(cleanPhone, mappedMsg, session, member);
                 return;
@@ -574,9 +577,9 @@ router.post('/', (req, res) => {
                 await handleStokvelMessage(cleanPhone, mappedMsg, session, member);
                 return;
             }
-			
-			if (session.mode === 'NPO') {
-                // Send them to the dedicated NPO handler using the mappedMsg
+            
+            // 🚀 FIXED: Route to the new NPO Bot properly
+            if (session.mode === 'NPO') {
                 await handleNPOMessage(cleanPhone, mappedMsg, session, member);
                 return;
             }
@@ -587,9 +590,9 @@ router.post('/', (req, res) => {
             const aiResponse = await getAISupportReply(incomingMsg, cleanPhone, member?.firstName);
             await sendWhatsApp(cleanPhone, aiResponse);
 
-        } catch (e) {
+        } catch (e) { // 👈 THIS IS THE BRACKET YOU WERE MISSING
             console.error("❌ ROUTER CRASH:", e);
-        } finally {
+        } finally {   // 👈 THIS RUNS NO MATTER WHAT HAPPENS ABOVE
             // ================================================
             // 💾 THE MAGIC: AUTO-SAVE SESSION TO DATABASE
             // ================================================
