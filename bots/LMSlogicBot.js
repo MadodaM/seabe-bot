@@ -132,43 +132,83 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
             }
         }
     
-	// ================================================
-	// 🎓 1. COURSE ENROLLMENT (Phase A)
-	// ================================================
-	const lmsTriggers = ['mentorship', 'grow', 'learn', 'courses'];
-    if (lmsTriggers.includes(incomingMsg)) {
-        if (!member || !member.church) {
-            await sendWhatsApp(cleanPhone, "⚠️ You must be linked to an organization to view courses. Reply *Join* first.");
-            return { handled: true, clearSessionFlag: false };
-        }
-        const courses = await prisma.course.findMany({
-            where: { churchId: member.church.id },
-            orderBy: { price: 'asc' }
-        });
-
-        if (courses.length === 0) {
-            await sendWhatsApp(cleanPhone, "📚 *Learning Centre*\n\nThere are currently no active courses available. Check back later!");
-            return { handled: true, clearSessionFlag: false };
-        }
-
-        let msg = `📚 *Learning & Mentorship Centre*\nSelect a course to enroll:\n\n`;
-        courses.forEach((c, index) => {
-            msg += `*${index + 1}. ${c.title}*\nCost: ${c.price == 0 ? 'FREE' : 'R' + c.price}\n\n`;
-        });
-        msg += `Reply with the *Number* of the course you wish to join.`;
-
-        session.step = 'AWAITING_COURSE_SELECTION';
-        session.availableCourses = courses; 
-        await sendWhatsApp(cleanPhone, msg);
-        return { handled: true, clearSessionFlag: false };
-    }
-
-    if (session.step === 'AWAITING_COURSE_SELECTION') {
+	if (session.step === 'AWAITING_COURSE_SELECTION') {
         const selectedIndex = parseInt(incomingMsg) - 1;
         const courses = session.availableCourses || [];
 
         if (selectedIndex >= 0 && selectedIndex < courses.length) {
             const selectedCourse = courses[selectedIndex];
+
+            // ==========================================
+            // 🧠 THE SMART ENROLLMENT ENGINE
+            // ==========================================
+            const existingEnrollment = await prisma.enrollment.findFirst({
+                where: {
+                    memberId: member.id,
+                    courseId: selectedCourse.id
+                },
+                include: {
+                    course: {
+                        include: { modules: { orderBy: { order: 'asc' } } }
+                    }
+                }
+            });
+
+            if (existingEnrollment) {
+                // SCENARIO A: They already graduated!
+                if (existingEnrollment.status === 'COMPLETED') {
+                    await sendWhatsApp(cleanPhone, `🎓 You have already completed *${selectedCourse.title}*!\n\nCheck your dashboard to download your certificate, or type *Courses* to learn something new.`);
+                    return { handled: true, clearSessionFlag: true };
+                }
+
+                // SCENARIO B: They are actively enrolled right now
+                if (existingEnrollment.status === 'ACTIVE') {
+                    await sendWhatsApp(cleanPhone, `✅ You are already actively enrolled in *${selectedCourse.title}*.\n\n_Check the messages above for your latest lesson, or wait for your next daily drop!_`);
+                    return { handled: true, clearSessionFlag: true };
+                }
+
+                // SCENARIO C: They started checkout but never paid
+                if (existingEnrollment.status === 'PENDING_PAYMENT') {
+                    const pricing = calculateTransaction(selectedCourse.price, 'LMS_COURSE', 'DEFAULT', true);
+                    const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+                    const paymentLink = `${host}/pay?enrollmentId=${existingEnrollment.id}&amount=${pricing.totalChargedToUser}`;
+                    
+                    await sendWhatsApp(cleanPhone, `⏳ You have an unpaid enrollment for *${selectedCourse.title}*.\n\n*Total Due: R${pricing.totalChargedToUser.toFixed(2)}*\n\n💳 *Resume your checkout securely here:*\n👉 ${paymentLink}\n\nOnce paid, your modules will unlock automatically!`);
+                    return { handled: true, clearSessionFlag: true };
+                }
+
+                // SCENARIO D: They were paused and are coming back! (SMART RESUME)
+                if (existingEnrollment.status === 'UNSUBSCRIBED' || existingEnrollment.status === 'DROPPED') {
+                    await prisma.enrollment.update({
+                        where: { id: existingEnrollment.id },
+                        data: { 
+                            status: 'ACTIVE',
+                            reminderCount: 0, 
+                            updatedAt: new Date()
+                        }
+                    });
+
+                    const currentProgress = existingEnrollment.progress || 0;
+                    const resumedModule = existingEnrollment.course.modules[currentProgress];
+
+                    let resumeMsg = `🎉 *Welcome back!*\n\nYour enrollment in *${selectedCourse.title}* has been reactivated. Let's pick up exactly where you left off (Day ${currentProgress + 1}).\n\n`;
+                    
+                    if (resumedModule) {
+                        resumeMsg += `*${resumedModule.title}*\n\n${resumedModule.content || resumedModule.dailyLessonText}\n\n`;
+                        if (resumedModule.quizQuestion || resumedModule.quiz) {
+                            resumeMsg += `🧠 *Your Pending Quiz:*\n${resumedModule.quizQuestion || resumedModule.quiz}\n\n_Reply with your answer to continue!_`;
+                        }
+                        await sendWhatsApp(cleanPhone, resumeMsg, resumedModule.contentUrl);
+                    } else {
+                        await sendWhatsApp(cleanPhone, resumeMsg);
+                    }
+                    return { handled: true, clearSessionFlag: true };
+                }
+            }
+
+            // ==========================================
+            // SCENARIO E: Brand New Student (First Time Setup)
+            // ==========================================
             const enrollment = await prisma.enrollment.create({
                 data: {
                     memberId: member.id,
@@ -180,7 +220,6 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
             });
 
             if (selectedCourse.price == 0) {
-                session.step = 'LMS_ACTIVE';
                 await sendWhatsApp(cleanPhone, `🎉 You are now enrolled in *${selectedCourse.title}*!\n\nLook out for your first module arriving shortly.`);
             } else {
                 const pricing = calculateTransaction(selectedCourse.price, 'LMS_COURSE', 'DEFAULT', true);
