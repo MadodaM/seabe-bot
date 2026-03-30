@@ -1,4 +1,4 @@
-const { sendWhatsApp } = require('../whatsapp');
+const { sendWhatsApp } = require('./whatsapp');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // 🧠 THE MASTER KEYWORD DICTIONARY
