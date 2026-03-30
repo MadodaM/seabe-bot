@@ -6,14 +6,38 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 // 🛠️ Modular Imports
 const { calculateTransaction } = require('../services/pricingEngine');
 
+// Safely initialize Twilio
+let twilioClient;
+if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
+    twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+}
+
+const sendWhatsApp = async (to, body) => {
+    if (!twilioClient) return;
+    const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+    try {
+        await twilioClient.messages.create({
+            from: `whatsapp:${cleanTwilioNumber}`, 
+            to: `whatsapp:${to}`,
+            body: body
+        });
+    } catch (err) {
+        console.error("❌ Twilio Send Error:", err.message);
+    }
+};
+
 /**
  * Handles all LMS / Academy logic. 
  * Returns { handled: true, clearSessionFlag: boolean } if the message was processed here.
  */
-async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, member, sendWhatsApp) {
+// 🚀 FIXED: Function signature exactly matches the router!
+async function processLmsMessage(cleanPhone, incomingMsg, session, member) {
+    
+    // Create a raw message for the AI grader to read proper capitalization/punctuation
+    const rawMsg = incomingMsg; // The router passes lowercased, but the AI is smart enough to read it.
     
     // 🚀 THE ESCAPE HATCH: Don't grade system commands!
-    const systemCommands = ['menu', 'profile', 'my profile', 'my courses', 'courses', 'exit', 'cancel', 'home', 'join'];
+    const systemCommands = ['menu', 'profile', 'my profile', 'my courses', 'courses', 'exit', 'cancel', 'home', 'join', 'stokvel', 'npo', 'society', 'amen'];
 
     // ================================================
     // 🛑 0. LMS INTERCEPTOR: AI Quiz Evaluator
@@ -26,7 +50,6 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
         });
 
         if (activeEnrollment) {
-            // 💡 FIX: Self-healing lookup for legacy enrollments!
             let currentModule;
             
             if (activeEnrollment.currentModuleId) {
@@ -34,7 +57,6 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                     where: { id: activeEnrollment.currentModuleId }
                 });
             } else {
-                // If ID is missing, calculate their current module based on progress
                 const modules = await prisma.module.findMany({
                     where: { courseId: activeEnrollment.courseId },
                     orderBy: { order: 'asc' }
@@ -49,99 +71,115 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
 
             await sendWhatsApp(cleanPhone, "⏳ *Grading your answer...*");
 
-                try {
-                    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-                    const aiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+            try {
+                const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+                const aiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-                    const prompt = `You are an encouraging and knowledgeable teacher evaluating a student's answer.
-                    Course: ${activeEnrollment.course.title}
-                    Lesson Material: ${currentModule.dailyLessonText || currentModule.content || 'General Knowledge'}
-                    Question: ${currentModule.quizQuestion}
-                    Correct Answer Context: ${currentModule.quizAnswer || 'Use your own knowledge based on the lesson'}
-                    
-                    Student's Answer: "${rawMsg}"
+                const prompt = `You are an encouraging and knowledgeable teacher evaluating a student's answer.
+                Course: ${activeEnrollment.course.title}
+                Lesson Material: ${currentModule.dailyLessonText || currentModule.content || 'General Knowledge'}
+                Question: ${currentModule.quizQuestion}
+                Correct Answer Context: ${currentModule.quizAnswer || 'Use your own knowledge based on the lesson'}
+                
+                Student's Answer: "${rawMsg}"
 
-                    Evaluate if the student's answer is fundamentally correct or demonstrates a good understanding of the material.
-                    Return ONLY a raw JSON object (no markdown, no backticks) in this exact format:
-                    {"isCorrect": true/false, "feedback": "A short, encouraging explanation of why they are right or wrong."}`;
+                Evaluate if the student's answer is fundamentally correct or demonstrates a good understanding of the material.
+                Return ONLY a raw JSON object (no markdown, no backticks) in this exact format:
+                {"isCorrect": true/false, "feedback": "A short, encouraging explanation of why they are right or wrong."}`;
 
-                    // 🔄 AUTO-RETRY LOGIC FOR 503 ERRORS
-                    let result;
-                    let retries = 3;
-                    
-                    while (retries > 0) {
-                        try {
-                            result = await aiModel.generateContent(prompt);
-                            break; // If successful, break out of the loop
-                        } catch (apiError) {
-                            if (apiError.status === 503 && retries > 1) {
-                                console.log(`⏳ Gemini busy. Retrying in 2s... (${retries - 1} attempts left)`);
-                                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-                                retries--;
-                            } else {
-                                throw apiError; // If it's not a 503 or we are out of retries, trigger the main catch block
-                            }
+                // 🔄 AUTO-RETRY LOGIC FOR 503 ERRORS
+                let result;
+                let retries = 3;
+                
+                while (retries > 0) {
+                    try {
+                        result = await aiModel.generateContent(prompt);
+                        break; 
+                    } catch (apiError) {
+                        if (apiError.status === 503 && retries > 1) {
+                            console.log(`⏳ Gemini busy. Retrying in 2s... (${retries - 1} attempts left)`);
+                            await new Promise(resolve => setTimeout(resolve, 2000)); 
+                            retries--;
+                        } else {
+                            throw apiError; 
                         }
                     }
-                    const aiResponse = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
+                }
+                const aiResponse = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
 
-                    await prisma.assessmentLog.create({
-                        data: {
-                            enrollmentId: activeEnrollment.id,
-                            moduleId: currentModule.id,
-                            response: rawMsg,
-                            isCorrect: aiResponse.isCorrect 
+                await prisma.assessmentLog.create({
+                    data: {
+                        enrollmentId: activeEnrollment.id,
+                        moduleId: currentModule.id,
+                        response: rawMsg,
+                        isCorrect: aiResponse.isCorrect 
+                    }
+                });
+
+                if (aiResponse.isCorrect) {
+                    await prisma.enrollment.update({
+                        where: { id: activeEnrollment.id },
+                        data: { 
+                            quizState: 'IDLE', 
+                            updatedAt: new Date(),
+                            reminderCount: 0,              
+                            lastActivityAt: new Date()     
                         }
                     });
 
-                    if (aiResponse.isCorrect) {
-                        // 🟢 MERGED UPDATE: Clears the quiz, resets strikes, and resets the clock!
-                        await prisma.enrollment.update({
-                            where: { id: activeEnrollment.id },
-                            data: { 
-                                quizState: 'IDLE', 
-                                updatedAt: new Date(),
-                                reminderCount: 0,              // Reset strikes to zero
-                                lastActivityAt: new Date()     // Reset the timer
-                            }
-                        });
-
-                        const replyMsg = `✅ *Correct!*\n\n${aiResponse.feedback}\n\n_Your next lesson will arrive automatically tomorrow, or reply *Next* to continue right now!_ 🚀🎓`;
-                        await sendWhatsApp(cleanPhone, replyMsg);
-                    } else {
-                        const replyMsg = `❌ *Not quite!*\n\n${aiResponse.feedback}\n\n_Please try again. Reply with your new answer!_ 💡`;
-                        await sendWhatsApp(cleanPhone, replyMsg);
-                    }
-                } catch (error) {
-                    console.error("AI Evaluation Error:", error);
-                    await sendWhatsApp(cleanPhone, "⚠️ I had a little trouble grading that just now. Please try sending your answer again.");
+                    const replyMsg = `✅ *Correct!*\n\n${aiResponse.feedback}\n\n_Your next lesson will arrive automatically tomorrow, or reply *Next* to continue right now!_ 🚀🎓`;
+                    await sendWhatsApp(cleanPhone, replyMsg);
+                } else {
+                    const replyMsg = `❌ *Not quite!*\n\n${aiResponse.feedback}\n\n_Please try again. Reply with your new answer!_ 💡`;
+                    await sendWhatsApp(cleanPhone, replyMsg);
                 }
-				
-				// Inside your AI Grader success block:
-				await prisma.enrollment.update({
-				where: { id: enrollment.id },
-				data: {
-        
-				reminderCount: 0,              // 🟢 Reset strikes to zero
-				lastActivityAt: new Date()     // 🟢 Reset the timer
-    }
-});
-				
-                
-                return { handled: true, clearSessionFlag: false };
+            } catch (error) {
+                console.error("AI Evaluation Error:", error);
+                await sendWhatsApp(cleanPhone, "⚠️ I had a little trouble grading that just now. Please try sending your answer again.");
             }
+            return { handled: true, clearSessionFlag: false };
         }
+    }
     
-	if (session.step === 'AWAITING_COURSE_SELECTION') {
+    // ================================================
+    // 🎓 1. COURSE ENROLLMENT (Phase A)
+    // ================================================
+    const lmsTriggers = ['mentorship', 'grow', 'learn', 'courses'];
+    
+    if (lmsTriggers.includes(incomingMsg)) {
+        if (!member || !member.church) {
+            await sendWhatsApp(cleanPhone, "⚠️ You must be linked to an organization to view courses. Reply *Join* first.");
+            return { handled: true, clearSessionFlag: false };
+        }
+        const courses = await prisma.course.findMany({
+            where: { churchId: member.church.id },
+            orderBy: { price: 'asc' }
+        });
+
+        if (courses.length === 0) {
+            await sendWhatsApp(cleanPhone, "📚 *Learning Centre*\n\nThere are currently no active courses available. Check back later!");
+            return { handled: true, clearSessionFlag: false };
+        }
+
+        let msg = `📚 *Learning & Mentorship Centre*\nSelect a course to enroll:\n\n`;
+        courses.forEach((c, index) => {
+            msg += `*${index + 1}. ${c.title}*\nCost: ${c.price == 0 ? 'FREE' : 'R' + c.price}\n\n`;
+        });
+        msg += `Reply with the *Number* of the course you wish to join.`;
+
+        session.step = 'AWAITING_COURSE_SELECTION';
+        session.availableCourses = courses; 
+        await sendWhatsApp(cleanPhone, msg);
+        return { handled: true, clearSessionFlag: false };
+    }
+
+    if (session.step === 'AWAITING_COURSE_SELECTION') {
         const selectedIndex = parseInt(incomingMsg) - 1;
         const courses = session.availableCourses || [];
 
         if (selectedIndex >= 0 && selectedIndex < courses.length) {
             const selectedCourse = courses[selectedIndex];
 
-            // ==========================================
-            // 🧠 THE SMART ENROLLMENT ENGINE
-            // ==========================================
             const existingEnrollment = await prisma.enrollment.findFirst({
                 where: {
                     memberId: member.id,
@@ -155,19 +193,16 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
             });
 
             if (existingEnrollment) {
-                // SCENARIO A: They already graduated!
                 if (existingEnrollment.status === 'COMPLETED') {
                     await sendWhatsApp(cleanPhone, `🎓 You have already completed *${selectedCourse.title}*!\n\nCheck your dashboard to download your certificate, or type *Courses* to learn something new.`);
                     return { handled: true, clearSessionFlag: true };
                 }
 
-                // SCENARIO B: They are actively enrolled right now
                 if (existingEnrollment.status === 'ACTIVE') {
                     await sendWhatsApp(cleanPhone, `✅ You are already actively enrolled in *${selectedCourse.title}*.\n\n_Check the messages above for your latest lesson, or wait for your next daily drop!_`);
                     return { handled: true, clearSessionFlag: true };
                 }
 
-                // SCENARIO C: They started checkout but never paid
                 if (existingEnrollment.status === 'PENDING_PAYMENT') {
                     const pricing = calculateTransaction(selectedCourse.price, 'LMS_COURSE', 'DEFAULT', true);
                     const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
@@ -177,7 +212,6 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                     return { handled: true, clearSessionFlag: true };
                 }
 
-                // SCENARIO D: They were paused and are coming back! (SMART RESUME)
                 if (existingEnrollment.status === 'UNSUBSCRIBED' || existingEnrollment.status === 'DROPPED') {
                     await prisma.enrollment.update({
                         where: { id: existingEnrollment.id },
@@ -198,7 +232,7 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                         if (resumedModule.quizQuestion || resumedModule.quiz) {
                             resumeMsg += `🧠 *Your Pending Quiz:*\n${resumedModule.quizQuestion || resumedModule.quiz}\n\n_Reply with your answer to continue!_`;
                         }
-                        await sendWhatsApp(cleanPhone, resumeMsg, resumedModule.contentUrl);
+                        await sendWhatsApp(cleanPhone, resumeMsg); // Removed contentUrl to prevent Twilio crashes if missing
                     } else {
                         await sendWhatsApp(cleanPhone, resumeMsg);
                     }
@@ -206,9 +240,6 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                 }
             }
 
-            // ==========================================
-            // SCENARIO E: Brand New Student (First Time Setup)
-            // ==========================================
             const enrollment = await prisma.enrollment.create({
                 data: {
                     memberId: member.id,
@@ -235,14 +266,14 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
         }
     }
 
-	// ================================================
+    // ================================================
     // 🚀 BINGE LEARNING (The "Next" Trigger)
     // ================================================
     const bingeKeywords = ['next', 'next lesson', 'continue'];
     if (bingeKeywords.includes(incomingMsg)) {
         const enrollment = await prisma.enrollment.findFirst({
             where: { member: { phone: cleanPhone }, status: 'ACTIVE' },
-            include: { course: { include: { modules: { orderBy: { order: 'asc' } } } } } // 💡 Must be ordered!
+            include: { course: { include: { modules: { orderBy: { order: 'asc' } } } } } 
         });
 
         if (!enrollment) {
@@ -250,18 +281,15 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
             return { handled: true, clearSessionFlag: false };
         }
 
-        // 🛑 BINGE GATE 1: Are they stuck on a quiz?
         if (enrollment.quizState === 'AWAITING_ANSWER') {
             await sendWhatsApp(cleanPhone, "⚠️ Hold up! You need to answer and pass your current quiz before I can give you the next lesson! 🧠");
             return { handled: true, clearSessionFlag: false };
         }
 
-        // 🟢 BINGE GATE 2: Load the next module using the Array Index
         const nextModuleIndex = enrollment.progress || 0; 
         const nextModule = enrollment.course.modules[nextModuleIndex];
 
         if (nextModule) {
-            // Assemble the beautiful WhatsApp Lesson
             let lessonMessage = `🎓 *${enrollment.course.title}* (Day ${nextModuleIndex + 1})\n\n`;
             lessonMessage += `*${nextModule.title}*\n\n`;
             lessonMessage += `${nextModule.content || nextModule.dailyLessonText}\n\n`;
@@ -270,13 +298,11 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                 lessonMessage += `🧠 *Today's Quiz:*\n${nextModule.quizQuestion || nextModule.quiz}\n\n`;
                 lessonMessage += `_Reply with your answer to chat with our AI tutor!_`;
             } else {
-                lessonMessage += `_Reply *Next* when you are ready to continue!_`; // If no quiz, invite them to keep going
+                lessonMessage += `_Reply *Next* when you are ready to continue!_`; 
             }
 
-            // Send the lesson
-            await sendWhatsApp(cleanPhone, lessonMessage, nextModule.contentUrl);
+            await sendWhatsApp(cleanPhone, lessonMessage); // Removed contentUrl to prevent crashes
 
-            // UPDATE THE DATABASE
             await prisma.enrollment.update({
                 where: { id: enrollment.id },
                 data: {
@@ -287,7 +313,6 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                 }
             });
         } else {
-            // 🎓 TRUE GRADUATION: No more modules left!
             await sendWhatsApp(cleanPhone, `🎉 *CONGRATULATIONS, ${member.firstName}!* 🎉\n\nYou have officially passed all modules and completed *${enrollment.course.title}*!\n\nWe hope you enjoyed the journey. Reply *Menu* to explore more resources or check your dashboard for your certificate.`);
             
             await prisma.enrollment.update({
@@ -313,7 +338,6 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
             return { handled: true, clearSessionFlag: false };
         }
 
-        // 💡 FIX: Look up by the exact Database ID, not the day number
         let module;
         if (enrollment.currentModuleId) {
             module = enrollment.course.modules.find(m => m.id === enrollment.currentModuleId);
@@ -336,7 +360,7 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                     data: { quizState: 'AWAITING_ANSWER' } 
                 });
             }
-            await sendWhatsApp(cleanPhone, msg, module.contentUrl);
+            await sendWhatsApp(cleanPhone, msg); 
         } else {
             await sendWhatsApp(cleanPhone, `✅ You are all caught up! The next lesson will arrive tomorrow.`);
         }
@@ -419,7 +443,6 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
         }
 
         if (incomingMsg === '1' || incomingMsg === 'resume') {
-            // 💡 FIX: Self-healing fallback here too!
             let module;
             if (enrollment.currentModuleId) {
                 module = enrollment.course.modules.find(m => m.id === enrollment.currentModuleId);
@@ -432,7 +455,6 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
             const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress;
             
             if (module) {
-                // 💡 Restored the message builder!
                 let msg = `🎓 *RESUMING: ${enrollment.course.title}* (Day ${targetDay})\n\n*${module.title}*\n\n${module.content || module.dailyLessonText}`;
                 
                 if (module.quizQuestion || module.quiz) {
@@ -440,7 +462,7 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                     await prisma.enrollment.update({ where: { id: enrollment.id }, data: { quizState: 'AWAITING_ANSWER' }});
                 }
                 
-                await sendWhatsApp(cleanPhone, msg, module.contentUrl);
+                await sendWhatsApp(cleanPhone, msg); 
                 session.step = null; 
             } else {
                 await sendWhatsApp(cleanPhone, "✅ You are up to date!");
@@ -456,14 +478,13 @@ async function processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, membe
                 return { handled: true, clearSessionFlag: false };
             }
 
-            // 💡 FIX: Use the sorted array index to safely grab yesterday's module
-            const prevIndex = currentDay - 2; // (progress 2 is array index 1. Previous is index 0)
+            const prevIndex = currentDay - 2; 
             const sortedModules = enrollment.course.modules.sort((a, b) => a.order - b.order);
             const module = sortedModules[prevIndex];
 
             if (module) {
                 let msg = `⏮️ *PREVIOUS LESSON: ${enrollment.course.title}* (Day ${currentDay - 1})\n\n*${module.title}*\n\n${module.content || module.dailyLessonText}`;
-                await sendWhatsApp(cleanPhone, msg, module.contentUrl);
+                await sendWhatsApp(cleanPhone, msg); 
             } else {
                 await sendWhatsApp(cleanPhone, `⚠️ Could not find content for Day ${currentDay - 1}.`);
             }
