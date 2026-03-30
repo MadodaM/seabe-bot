@@ -54,39 +54,32 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
     let reply = "";
 
     session.orgName = session.orgName || member?.church?.name || "Organization";
-    session.orgType = session.orgType || member?.church?.type || "NON_PROFIT";
     session.orgCode = session.orgCode || member?.churchCode;
 
     try {
         // ====================================================
         // 1. MAIN MENU TRIGGER & VALIDATION
         // ====================================================
-        const triggers = ['hi', 'menu', 'hello', 'npo', 'donate', 'help', 'pay'];
+        const triggers = ['hi', 'menu', 'hello', 'help', 'pay', 'donate', 'npo'];
         
         if (triggers.includes(incomingMsg.toLowerCase())) { 
             
-            // TRAP: User typed NPO trigger but is actually in a Church
-            if (session.orgType === 'CHURCH') {
-                reply = `🚫 You are currently connected to *${session.orgName}*, which is a Church.\n\n` +
-                        `Reply *'Menu'* to see church options.`;
-            } else {
-                // 🤝 SCENARIO: STANDARD NPO
-                session.step = 'NPO_MENU'; 
-                const adText = await getAdSuffix(session.orgCode); 
-                
-                reply = `🤝 *${session.orgName}* (NPO)\n` +
-                        `_Making a difference together_\n\n` +
-                        `1. Donate 💖\n` +
-                        `2. Support a Project 🏗️\n` +
-                        `3. Upcoming Events 📅\n` +
-                        `4. Monthly Pledge 🔁\n` +
-                        `5. News & Updates 📰\n` +
-                        `6. My Profile 👤\n` +
-                        `7. History 📜\n` + 
-                        `8. Academy & Courses 🎓\n` +
-                        `9. Go to Lobby 🛡️\n\n` +
-                        `Reply with a number:${adText}`;
-            }
+            // 🤝 SCENARIO: STANDARD NPO
+            session.step = 'NPO_MENU'; 
+            const adText = await getAdSuffix(session.orgCode); 
+            
+            reply = `🤝 *${session.orgName}* (NPO)\n` +
+                    `_Making a difference together_\n\n` +
+                    `1. Donate 💖\n` +
+                    `2. Support a Project 🏗️\n` +
+                    `3. Upcoming Events 📅\n` +
+                    `4. Monthly Pledge 🔁\n` +
+                    `5. News & Updates 📰\n` +
+                    `6. My Profile 👤\n` +
+                    `7. History 📜\n` + 
+                    `8. Academy & Courses 🎓\n` +
+                    `9. Go to Lobby 🛡️\n\n` +
+                    `Reply with a number:${adText}`;
         }
 
         // ====================================================
@@ -94,14 +87,11 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
         // ====================================================
         else if (session.step === 'NPO_MENU') {
             
-            // --- OPTION 1: DONATE ---
             if (incomingMsg === '1') {
                 session.step = 'NPO_PAY';
                 session.choice = '1';
                 reply = `💖 *General Donation*\n\nHow much would you like to give today? (e.g. 100)`;
             }
-
-            // --- OPTION 2: SUPPORT A PROJECT ---
             else if (incomingMsg === '2') {
                 const projects = await prisma.event.findMany({ 
                     where: { churchCode: session.orgCode, isDonation: true, status: 'Active' } 
@@ -118,8 +108,6 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
                     session.availableEvents = projects; 
                 }
             }
-
-            // --- OPTION 3: EVENTS (Tickets) ---
             else if (incomingMsg === '3') {
                 const events = await prisma.event.findMany({ 
                     where: { 
@@ -143,15 +131,11 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
                     session.availableEvents = events; 
                 }
             }
-
-            // --- OPTION 4: MONTHLY PLEDGE ---
             else if (incomingMsg === '4') {
                 session.step = 'NPO_PAY';
                 session.choice = '4';
                 reply = `🔁 *Monthly Pledge*\n\nEnter the monthly amount you wish to pledge (e.g. 200):`;
             }
-
-            // --- OPTION 5: NEWS ---
             else if (incomingMsg === '5') {
                 const news = await prisma.news.findMany({ 
                     where: { church: { code: session.orgCode }, status: 'Active' }, 
@@ -166,45 +150,37 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
                 }
                 session.step = 'NPO_MENU';
             }
-
-            // --- OPTION 6: PROFILE ---
             else if (incomingMsg === '6') {
                 session.step = 'NPO_PROFILE_MENU';
                 reply = "👤 *My Profile*\n\n1. Update Email\n2. Manage Recurring Pledges\n3. Switch Organization (Unlink)\n\nReply with a number:";
             }
-
-            // --- OPTION 7: HISTORY ---
             else if (incomingMsg === '7') {
                  reply = await gateway.getTransactionHistory(member.id);
                  session.step = 'NPO_MENU';
             }
-            
-            // --- OPTION 8: ACADEMY ---
             else if (incomingMsg === '8') {
                  session.step = null;
                  reply = "🎓 *Welcome to the Academy!*\n\nTo view available modules and start learning, please reply with the word:\n👉 *Courses*";
             }
-            
-            // --- OPTION 9: GO TO LOBBY (Switch Org) ---
             else if (incomingMsg === '9') {
                  reply = "🔄 Leaving NPO mode...\nReply *Join* to search for a new organization.";
                  delete session.mode; 
                  session.step = null;
             }
-
             else {
                 reply = "⚠️ Invalid option. Please reply with a number from the menu.";
             }
         }
 
         // ====================================================
-        // 3. PAYMENT PROCESSING (User Input -> Trigger Seabe ID)
+        // 3. PAYMENT PROCESSING
         // ====================================================
         else if (session.step === 'NPO_PAY') {
             let amount = parseFloat(incomingMsg.replace(/\D/g,'')); 
             if (isNaN(amount) || amount < 10) {
                 reply = "⚠️ Please enter a valid amount (e.g. 100). Minimum is R10.";
-                return sendWhatsApp(cleanPhone, reply);
+                await sendWhatsApp(cleanPhone, reply);
+                return { handled: true };
             }
             
             let type = ''; 
@@ -212,11 +188,9 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
             else if (session.choice === '1') type = 'DONATION';
             else if (session.choice === '4') type = 'RECURRING';
             
-            // Save state for 1-Click Execution
             session.tempPaymentAmount = amount;
             session.tempPaymentType = type;
 
-            // 🔍 SEABE ID CHECK
             const savedCards = await prisma.paymentMethod.findMany({
                 where: { memberId: member.id }, orderBy: { createdAt: 'desc' }
             });
@@ -227,7 +201,6 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
                 session.savedCardToken = card.token;
                 reply = `💳 *Secure 1-Click Giving*\n\nAmount: *R${amount.toFixed(2)}*\n\nWould you like to give using your saved *${card.cardBrand} ending in ${card.last4}*?\n\n*1️⃣ Yes, charge my card now*\n*2️⃣ No, send me a payment link*\n\nReply 1 or 2.`;
             } else {
-                // Standard Link Generation
                 const ref = `${session.orgCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
                 const link = await gateway.createPaymentLink(amount, ref, cleanPhone, session.orgName, '', session.churchCode, type);
                 
@@ -242,7 +215,7 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
         }
 
         // ====================================================
-        // 4. EVENT & PROJECT SELECTION (With Pricing & Seabe ID)
+        // 4. EVENT & PROJECT SELECTION 
         // ====================================================
         else if (session.step === 'NPO_EVENT_SELECT') {
             const index = parseInt(incomingMsg) - 1;
@@ -257,7 +230,6 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
                     session.choice = '1'; 
                     reply = `🏗️ *${selected.name}*\n\nHow much would you like to contribute?`;
                 } else {
-                    // Ticket Purchase
                     const pricing = await calculateTransaction(selected.price, 'STANDARD', 'CAPITEC');
                     const totalAmount = pricing.totalChargedToUser;
                     const type = `TICKET-${selected.id}`;
@@ -265,7 +237,6 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
                     session.tempPaymentAmount = totalAmount;
                     session.tempPaymentType = type;
 
-                    // 🔍 SEABE ID CHECK
                     const savedCards = await prisma.paymentMethod.findMany({
                         where: { memberId: member.id }, orderBy: { createdAt: 'desc' }
                     });
@@ -276,7 +247,6 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
                         session.savedCardToken = card.token;
                         reply = `🎟️ *${selected.name}*\n\nTicket: R${pricing.baseAmount.toFixed(2)}\nService Fee: R${pricing.totalFees.toFixed(2)}\n*Total Due: R${totalAmount.toFixed(2)}*\n\nWould you like to pay using your saved *${card.cardBrand} ending in ${card.last4}*?\n\n*1️⃣ Yes, charge my card now*\n*2️⃣ No, send me a payment link*`;
                     } else {
-                        // Standard Link Generation
                         const ref = `${session.orgCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
                         const link = await gateway.createPaymentLink(totalAmount, ref, cleanPhone, session.orgName, '', session.churchCode, type);
                         
@@ -311,8 +281,6 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
                 await sendWhatsApp(cleanPhone, "🔄 *Processing Transaction...*\nSecurely communicating with your bank. Please wait.");
 
                 const ref = `${session.orgCode}-${type}-${cleanPhone.slice(-4)}-${Date.now().toString().slice(-5)}`;
-                
-                // Trigger the Server-to-Server Token Charge
                 const chargeResult = await gateway.chargeSavedToken(session.savedCardToken, amount, ref);
 
                 if (chargeResult.success) {
@@ -326,7 +294,8 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
                     reply = `✅ *Payment Successful!*\n\nThank you for your generosity, ${member.firstName}. Your transaction of *R${amount.toFixed(2)}* was successfully processed.\n\nReply *Menu* to return to the dashboard.`;
                 } else {
                     reply = `⚠️ *Payment Failed*\n\nYour bank declined the transaction. Please reply *2* to try again with a secure payment link.`;
-                    return sendWhatsApp(cleanPhone, reply); // Leave them in 1CLICK_PAY so they can reply '2'
+                    await sendWhatsApp(cleanPhone, reply); 
+                    return { handled: true }; 
                 }
                 session.step = 'NPO_MENU';
             }
@@ -391,25 +360,15 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
         // --- FINAL SEND ---
         if (reply) {
             await sendWhatsApp(cleanPhone, reply);
-        }
-
-    } catch (e) { 
-        console.error("❌ CRITICAL NPO Bot Error:", e);
-        await sendWhatsApp(cleanPhone, "⚠️ System error loading NPO menu. Please try again in a few minutes.");
-    }
-	
-	// --- FINAL SEND ---
-        if (reply) {
-            await sendWhatsApp(cleanPhone, reply);
             return { handled: true }; // Tell the router we answered the customer!
         }
 
         return { handled: false }; // Tell the router "I don't know this word!"
 
     } catch (e) { 
-        console.error("❌ CRITICAL Bot Error:", e);
-        await sendWhatsApp(cleanPhone, "⚠️ System error loading the menu. Please try again in a few minutes.");
-        return { handled: true }; 
+        console.error("❌ CRITICAL NPO Bot Error:", e);
+        await sendWhatsApp(cleanPhone, "⚠️ System error loading NPO menu. Please try again in a few minutes.");
+        return { handled: true };
     }
 }
 
