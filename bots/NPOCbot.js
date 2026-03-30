@@ -412,6 +412,5 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
         return { handled: true }; 
     }
 }
-}
 
 module.exports = { handleNPOMessage };

@@ -395,6 +395,5 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
         return { handled: true }; 
     }
 }
-}
 
 module.exports = { handleChurchMessage };

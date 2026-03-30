@@ -533,6 +533,5 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member) {
         return { handled: true }; 
     }
 }
-}
 
 module.exports = { processLmsMessage };
