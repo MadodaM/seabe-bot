@@ -11,6 +11,7 @@ const { sendWhatsApp } = require('../services/twilioClient');
 const { getAISupportReply } = require('../services/aiSupport');
 const { handleSocietyMessage } = require('../bots/societyBot');
 const { handleChurchMessage } = require('../bots/churchBot');
+const { handleNPOMessage } = require('../bots/NPOCbot');
 const { handleStokvelMessage } = require('../bots/stokvelBot');
 const { processGroomingMessage } = require('../bots/groomingBot');
 const { processLmsMessage } = require('../bots/LMSlogicBot'); // 🚀 NEW: Our LMS Controller!
@@ -554,7 +555,9 @@ router.post('/', (req, res) => {
             if (!session.mode && member.church) {
                 if (member.church.type === 'BURIAL_SOCIETY') session.mode = 'SOCIETY';
                 else if (member.church.type === 'STOKVEL_SAVINGS') session.mode = 'STOKVEL';
+                else if (member.church.type === 'NON_PROFIT') session.mode = 'NPO'; // 👈 ADD THIS LINE
                 else session.mode = 'CHURCH';
+            }
             }
 
             if (session.mode === 'SOCIETY') {
@@ -569,6 +572,12 @@ router.post('/', (req, res) => {
             
             if (session.mode === 'STOKVEL') {
                 await handleStokvelMessage(cleanPhone, mappedMsg, session, member);
+                return;
+            }
+			
+			if (session.mode === 'NPO') {
+                // Send them to the dedicated NPO handler using the mappedMsg
+                await handleNPOMessage(cleanPhone, mappedMsg, session, member);
                 return;
             }
 
