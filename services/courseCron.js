@@ -16,7 +16,6 @@ const sendWhatsApp = async (to, body, mediaUrl = null) => {
     if (cleanTo.startsWith('0')) cleanTo = '27' + cleanTo.substring(1);
     
     try {
-        // 1. IF THERE IS MEDIA, SEND IT FIRST (Standalone)
         if (mediaUrl) {
             await twilioClient.messages.create({
                 from: `whatsapp:${cleanTwilioNumber}`,
@@ -25,7 +24,6 @@ const sendWhatsApp = async (to, body, mediaUrl = null) => {
             });
         }
 
-        // 2. THEN SEND THE TEXT BODY
         if (body && body.trim() !== '') {
             await twilioClient.messages.create({
                 from: `whatsapp:${cleanTwilioNumber}`,
@@ -33,7 +31,6 @@ const sendWhatsApp = async (to, body, mediaUrl = null) => {
                 body: body
             });
         }
-        
     } catch (err) {
         console.error("❌ Twilio Send Error:", err.message);
     }
@@ -64,7 +61,6 @@ const startCourseEngine = () => {
                 if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
 
                 if (student.reminderCount >= 3) {
-                    // ❌ STRIKE 3: Unsubscribe them
                     await prisma.enrollment.update({
                         where: { id: student.id },
                         data: { status: 'UNSUBSCRIBED' } 
@@ -77,14 +73,13 @@ const startCourseEngine = () => {
                     console.log(`❌ Unsubscribed student ${cleanPhone} from ${student.course.title} due to inactivity.`);
 
                 } else {
-                    // ⚠️ STRIKE 1 OR 2: Nudge them
                     const newCount = (student.reminderCount || 0) + 1;
                     
                     await prisma.enrollment.update({
                         where: { id: student.id },
                         data: { 
                             reminderCount: newCount,
-                            updatedAt: new Date() // Reset the 6-hour clock
+                            updatedAt: new Date() 
                         }
                     });
 
@@ -112,9 +107,7 @@ const startCourseEngine = () => {
                 include: {
                     member: true,
                     course: {
-                        include: { 
-                            modules: { orderBy: { order: 'asc' } } 
-                        }
+                        include: { modules: { orderBy: { order: 'asc' } } }
                     }
                 }
             });
@@ -132,7 +125,7 @@ const startCourseEngine = () => {
                 const course = enrollment.course;
                 const lastProgress = enrollment.progress || 0; 
                 
-                // 🛑 Verify they passed yesterday's quiz
+                // 🛑 THE 24-HOUR RULE: Verify they passed yesterday's quiz
                 if (lastProgress > 0 && enrollment.currentModuleId) {
                     const passedQuiz = await prisma.assessmentLog.findFirst({
                         where: {
@@ -157,6 +150,7 @@ const startCourseEngine = () => {
                         console.log(`❌ Unsubscribed ${student.phone} - Inactive for 24+ hours.`);
                         continue; // Skip to the next student
                     }
+                }
 
                 const todaysModule = course.modules[lastProgress];
 
@@ -166,8 +160,7 @@ const startCourseEngine = () => {
                     lessonMessage += `${todaysModule.content || todaysModule.dailyLessonText}\n\n`;
                     
                     if (todaysModule.quizQuestion || todaysModule.quiz) {
-                        lessonMessage += `🧠 *Today's Quiz:*\n${todaysModule.quizQuestion || todaysModule.quiz}\n\n`;
-                        lessonMessage += `_Reply with your answer to chat with our AI tutor!_`;
+                        lessonMessage += `🧠 *Today's Quiz:*\n${todaysModule.quizQuestion || todaysModule.quiz}\n\n_Reply with your answer to chat with our AI tutor!_`;
                     } else {
                         lessonMessage += `_Reply *Next* when you are ready to continue!_`; 
                     }
@@ -196,17 +189,17 @@ const startCourseEngine = () => {
                     });
                     console.log(`🏁 Course Completed for ${student.phone}`);
                 }
-            }
+            } // <-- The sneaky 'for' loop brace!
 
             console.log(`🏆 [CRON] Course Delivery sequence complete. Sent ${lessonsDelivered} lessons.`);
 
-        } catch (error) {
+        } catch (error) { // <-- Now the catch block is happy
             console.error("❌ [CRON] Fatal Course Delivery Engine Error:", error);
         }
     }, {
         scheduled: true,
         timezone: "Africa/Johannesburg" 
     });
-}; // <-- This is the little bracket that caused all the chaos!
+};
 
 module.exports = { startCourseEngine };
