@@ -83,7 +83,8 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
                         `5. News & Updates 📰\n` +
                         `6. My Profile 👤\n` +
                         `7. History 📜\n` + 
-                        `8. Go to Lobby 🛡️\n\n` +
+                        `8. Academy & Courses 🎓\n` +
+                        `9. Go to Lobby 🛡️\n\n` +
                         `Reply with a number:${adText}`;
             }
         }
@@ -178,8 +179,14 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
                  session.step = 'NPO_MENU';
             }
             
-            // --- OPTION 8: GO TO LOBBY (Switch Org) ---
+            // --- OPTION 8: ACADEMY ---
             else if (incomingMsg === '8') {
+                 session.step = null;
+                 reply = "🎓 *Welcome to the Academy!*\n\nTo view available modules and start learning, please reply with the word:\n👉 *Courses*";
+            }
+            
+            // --- OPTION 9: GO TO LOBBY (Switch Org) ---
+            else if (incomingMsg === '9') {
                  reply = "🔄 Leaving NPO mode...\nReply *Join* to search for a new organization.";
                  delete session.mode; 
                  session.step = null;

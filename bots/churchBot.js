@@ -77,7 +77,8 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
                     `5. News 📰\n` +
                     `6. Profile 👤\n` +
                     `7. History 📜\n` +
-                    `8. Go to Lobby 🛡️\n\n` + 
+                    `8. Descipleship Courses 🎓\n` +
+                    `9. Go to Lobby 🛡️\n\n` +
                     `Reply with a number:${adText}`;
         }
 
@@ -159,8 +160,14 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
                  session.step = 'CHURCH_MENU';
             }
             
-            // --- OPTION 8: SWITCH TO LOBBY ---
+            // --- OPTION 8: ACADEMY ---
             else if (incomingMsg === '8') {
+                 session.step = null;
+                 reply = "🎓 *Welcome to the Academy!*\n\nTo view available modules and start learning, please reply with the word:\n👉 *Courses*";
+            }
+            
+            // --- OPTION 9: GO TO LOBBY ---
+            else if (incomingMsg === '9') {
                  reply = "🔄 Leaving Church mode...\nReply *Join* to search for a new organization.";
                  delete session.mode; 
                  session.step = null;

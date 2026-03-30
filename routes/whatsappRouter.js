@@ -147,7 +147,7 @@ router.post('/', (req, res) => {
             // ================================================
             // 🎓 LMS / ACADEMY ROUTER
             // ================================================
-            const lmsResult = await processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, member, sendWhatsApp);
+            const lmsResult = await processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, member, sendWhatsApp) || {};
             if (lmsResult.handled) {
                 if (lmsResult.clearSessionFlag) clearSessionFlag = true;
                 return; 
