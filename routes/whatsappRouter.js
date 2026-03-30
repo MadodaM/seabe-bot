@@ -147,10 +147,12 @@ router.post('/', (req, res) => {
             // ================================================
             // 🎓 LMS / ACADEMY ROUTER
             // ================================================
-            const lmsResult = await processLmsMessage(incomingMsg, rawMsg, cleanPhone, session, member, sendWhatsApp) || {};
+            // 🚀 FIXED: Standardized the argument order!
+            const lmsResult = await processLmsMessage(cleanPhone, incomingMsg, session, member) || {};
+            
             if (lmsResult.handled) {
                 if (lmsResult.clearSessionFlag) clearSessionFlag = true;
-                return; 
+                return; // Stop processing, the LMS bot successfully handled the message!
             }
 
             // ================================================
@@ -215,7 +217,7 @@ router.post('/', (req, res) => {
                 
                 if (incomingMsg === 'join') {
                     session.step = 'SEARCH';
-                    await sendWhatsApp(cleanPhone, "🔍 Let's find your organization!\n\nPlease reply with their name (e.g., 'Church' or 'Kgosigadi'):");
+                    await sendWhatsApp(cleanPhone, "🔍 Let's find your organization!\n\nPlease reply with their name (e.g., 'your Church name' or 'organization name'):");
                     return;
                 }
 

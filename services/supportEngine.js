@@ -1,4 +1,4 @@
-const { sendWhatsApp } = require('./whatsapp');
+const { sendWhatsApp } = require('../whatsapp');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // 🧠 THE MASTER KEYWORD DICTIONARY
@@ -11,6 +11,21 @@ const VALID_COMMANDS = [
 // Initialize Gemini for Step 3 (Embeddings)
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const embeddingModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
+
+// 🚀 FIXED: Pre-compute and cache the command vectors ONCE on startup
+const COMMAND_VECTORS_CACHE = {};
+
+async function preloadCommandVectors() {
+    console.log("🧠 Pre-computing semantic vectors for NLP Engine...");
+    for (const cmd of VALID_COMMANDS) {
+        const vec = await getEmbedding(cmd);
+        if (vec) COMMAND_VECTORS_CACHE[cmd] = vec;
+    }
+    console.log("✅ Semantic vectors loaded!");
+}
+
+// Fire it immediately in the background
+preloadCommandVectors();
 
 // ==========================================
 // 🧮 THE HYBRID ALGORITHMS
@@ -81,6 +96,11 @@ async function getEmbedding(text) {
 // ==========================================
 async function handleSupportOrTypo(incomingMsg, cleanPhone, orgName) {
     const rawInput = incomingMsg.toLowerCase().trim();
+	
+	// 🛡️ SAFETY NET: If they typed a perfectly valid command, do not correct them!
+    if (VALID_COMMANDS.includes(rawInput)) {
+        return { handled: false }; 
+    }
 
     // 1. EXPLICIT HELP MENU
     if (rawInput === 'help' || rawInput === 'support' || rawInput === 'agent') {
@@ -130,7 +150,7 @@ async function handleSupportOrTypo(incomingMsg, cleanPhone, orgName) {
 
             // Compare the user's sentence against our core commands
             for (const cmd of VALID_COMMANDS) {
-                const cmdVector = await getEmbedding(cmd);
+                const cmdVector = COMMAND_VECTORS_CACHE[cmd]; // ⚡ Instant local lookup!
                 if (cmdVector) {
                     const similarity = calculateCosineSimilarity(userVector, cmdVector);
                     // A cosine similarity > 0.75 usually means strong contextual relation
@@ -139,7 +159,8 @@ async function handleSupportOrTypo(incomingMsg, cleanPhone, orgName) {
                         bestSemanticMatch = cmd;
                     }
                 }
-            }
+				
+			}
 
             if (bestSemanticMatch) {
                 candidateCommands.push(bestSemanticMatch);
