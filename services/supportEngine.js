@@ -10,7 +10,7 @@ const VALID_COMMANDS = [
 
 // Initialize Gemini for Step 3 (Embeddings)
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const embeddingModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
+const embeddingModel = genAI.getGenerativeModel({ model: "embedding-001" });
 
 // 🚀 FIXED: Pre-compute and cache the command vectors ONCE on startup
 const COMMAND_VECTORS_CACHE = {};
