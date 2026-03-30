@@ -401,10 +401,10 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
 	// --- FINAL SEND ---
         if (reply) {
             await sendWhatsApp(cleanPhone, reply);
-            return { handled: true }; // 👈 Tell the router we answered the customer!
+            return { handled: true }; // Tell the router we answered the customer!
         }
-        
-        return { handled: false }; // 👈 Tell the router "I don't know this word!"
+
+        return { handled: false }; // Tell the router "I don't know this word!"
 
     } catch (e) { 
         console.error("❌ CRITICAL Bot Error:", e);

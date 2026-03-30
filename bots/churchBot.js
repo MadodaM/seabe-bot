@@ -1,6 +1,6 @@
 // ==========================================
-// bots/churchBot.js - Omni-Channel Handler
-// Covers: Churches ⛪ 
+// bots/churchBot.js - Dedicated Church Handler
+// Covers: Churches ⛪
 // ==========================================
 
 const { PrismaClient } = require('@prisma/client');
@@ -53,8 +53,7 @@ async function getAdSuffix(churchCode) {
 async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
     let reply = "";
 
-    session.orgName = session.orgName || member?.church?.name || "Organization";
-    session.orgType = session.orgType || member?.church?.type || "CHURCH";
+    session.orgName = session.orgName || member?.church?.name || "Church";
     session.orgCode = session.orgCode || member?.churchCode;
 
     try {
@@ -77,7 +76,7 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
                     `5. News 📰\n` +
                     `6. Profile 👤\n` +
                     `7. History 📜\n` +
-                    `8. Descipleship Courses 🎓\n` +
+                    `8. Discipleship Courses 🎓\n` +
                     `9. Go to Lobby 🛡️\n\n` +
                     `Reply with a number:${adText}`;
         }
@@ -185,7 +184,8 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
             let amount = parseFloat(incomingMsg.replace(/\D/g,'')); 
             if (isNaN(amount) || amount < 10) {
                 reply = "⚠️ Please enter a valid amount (e.g. 100).";
-                return sendWhatsApp(cleanPhone, reply);
+                await sendWhatsApp(cleanPhone, reply);
+                return { handled: true };
             }
             
             let type = ''; 
@@ -309,7 +309,8 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
                     reply = `✅ *Payment Successful!*\n\nThank you for your generosity, ${member.firstName}. Your transaction of *R${amount.toFixed(2)}* was successfully processed.\n\nReply *Menu* to return to the dashboard.`;
                 } else {
                     reply = `⚠️ *Payment Failed*\n\nYour bank declined the transaction. Please reply *2* to try again with a secure payment link.`;
-                    return sendWhatsApp(cleanPhone, reply); // Leave them in CHURCH_1CLICK_PAY so they can reply '2'
+                    await sendWhatsApp(cleanPhone, reply);
+                    return { handled: true }; 
                 }
                 session.step = 'CHURCH_MENU';
             }
@@ -374,20 +375,10 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
         // --- FINAL SEND ---
         if (reply) {
             await sendWhatsApp(cleanPhone, reply);
+            return { handled: true }; // Tell the router we answered the customer!
         }
 
-    } catch (e) { 
-        console.error("❌ CRITICAL Church Bot Error:", e);
-        await sendWhatsApp(cleanPhone, "⚠️ System error loading church menu. Please try again in a few minutes.");
-    }
-	
-	// --- FINAL SEND ---
-        if (reply) {
-            await sendWhatsApp(cleanPhone, reply);
-            return { handled: true }; // 👈 Tell the router we answered the customer!
-        }
-        
-        return { handled: false }; // 👈 Tell the router "I don't know this word!"
+        return { handled: false }; // Tell the router "I don't know this word!"
 
     } catch (e) { 
         console.error("❌ CRITICAL Bot Error:", e);
