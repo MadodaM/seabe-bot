@@ -232,7 +232,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member) {
                         if (resumedModule.quizQuestion || resumedModule.quiz) {
                             resumeMsg += `🧠 *Your Pending Quiz:*\n${resumedModule.quizQuestion || resumedModule.quiz}\n\n_Reply with your answer to continue!_`;
                         }
-                        await sendWhatsApp(cleanPhone, resumeMsg); // Removed contentUrl to prevent Twilio crashes if missing
+                        await sendWhatsApp(cleanPhone, resumeMsg); 
                     } else {
                         await sendWhatsApp(cleanPhone, resumeMsg);
                     }
@@ -301,7 +301,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member) {
                 lessonMessage += `_Reply *Next* when you are ready to continue!_`; 
             }
 
-            await sendWhatsApp(cleanPhone, lessonMessage); // Removed contentUrl to prevent crashes
+            await sendWhatsApp(cleanPhone, lessonMessage); 
 
             await prisma.enrollment.update({
                 where: { id: enrollment.id },
@@ -518,20 +518,6 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member) {
     }
 
     return { handled: false, clearSessionFlag: false };
-	
-	// --- FINAL SEND ---
-        if (reply) {
-            await sendWhatsApp(cleanPhone, reply);
-            return { handled: true }; // 👈 Tell the router we answered the customer!
-        }
-        
-        return { handled: false }; // 👈 Tell the router "I don't know this word!"
-
-    } catch (e) { 
-        console.error("❌ CRITICAL Bot Error:", e);
-        await sendWhatsApp(cleanPhone, "⚠️ System error loading the menu. Please try again in a few minutes.");
-        return { handled: true }; 
-    }
 }
 
 module.exports = { processLmsMessage };
