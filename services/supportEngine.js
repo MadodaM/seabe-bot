@@ -1,39 +1,19 @@
-const { sendWhatsApp } = require('./whatsapp');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { sendWhatsApp } = require('./twilioClient');
 
 // 🧠 THE MASTER KEYWORD DICTIONARY
 const VALID_COMMANDS = [
     'menu', 'courses', 'profile', 'join', 'pay', 
     'help', 'support', 'claim', 'appointments', 
-    'services', 'next', 'resume', 'exit', 'cancel'
+    'services', 'next', 'resume', 'exit', 'cancel', 'society'
 ];
 
-// Initialize Gemini for Step 3 (Embeddings)
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const embeddingModel = genAI.getGenerativeModel({ model: "embedding-001" });
-
-// 🚀 FIXED: Pre-compute and cache the command vectors ONCE on startup
-const COMMAND_VECTORS_CACHE = {};
-
-async function preloadCommandVectors() {
-    console.log("🧠 Pre-computing semantic vectors for NLP Engine...");
-    for (const cmd of VALID_COMMANDS) {
-        const vec = await getEmbedding(cmd);
-        if (vec) COMMAND_VECTORS_CACHE[cmd] = vec;
-    }
-    console.log("✅ Semantic vectors loaded!");
-}
-
-// Fire it immediately in the background
-preloadCommandVectors();
-
 // ==========================================
-// 🧮 THE HYBRID ALGORITHMS
+// 🧮 THE ALGORITHMS (100% Local, No API Needed)
 // ==========================================
 
 // STEP 1: HAMMING DISTANCE (Ultra-fast strict length filter)
 function getHammingDistance(a, b) {
-    if (a.length !== b.length) return Infinity; // Only compares exact length words
+    if (a.length !== b.length) return Infinity; 
     let distance = 0;
     for (let i = 0; i < a.length; i++) {
         if (a[i] !== b[i]) distance++;
@@ -41,7 +21,7 @@ function getHammingDistance(a, b) {
     return distance;
 }
 
-// STEP 2: DAMERAU-LEVENSHTEIN (Catches transpositions like "taht" -> "that")
+// STEP 2: DAMERAU-LEVENSHTEIN (Catches missing, extra, or flipped letters)
 function getDamerauLevenshteinDistance(a, b) {
     if (a.length === 0) return b.length;
     if (b.length === 0) return a.length;
@@ -60,7 +40,7 @@ function getDamerauLevenshteinDistance(a, b) {
                 matrix[i - 1][j - 1] + cost // substitution
             );
 
-            // The "Damerau" Magic: Check for transposed letters (e.g., c-u-r-s-e-s vs c-o-u-r-s-e-s)
+            // Check for transposed letters (e.g., c-o-r-s-e-s vs c-o-u-r-s-e-s)
             if (i > 1 && j > 1 && b[i - 1] === a[j - 2] && b[i - 2] === a[j - 1]) {
                 matrix[i][j] = Math.min(matrix[i][j], matrix[i - 2][j - 2] + cost);
             }
@@ -69,35 +49,13 @@ function getDamerauLevenshteinDistance(a, b) {
     return matrix[b.length][a.length];
 }
 
-// STEP 3: COSINE SIMILARITY (Contextual & Semantic matching)
-function calculateCosineSimilarity(vecA, vecB) {
-    let dotProduct = 0, normA = 0, normB = 0;
-    for (let i = 0; i < vecA.length; i++) {
-        dotProduct += vecA[i] * vecB[i];
-        normA += vecA[i] * vecA[i];
-        normB += vecB[i] * vecB[i];
-    }
-    if (normA === 0 || normB === 0) return 0;
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
-async function getEmbedding(text) {
-    try {
-        const result = await embeddingModel.embedContent(text);
-        return result.embedding.values;
-    } catch (e) {
-        console.error("Embedding Error:", e);
-        return null;
-    }
-}
-
 // ==========================================
 // 🛟 THE MASTER SUPPORT HANDLER
 // ==========================================
 async function handleSupportOrTypo(incomingMsg, cleanPhone, orgName) {
     const rawInput = incomingMsg.toLowerCase().trim();
-	
-	// 🛡️ SAFETY NET: If they typed a perfectly valid command, do not correct them!
+    
+    // 🛡️ SAFETY NET: If they typed a perfectly valid command, do not correct them!
     if (VALID_COMMANDS.includes(rawInput)) {
         return { handled: false }; 
     }
@@ -119,13 +77,13 @@ async function handleSupportOrTypo(incomingMsg, cleanPhone, orgName) {
     // Array to hold our best guesses
     let candidateCommands = [];
 
-    // 2. RUN STEP 1 & 2: SYNTACTIC CHECKS (Fast local math)
+    // 2. RUN SYNTACTIC CHECKS
     for (const cmd of VALID_COMMANDS) {
         // Step 1: Hamming (Extremely strict, fast filter for exact length typos)
         const hammingDist = getHammingDistance(rawInput, cmd);
         if (hammingDist === 1) {
             candidateCommands.push(cmd);
-            continue; // Move to next command, we already found a great match
+            continue; 
         }
 
         // Step 2: Damerau-Levenshtein (Catches missing, extra, or flipped letters)
@@ -135,42 +93,12 @@ async function handleSupportOrTypo(incomingMsg, cleanPhone, orgName) {
         }
     }
 
-    // Remove duplicates from our candidates array
+    // Remove duplicates
     candidateCommands = [...new Set(candidateCommands)];
 
-    // 3. RUN STEP 3: SEMANTIC EMBEDDINGS (If local math failed, or user typed a full sentence)
-    // Example: User types "I want to see my classes" -> No typo match, but high semantic match to "courses"
-    if (candidateCommands.length === 0 && rawInput.length > 5) {
-        
-        const userVector = await getEmbedding(rawInput);
-        
-        if (userVector) {
-            let bestSemanticMatch = null;
-            let highestSimilarity = 0;
-
-            // Compare the user's sentence against our core commands
-            for (const cmd of VALID_COMMANDS) {
-                const cmdVector = COMMAND_VECTORS_CACHE[cmd]; // ⚡ Instant local lookup!
-                if (cmdVector) {
-                    const similarity = calculateCosineSimilarity(userVector, cmdVector);
-                    // A cosine similarity > 0.75 usually means strong contextual relation
-                    if (similarity > 0.75 && similarity > highestSimilarity) {
-                        highestSimilarity = similarity;
-                        bestSemanticMatch = cmd;
-                    }
-                }
-				
-			}
-
-            if (bestSemanticMatch) {
-                candidateCommands.push(bestSemanticMatch);
-            }
-        }
-    }
-
-    // 4. RESPOND TO THE USER
+    // 3. RESPOND TO THE USER
     if (candidateCommands.length > 0) {
-        // If we found exactly one highly likely match, politely ask if that's what they meant
+        // We found a highly likely match
         const topGuess = candidateCommands[0];
         
         // Capitalize the first letter for neatness
@@ -181,10 +109,65 @@ async function handleSupportOrTypo(incomingMsg, cleanPhone, orgName) {
         return { handled: true };
     }
 
-    // 5. TOTAL FALLBACK (Complete gibberish or zero matches)
+    // 4. TOTAL FALLBACK (Complete gibberish or zero matches)
     const fallbackMsg = `⚠️ Oops! I didn't understand that command.\n\nType *Help* to see a list of things I can do, or type *Menu* to start over.`;
     await sendWhatsApp(cleanPhone, fallbackMsg);
     return { handled: true };
 }
 
-module.exports = { handleSupportOrTypo };
+module.exports = { handleSupportOrTypo };// Background Sender with Smart Chunking to bypass Twilio's 1600 char limit
+const sendWhatsApp = async (to, body) => {
+    if (!twilioClient) return console.log("⚠️ Twilio Keys Missing! Could not send message.");
+    const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+
+    // Twilio's hard limit is 1600. We use 1500 to be perfectly safe.
+    const MAX_LENGTH = 1500;
+    const messageChunks = [];
+
+    // 1. Chunk the message securely without breaking words
+    if (body.length > MAX_LENGTH) {
+        let remainingText = body;
+        while (remainingText.length > 0) {
+            if (remainingText.length <= MAX_LENGTH) {
+                messageChunks.push(remainingText);
+                break;
+            }
+            
+            // Try to find a natural break (like a double newline or space) near the limit
+            let chunk = remainingText.substring(0, MAX_LENGTH);
+            let splitIndex = MAX_LENGTH;
+            
+            let lastDoubleNewline = chunk.lastIndexOf('\n\n');
+            let lastNewline = chunk.lastIndexOf('\n');
+            let lastSpace = chunk.lastIndexOf(' ');
+
+            if (lastDoubleNewline > MAX_LENGTH - 300) { 
+                splitIndex = lastDoubleNewline; // Best: Break at a paragraph
+            } else if (lastNewline > MAX_LENGTH - 200) { 
+                splitIndex = lastNewline;       // Good: Break at a line
+            } else if (lastSpace > MAX_LENGTH - 100) { 
+                splitIndex = lastSpace;         // Fallback: Break at a word
+            }
+
+            messageChunks.push(remainingText.substring(0, splitIndex).trim());
+            remainingText = remainingText.substring(splitIndex).trim();
+        }
+    } else {
+        messageChunks.push(body); // Short message, no chunking needed
+    }
+
+    // 2. Send chunks sequentially with a tiny delay so they arrive in perfect order
+    for (const chunk of messageChunks) {
+        try {
+            await twilioClient.messages.create({
+                from: `whatsapp:${cleanTwilioNumber}`, 
+                to: `whatsapp:${to}`,
+                body: chunk
+            });
+            // 500ms delay to guarantee WhatsApp delivers them in the correct order
+            await new Promise(resolve => setTimeout(resolve, 500)); 
+        } catch (err) {
+            console.error("❌ Twilio Send Error:", err.message);
+        }
+    }
+};
