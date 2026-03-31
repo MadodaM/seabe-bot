@@ -5,7 +5,7 @@
 const jwt = require('jsonwebtoken');
 const express = require('express');
 const axios = require('axios');
-const sgMail = require('@sendgrid/mail');
+const { Resend } = require('resend');
 const fs = require('fs');
 const path = require('path');
 const cloudinary = require('cloudinary').v2;
@@ -17,7 +17,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const QRCode = require('qrcode');
 
 const EMAIL_FROM = process.env.EMAIL_FROM;
-if (process.env.SENDGRID_KEY) sgMail.setApiKey(process.env.SENDGRID_KEY);
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // --- 1. CLOUDINARY CONFIGURATION ---
 cloudinary.config({
@@ -432,10 +432,11 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 }
             });
 
-            // Welcome Email
-            if (process.env.SENDGRID_KEY) {
-                await sgMail.send({ 
-                    to: email, from: EMAIL_FROM, 
+            // Welcome Email (NEW RESEND LOGIC)
+            if (process.env.RESEND_API_KEY) {
+                await resend.emails.send({ 
+                    to: email, // Note: In Resend's free unverified tier, this must be YOUR email
+                    from: process.env.EMAIL_FROM || 'onboarding@resend.dev', 
                     subject: `Welcome to Seabe! Your Code is ${newCode}`, 
                     html: `<h2>Welcome to Seabe Digital</h2><p>Your workspace for <strong>${churchName}</strong> is ready.</p><p>Your members can now text <strong>Join ${newCode}</strong> to our WhatsApp bot to connect.</p>` 
                 }).catch(e => console.error("Email Error:", e));

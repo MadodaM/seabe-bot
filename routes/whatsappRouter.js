@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const sgMail = require('@sendgrid/mail'); 
+const { Resend } = require('resend');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // 🛠️ Modular Imports
@@ -19,6 +19,7 @@ const { handleServiceProviderMessage, processProviderTrigger } = require('../bot
 const { handleSupportOrTypo } = require('../services/supportEngine');
 const { processTwilioClaim } = require('../services/aiClaimWorker');
 const { calculateTransaction } = require('../services/pricingEngine');
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 router.post('/', (req, res) => {
     const rawMsg = req.body.Body || '';
@@ -203,7 +204,7 @@ router.post('/', (req, res) => {
 
                         const msg = {
                             to: org.email,
-                            from: process.env.EMAIL_FROM || 'admin@seabe.tech',
+                            from: process.env.EMAIL_FROM || 'info@seabe.tech',
                             subject: `📊 Monthly Report: ${org.name}`,
                             text: `Attached is the latest transaction report for ${org.name}.\n\nTotal Processed: R${total.toFixed(2)}`,
                             attachments: [{
