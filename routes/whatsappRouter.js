@@ -1,567 +1,573 @@
-// routes/whatsappRouter.js
-const express = require('express');
-const router = express.Router();
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
-const sgMail = require('@sendgrid/mail'); 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+	// routes/whatsappRouter.js
+	const express = require('express');
+	const router = express.Router();
+	const { PrismaClient } = require('@prisma/client');
+	const prisma = new PrismaClient();
+	const sgMail = require('@sendgrid/mail'); 
+	const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// 🛠️ Modular Imports
-const { sendWhatsApp } = require('../services/twilioClient');
-const { getAISupportReply } = require('../services/aiSupport');
-const { handleSocietyMessage } = require('../bots/societyBot');
-const { handleChurchMessage } = require('../bots/churchBot');
-const { handleNPOMessage } = require('../bots/NPOCbot'); // 🚀 FIXED IMPORT PATH
-const { handleStokvelMessage } = require('../bots/stokvelBot');
-const { processGroomingMessage } = require('../bots/groomingBot');
-const { processLmsMessage } = require('../bots/LMSlogicBot'); 
-const { handleSupportOrTypo } = require('../services/supportEngine');
-const { processTwilioClaim } = require('../services/aiClaimWorker');
-const { calculateTransaction } = require('../services/pricingEngine');
+	// 🛠️ Modular Imports
+	const { sendWhatsApp } = require('../services/twilioClient');
+	const { getAISupportReply } = require('../services/aiSupport');
+	const { handleSocietyMessage } = require('../bots/societyBot');
+	const { handleChurchMessage } = require('../bots/churchBot');
+	const { handleNPOMessage } = require('../bots/NPOCbot'); // 🚀 FIXED IMPORT PATH
+	const { handleStokvelMessage } = require('../bots/stokvelBot');
+	const { processGroomingMessage } = require('../bots/groomingBot');
+	const { processLmsMessage } = require('../bots/LMSlogicBot'); 
+	const { handleServiceProviderMessage } = require('../bots/serviceProviderBot');
+	const { handleSupportOrTypo } = require('../services/supportEngine');
+	const { processTwilioClaim } = require('../services/aiClaimWorker');
+	const { calculateTransaction } = require('../services/pricingEngine');
 
-router.post('/', (req, res) => {
-    const rawMsg = req.body.Body || '';
-    const incomingMsg = rawMsg.trim().toLowerCase();
-    const cleanPhone = (req.body.From || '').replace('whatsapp:', '');
-    
-    // Extract and split the WhatsApp Profile Name
-    const profileName = req.body.ProfileName || '';
-    let fName = 'Member';
-    let lName = '.'; // Fallback
+	router.post('/', (req, res) => {
+		const rawMsg = req.body.Body || '';
+		const incomingMsg = rawMsg.trim().toLowerCase();
+		const cleanPhone = (req.body.From || '').replace('whatsapp:', '');
+		
+		// Extract and split the WhatsApp Profile Name
+		const profileName = req.body.ProfileName || '';
+		let fName = 'Member';
+		let lName = '.'; // Fallback
 
-    if (profileName && profileName.trim() !== '') {
-        const nameParts = profileName.trim().split(' ');
-        fName = nameParts[0];
-        lName = nameParts.slice(1).join(' ') || '.';
-    }
+		if (profileName && profileName.trim() !== '') {
+			const nameParts = profileName.trim().split(' ');
+			fName = nameParts[0];
+			lName = nameParts.slice(1).join(' ') || '.';
+		}
 
-    // 1. Respond to Twilio IMMEDIATELY
-    res.type('text/xml').send('<Response></Response>');
+		// 1. Respond to Twilio IMMEDIATELY
+		res.type('text/xml').send('<Response></Response>');
 
-    (async () => {
-        let session = {};
-        let clearSessionFlag = false; 
+		(async () => {
+			let session = {};
+			let clearSessionFlag = false; 
 
-        try {
-            // ================================================
-            // 🧠 LOAD SESSION FROM DATABASE
-            // ================================================
-            const dbSession = await prisma.botSession.findUnique({ where: { phone: cleanPhone } });
-            if (dbSession) {
-                session = { step: dbSession.step, mode: dbSession.mode, ...(dbSession.data || {}) };
-            }
+			try {
+				// ================================================
+				// 🧠 LOAD SESSION FROM DATABASE
+				// ================================================
+				const dbSession = await prisma.botSession.findUnique({ where: { phone: cleanPhone } });
+				if (dbSession) {
+					session = { step: dbSession.step, mode: dbSession.mode, ...(dbSession.data || {}) };
+				}
 
-            const numMedia = parseInt(req.body.NumMedia || '0'); 
-            
-            // ================================================
-            // 🔄 MULTI-TENANT CONTEXT SWITCHER
-            // ================================================
-            const switchKeywords = { 'society': 'BURIAL_SOCIETY', 'amen': 'CHURCH', 'npo': 'NON_PROFIT', 'stokvel': 'STOKVEL_SAVINGS' };
-            let explicitType = switchKeywords[incomingMsg];
-            let member;
+				const numMedia = parseInt(req.body.NumMedia || '0'); 
+				
+				// ================================================
+				// 🔄 MULTI-TENANT CONTEXT SWITCHER
+				// ================================================
+				const switchKeywords = { 'society': 'BURIAL_SOCIETY', 'amen': 'CHURCH', 'npo': 'NON_PROFIT', 'stokvel': 'STOKVEL_SAVINGS' };
+				let explicitType = switchKeywords[incomingMsg];
+				let member;
 
-            if (explicitType) {
-                member = await prisma.member.findFirst({
-                    where: { phone: cleanPhone, church: { type: explicitType } },
-                    orderBy: { id: 'desc' },
-                    include: { church: true, society: true }
-                });
+				if (explicitType) {
+					member = await prisma.member.findFirst({
+						where: { phone: cleanPhone, church: { type: explicitType } },
+						orderBy: { id: 'desc' },
+						include: { church: true, society: true }
+					});
 
-                if (member) {
-                    session.churchCode = member.churchCode;
-                    if (explicitType === 'BURIAL_SOCIETY') session.mode = 'SOCIETY';
-                    else if (explicitType === 'STOKVEL_SAVINGS') session.mode = 'STOKVEL';
-                    else if (explicitType === 'NON_PROFIT') session.mode = 'NPO';
-                    else session.mode = 'CHURCH';
-                    session.step = null; 
-                } else {
-                    const labels = { 'BURIAL_SOCIETY': 'Burial Society', 'CHURCH': 'Church', 'NON_PROFIT': 'Non-Profit', 'STOKVEL_SAVINGS': 'Stokvel / Savings Club' };
-                    await sendWhatsApp(cleanPhone, `⚠️ You are not currently linked to a ${labels[explicitType]}.\n\nReply *Join* to search for one.`);
-                    return;
-                }
-            } else {
-                const activeOrgCode = session.churchCode || session.orgCode;
-                if (activeOrgCode) {
-                    member = await prisma.member.findFirst({
-                        where: { phone: cleanPhone, churchCode: activeOrgCode },
-                        include: { church: true, society: true }
-                    });
-                }
-                if (!member) {
-                    member = await prisma.member.findFirst({
-                        where: { phone: cleanPhone },
-                        orderBy: { id: 'desc' },
-                        include: { church: true, society: true }
-                    });
-                    if (member) session.churchCode = member.churchCode;
-                }
-            }
-            
-            // Upgrade default names silently
-            if (member && (member.firstName === 'Member' || member.firstName === 'Pending')) {
-                if (fName !== 'Member') { 
-                    member = await prisma.member.update({
-                        where: { id: member.id },
-                        data: { firstName: fName, lastName: lName },
-                        include: { church: true, society: true }
-                    });
-                }
-            }
+					if (member) {
+						session.churchCode = member.churchCode;
+						if (explicitType === 'BURIAL_SOCIETY') session.mode = 'SOCIETY';
+						else if (explicitType === 'STOKVEL_SAVINGS') session.mode = 'STOKVEL';
+						else if (explicitType === 'NON_PROFIT') session.mode = 'NPO';
+						else session.mode = 'CHURCH';
+						session.step = null; 
+					} else {
+						const labels = { 'BURIAL_SOCIETY': 'Burial Society', 'CHURCH': 'Church', 'NON_PROFIT': 'Non-Profit', 'STOKVEL_SAVINGS': 'Stokvel / Savings Club' };
+						await sendWhatsApp(cleanPhone, `⚠️ You are not currently linked to a ${labels[explicitType]}.\n\nReply *Join* to search for one.`);
+						return;
+					}
+				} else {
+					const activeOrgCode = session.churchCode || session.orgCode;
+					if (activeOrgCode) {
+						member = await prisma.member.findFirst({
+							where: { phone: cleanPhone, churchCode: activeOrgCode },
+							include: { church: true, society: true }
+						});
+					}
+					if (!member) {
+						member = await prisma.member.findFirst({
+							where: { phone: cleanPhone },
+							orderBy: { id: 'desc' },
+							include: { church: true, society: true }
+						});
+						if (member) session.churchCode = member.churchCode;
+					}
+				}
+				
+				// Upgrade default names silently
+				if (member && (member.firstName === 'Member' || member.firstName === 'Pending')) {
+					if (fName !== 'Member') { 
+						member = await prisma.member.update({
+							where: { id: member.id },
+							data: { firstName: fName, lastName: lName },
+							include: { church: true, society: true }
+						});
+					}
+				}
 
-            // ================================================
-            // 🚦 GLOBAL RESET & COURSE SNOOZE
-            // ================================================
-            const exitKeywords = ['exit', 'cancel', 'home', 'lobby'];
-            if (exitKeywords.includes(incomingMsg)) {
-                clearSessionFlag = true; 
-                
-                if (member) {
-                    await prisma.enrollment.updateMany({
-                        where: { memberId: member.id, quizState: { in: ['AWAITING_QUIZ', 'AWAITING_ANSWER'] } },
-                        data: { quizState: 'IDLE', updatedAt: new Date() } 
-                    });
-                }
-                
-                let resetMsg = "🔄 Session cleared & courses paused.\n\nReply *Join* to switch organizations.";
-                if (member && member.church) {
-                    if (member.church.type === 'BURIAL_SOCIETY') resetMsg += "\nReply *Society* for your main menu.";
-                    else if (member.church.type === 'CHURCH') resetMsg += "\nReply *Amen* for your church menu, or *Courses* to learn.";
-                    else if (member.church.type === 'NON_PROFIT') resetMsg += "\nReply *NPO* for your dashboard, or *Courses* for our learning center.";
-                    else resetMsg += "\nReply *Menu* for your dashboard.";
-                } else {
-                    resetMsg += "\nReply *Amen* for Church, *Society* for Burial, or *NPO* for NGOs.";
-                }
-                
-                await sendWhatsApp(cleanPhone, resetMsg);
-                return;
-            }
+				// ================================================
+				// 🚦 GLOBAL RESET & COURSE SNOOZE
+				// ================================================
+				const exitKeywords = ['exit', 'cancel', 'home', 'lobby'];
+				if (exitKeywords.includes(incomingMsg)) {
+					clearSessionFlag = true; 
+					
+					if (member) {
+						await prisma.enrollment.updateMany({
+							where: { memberId: member.id, quizState: { in: ['AWAITING_QUIZ', 'AWAITING_ANSWER'] } },
+							data: { quizState: 'IDLE', updatedAt: new Date() } 
+						});
+					}
+					
+					let resetMsg = "🔄 Session cleared & courses paused.\n\nReply *Join* to switch organizations.";
+					if (member && member.church) {
+						if (member.church.type === 'BURIAL_SOCIETY') resetMsg += "\nReply *Society* for your main menu.";
+						else if (member.church.type === 'CHURCH') resetMsg += "\nReply *Amen* for your church menu, or *Courses* to learn.";
+						else if (member.church.type === 'NON_PROFIT') resetMsg += "\nReply *NPO* for your dashboard, or *Courses* for our learning center.";
+						else resetMsg += "\nReply *Menu* for your dashboard.";
+					} else {
+						resetMsg += "\nReply *Amen* for Church, *Society* for Burial, or *NPO* for NGOs.";
+					}
+					
+					await sendWhatsApp(cleanPhone, resetMsg);
+					return;
+				}
 
-            // ================================================
-            // ✂️ PERSONAL CARE / GROOMING INTERCEPTOR
-            // ================================================
-            const handledByGrooming = await processGroomingMessage(incomingMsg, cleanPhone, session, sendWhatsApp);
-            if (handledByGrooming) {
-                session = {}; 
-                return; 
-            }
+				// ================================================
+				// ✂️ PERSONAL CARE / GROOMING INTERCEPTOR
+				// ================================================
+				const handledByGrooming = await processGroomingMessage(incomingMsg, cleanPhone, session, sendWhatsApp);
+				if (handledByGrooming) {
+					session = {}; 
+					return; 
+				}
 
-            // ================================================
-            // 🎓 LMS / ACADEMY ROUTER
-            // ================================================
-            // 🚀 FIXED: Standardized the argument order!
-            const lmsResult = await processLmsMessage(cleanPhone, incomingMsg, session, member) || {};
-            
-            if (lmsResult.handled) {
-                if (lmsResult.clearSessionFlag) clearSessionFlag = true;
-                return; // Stop processing, the LMS bot successfully handled the message!
-            }
+				// ================================================
+				// 🎓 LMS / ACADEMY ROUTER
+				// ================================================
+				// 🚀 FIXED: Standardized the argument order!
+				const lmsResult = await processLmsMessage(cleanPhone, incomingMsg, session, member) || {};
+				
+				if (lmsResult.handled) {
+					if (lmsResult.clearSessionFlag) clearSessionFlag = true;
+					return; // Stop processing, the LMS bot successfully handled the message!
+				}
 
-            // ================================================
-            // 🛠️ ADMIN TRIGGER: SECURE EMAIL REPORT
-            // ================================================
-            if (incomingMsg.startsWith('report ')) {
-                const targetCode = incomingMsg.split(' ')[1]?.toUpperCase();
-                if (!targetCode) {
-                    await sendWhatsApp(cleanPhone, "⚠️ Please specify a code. Example: *Report AFM*");
-                } else {
-                    const org = await prisma.church.findUnique({
-                        where: { code: targetCode },
-                        include: { transactions: { where: { status: 'SUCCESS' }, orderBy: { date: 'desc' }, take: 100 } }
-                    });
-                    if (!org) {
-                        await sendWhatsApp(cleanPhone, `🚫 Organization *${targetCode}* not found.`);
-                    } else if (org.transactions.length === 0) {
-                        await sendWhatsApp(cleanPhone, `📉 No transactions found for *${org.name}*.`);
-                    } else if (!org.email) {
-                        await sendWhatsApp(cleanPhone, `⚠️ *${org.name}* has no email address configured.`);
-                    } else {
-                        let csvContent = "Date,Phone,Type,Amount,Reference\n";
-                        let total = 0;
-                        org.transactions.forEach(t => {
-                            const date = t.date.toISOString().split('T')[0];
-                            const amount = t.amount.toFixed(2);
-                            csvContent += `${date},${t.phone},${t.type},${amount},${t.reference}\n`;
-                            total += t.amount;
-                        });
-                        csvContent += `\nTOTAL,,,${total.toFixed(2)},`;
+				// ================================================
+				// 🛠️ ADMIN TRIGGER: SECURE EMAIL REPORT
+				// ================================================
+				if (incomingMsg.startsWith('report ')) {
+					const targetCode = incomingMsg.split(' ')[1]?.toUpperCase();
+					if (!targetCode) {
+						await sendWhatsApp(cleanPhone, "⚠️ Please specify a code. Example: *Report AFM*");
+					} else {
+						const org = await prisma.church.findUnique({
+							where: { code: targetCode },
+							include: { transactions: { where: { status: 'SUCCESS' }, orderBy: { date: 'desc' }, take: 100 } }
+						});
+						if (!org) {
+							await sendWhatsApp(cleanPhone, `🚫 Organization *${targetCode}* not found.`);
+						} else if (org.transactions.length === 0) {
+							await sendWhatsApp(cleanPhone, `📉 No transactions found for *${org.name}*.`);
+						} else if (!org.email) {
+							await sendWhatsApp(cleanPhone, `⚠️ *${org.name}* has no email address configured.`);
+						} else {
+							let csvContent = "Date,Phone,Type,Amount,Reference\n";
+							let total = 0;
+							org.transactions.forEach(t => {
+								const date = t.date.toISOString().split('T')[0];
+								const amount = t.amount.toFixed(2);
+								csvContent += `${date},${t.phone},${t.type},${amount},${t.reference}\n`;
+								total += t.amount;
+							});
+							csvContent += `\nTOTAL,,,${total.toFixed(2)},`;
 
-                        const msg = {
-                            to: org.email,
-                            from: process.env.EMAIL_FROM || 'admin@seabe.tech',
-                            subject: `📊 Monthly Report: ${org.name}`,
-                            text: `Attached is the latest transaction report for ${org.name}.\n\nTotal Processed: R${total.toFixed(2)}`,
-                            attachments: [{
-                                content: Buffer.from(csvContent).toString('base64'),
-                                filename: `Report_${targetCode}.csv`,
-                                type: 'text/csv',
-                                disposition: 'attachment'
-                            }]
-                        };
+							const msg = {
+								to: org.email,
+								from: process.env.EMAIL_FROM || 'admin@seabe.tech',
+								subject: `📊 Monthly Report: ${org.name}`,
+								text: `Attached is the latest transaction report for ${org.name}.\n\nTotal Processed: R${total.toFixed(2)}`,
+								attachments: [{
+									content: Buffer.from(csvContent).toString('base64'),
+									filename: `Report_${targetCode}.csv`,
+									type: 'text/csv',
+									disposition: 'attachment'
+								}]
+							};
 
-                        try {
-                            await sgMail.send(msg);
-                            await sendWhatsApp(cleanPhone, `✅ Report for *${org.name}* has been emailed to *${org.email}*.`);
-                        } catch (error) {
-                            console.error("Email Error:", error);
-                            await sendWhatsApp(cleanPhone, "⚠️ Error sending email.");
-                        }
-                    }
-                }
-                return; 
-            }
+							try {
+								await sgMail.send(msg);
+								await sendWhatsApp(cleanPhone, `✅ Report for *${org.name}* has been emailed to *${org.email}*.`);
+							} catch (error) {
+								console.error("Email Error:", error);
+								await sendWhatsApp(cleanPhone, "⚠️ Error sending email.");
+							}
+						}
+					}
+					return; 
+				}
 
-            // ================================================
-            // 🔍 UNIVERSAL JOIN & QUOTE FLOW
-            // ================================================
-            const joinSteps = ['SEARCH', 'JOIN_SELECT', 'CHOOSE_MEMBER_TYPE', 'ENTER_POLICY_NUMBER', 'SELECT_QUOTE_PLAN', 'AWAITING_QUOTE_ACCEPTANCE'];
-            if (incomingMsg === 'join' || joinSteps.includes(session.step)) {
-                
-                if (incomingMsg === 'join') {
-                    session.step = 'SEARCH';
-                    await sendWhatsApp(cleanPhone, "🔍 Let's find your organization!\n\nPlease reply with their name (e.g., 'your Church name' or 'organization name'):");
-                    return;
-                }
+				// ================================================
+				// 🔍 UNIVERSAL JOIN & QUOTE FLOW
+				// ================================================
+				const joinSteps = ['SEARCH', 'JOIN_SELECT', 'CHOOSE_MEMBER_TYPE', 'ENTER_POLICY_NUMBER', 'SELECT_QUOTE_PLAN', 'AWAITING_QUOTE_ACCEPTANCE'];
+				if (incomingMsg === 'join' || joinSteps.includes(session.step)) {
+					
+					if (incomingMsg === 'join') {
+						session.step = 'SEARCH';
+						await sendWhatsApp(cleanPhone, "🔍 Let's find your organization!\n\nPlease reply with their name (e.g., 'your Church name' or 'organization name'):");
+						return;
+					}
 
-                if (session.step === 'SEARCH') {
-                    const results = await prisma.church.findMany({
-                        where: { name: { contains: incomingMsg, mode: 'insensitive' } },
-                        take: 5
-                    });
+					if (session.step === 'SEARCH') {
+						const results = await prisma.church.findMany({
+							where: { name: { contains: incomingMsg, mode: 'insensitive' } },
+							take: 5
+						});
 
-                    if (results.length > 0) {
-                        session.searchResults = results;
-                        let reply = `🔍 Found ${results.length} matches:\n\n` + 
-                                results.map((r, i) => `*${i+1}.* ${r.type === 'BURIAL_SOCIETY' ? '🛡️' : '⛪'} ${r.name}`).join('\n') +
-                                `\n\nReply with the number to join.`;
-                        session.step = 'JOIN_SELECT';
-                        await sendWhatsApp(cleanPhone, reply);
-                    } else {
-                        await sendWhatsApp(cleanPhone, "⚠️ We couldn't find an organization with that name. Please try another search term:");
-                    }
-                    return;
-                }
+						if (results.length > 0) {
+							session.searchResults = results;
+							let reply = `🔍 Found ${results.length} matches:\n\n` + 
+									results.map((r, i) => `*${i+1}.* ${r.type === 'BURIAL_SOCIETY' ? '🛡️' : '⛪'} ${r.name}`).join('\n') +
+									`\n\nReply with the number to join.`;
+							session.step = 'JOIN_SELECT';
+							await sendWhatsApp(cleanPhone, reply);
+						} else {
+							await sendWhatsApp(cleanPhone, "⚠️ We couldn't find an organization with that name. Please try another search term:");
+						}
+						return;
+					}
 
-                if (session.step === 'JOIN_SELECT') {
-                    const index = parseInt(incomingMsg) - 1;
-                    const org = session.searchResults ? session.searchResults[index] : null;
-                    
-                    if (org) {
-                        if (org.type === 'BURIAL_SOCIETY') {
-                            session.churchId = org.id;
-                            session.churchCode = org.code;
-                            session.step = 'CHOOSE_MEMBER_TYPE';
-                            await sendWhatsApp(cleanPhone, `Welcome to *${org.name}*!\n\nHow can we help you today?\n\n1️⃣ I am an Existing Member\n2️⃣ I am a New Member (Get a Quote)`);
-                            return;
-                        } else {
-                            let existingMember = await prisma.member.findFirst({
-                                where: { phone: cleanPhone, churchCode: org.code }
-                            });
-                            
-                            if (!existingMember) {
-                                await prisma.member.create({
-                                    data: { 
-                                        phone: cleanPhone, 
-                                        firstName: fName, 
-                                        lastName: lName,  
-                                        church: { connect: { id: org.id } }, 
-                                        status: 'ACTIVE' 
-                                    }
-                                });
-                            }
-                            
-                            clearSessionFlag = true; 
-                            const welcomeType = org.type === 'NON_PROFIT' ? "📚 Reply *Courses* to view our digital learning programs" : "Reply *Amen* to access your church menu";
-                            await sendWhatsApp(cleanPhone, `✅ Successfully linked to *${org.name}*!\n\n${welcomeType}, or *Menu* to access your dashboard.`);
-                            return;
-                        }
-                    } else {
-                        await sendWhatsApp(cleanPhone, "⚠️ Invalid selection. Please reply with a valid number from the list, or type *Exit*.");
-                        return;
-                    }
-                }
+					if (session.step === 'JOIN_SELECT') {
+						const index = parseInt(incomingMsg) - 1;
+						const org = session.searchResults ? session.searchResults[index] : null;
+						
+						if (org) {
+							if (org.type === 'BURIAL_SOCIETY') {
+								session.churchId = org.id;
+								session.churchCode = org.code;
+								session.step = 'CHOOSE_MEMBER_TYPE';
+								await sendWhatsApp(cleanPhone, `Welcome to *${org.name}*!\n\nHow can we help you today?\n\n1️⃣ I am an Existing Member\n2️⃣ I am a New Member (Get a Quote)`);
+								return;
+							} else {
+								let existingMember = await prisma.member.findFirst({
+									where: { phone: cleanPhone, churchCode: org.code }
+								});
+								
+								if (!existingMember) {
+									await prisma.member.create({
+										data: { 
+											phone: cleanPhone, 
+											firstName: fName, 
+											lastName: lName,  
+											church: { connect: { id: org.id } }, 
+											status: 'ACTIVE' 
+										}
+									});
+								}
+								
+								clearSessionFlag = true; 
+								const welcomeType = org.type === 'NON_PROFIT' ? "📚 Reply *Courses* to view our digital learning programs" : "Reply *Amen* to access your church menu";
+								await sendWhatsApp(cleanPhone, `✅ Successfully linked to *${org.name}*!\n\n${welcomeType}, or *Menu* to access your dashboard.`);
+								return;
+							}
+						} else {
+							await sendWhatsApp(cleanPhone, "⚠️ Invalid selection. Please reply with a valid number from the list, or type *Exit*.");
+							return;
+						}
+					}
 
-                if (session.step === 'CHOOSE_MEMBER_TYPE') {
-                    if (incomingMsg === '1') {
-                        session.step = 'ENTER_POLICY_NUMBER';
-                        await sendWhatsApp(cleanPhone, `Great! Please reply with your exact *ID Number* so we can locate your existing profile.`);
-                    } else if (incomingMsg === '2') {
-                        const plans = await prisma.policyPlan.findMany({ where: { churchId: session.churchId } });
-                        if (plans.length === 0) {
-                            clearSessionFlag = true;
-                            await sendWhatsApp(cleanPhone, `We are currently updating our digital plans. Please contact the office directly.\n\nReply *Join* to start over.`);
-                        } else {
-                            session.step = 'SELECT_QUOTE_PLAN';
-                            let planMsg = `*Available Plans:*\n\n`;
-                            plans.forEach((p, index) => {
-                                planMsg += `${index + 1}️⃣ *${p.planName}* - R${p.monthlyPremium}/pm\n_Covers: ${p.targetGroup}_\n\n`;
-                            });
-                            planMsg += `Reply with the number of the plan to see full benefits and get your quote.`;
-                            await sendWhatsApp(cleanPhone, planMsg);
-                        }
-                    } else {
-                        await sendWhatsApp(cleanPhone, `Invalid option. Please reply 1 or 2.`);
-                    }
-                    return;
-                }
+					if (session.step === 'CHOOSE_MEMBER_TYPE') {
+						if (incomingMsg === '1') {
+							session.step = 'ENTER_POLICY_NUMBER';
+							await sendWhatsApp(cleanPhone, `Great! Please reply with your exact *ID Number* so we can locate your existing profile.`);
+						} else if (incomingMsg === '2') {
+							const plans = await prisma.policyPlan.findMany({ where: { churchId: session.churchId } });
+							if (plans.length === 0) {
+								clearSessionFlag = true;
+								await sendWhatsApp(cleanPhone, `We are currently updating our digital plans. Please contact the office directly.\n\nReply *Join* to start over.`);
+							} else {
+								session.step = 'SELECT_QUOTE_PLAN';
+								let planMsg = `*Available Plans:*\n\n`;
+								plans.forEach((p, index) => {
+									planMsg += `${index + 1}️⃣ *${p.planName}* - R${p.monthlyPremium}/pm\n_Covers: ${p.targetGroup}_\n\n`;
+								});
+								planMsg += `Reply with the number of the plan to see full benefits and get your quote.`;
+								await sendWhatsApp(cleanPhone, planMsg);
+							}
+						} else {
+							await sendWhatsApp(cleanPhone, `Invalid option. Please reply 1 or 2.`);
+						}
+						return;
+					}
 
-                if (session.step === 'ENTER_POLICY_NUMBER') {
-                    const memberMatch = await prisma.member.findFirst({
-                        where: { churchCode: session.churchCode, idNumber: incomingMsg }
-                    });
-                    if (memberMatch) {
-                        await prisma.member.update({ where: { id: memberMatch.id }, data: { phone: cleanPhone } });
-                        clearSessionFlag = true;
-                        await sendWhatsApp(cleanPhone, `✅ Profile Linked!\n\nWelcome back, ${memberMatch.firstName}.\n\nReply *Society* to access your main menu (View Policy, Payments, Claims).`);
-                    } else {
-                        await sendWhatsApp(cleanPhone, `❌ We couldn't find a policy matching "${incomingMsg}". Please check your ID number and try again, or type *Exit* to restart.`);
-                    }
-                    return;
-                }
+					if (session.step === 'ENTER_POLICY_NUMBER') {
+						const memberMatch = await prisma.member.findFirst({
+							where: { churchCode: session.churchCode, idNumber: incomingMsg }
+						});
+						if (memberMatch) {
+							await prisma.member.update({ where: { id: memberMatch.id }, data: { phone: cleanPhone } });
+							clearSessionFlag = true;
+							await sendWhatsApp(cleanPhone, `✅ Profile Linked!\n\nWelcome back, ${memberMatch.firstName}.\n\nReply *Society* to access your main menu (View Policy, Payments, Claims).`);
+						} else {
+							await sendWhatsApp(cleanPhone, `❌ We couldn't find a policy matching "${incomingMsg}". Please check your ID number and try again, or type *Exit* to restart.`);
+						}
+						return;
+					}
 
-                if (session.step === 'SELECT_QUOTE_PLAN') {
-                    const plans = await prisma.policyPlan.findMany({ where: { churchId: session.churchId } });
-                    const selectedIndex = parseInt(incomingMsg) - 1;
+					if (session.step === 'SELECT_QUOTE_PLAN') {
+						const plans = await prisma.policyPlan.findMany({ where: { churchId: session.churchId } });
+						const selectedIndex = parseInt(incomingMsg) - 1;
 
-                    if (selectedIndex >= 0 && selectedIndex < plans.length) {
-                        const plan = plans[selectedIndex];
-                        const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
-                        const botNum = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
-                        const quoteLink = `${host}/quote.html?code=${session.churchCode}&phone=${cleanPhone}&bot=${botNum}`;
+						if (selectedIndex >= 0 && selectedIndex < plans.length) {
+							const plan = plans[selectedIndex];
+							const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
+							const botNum = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+							const quoteLink = `${host}/quote.html?code=${session.churchCode}&phone=${cleanPhone}&bot=${botNum}`;
 
-                        const pricing = await calculateTransaction(plan.monthlyPremium, 'STANDARD', 'DEBIT_ORDER', true);
+							const pricing = await calculateTransaction(plan.monthlyPremium, 'STANDARD', 'DEBIT_ORDER', true);
 
-                        const msg = `*Quote: ${plan.planName}*\n` +
-                                    `Premium: R${plan.monthlyPremium.toFixed(2)}\n` +
-                                    `Admin Fee: R${pricing.totalFees.toFixed(2)}\n` +
-                                    `*Total Monthly: R${pricing.totalChargedToUser.toFixed(2)}*\n\n` +
-                                    `*Benefits Included:*\n${plan.benefitsSummary}\n\n` +
-                                    `To add extended family (children/adults) and complete your registration, click your secure link below:\n👉 ${quoteLink}\n\n` +
-                                    `Reply *Exit* to return to the start.`;
-                        
-                        session.step = 'AWAITING_QUOTE_ACCEPTANCE';
-                        session.monthlyPremium = plan.monthlyPremium; 
-                        await sendWhatsApp(cleanPhone, msg);
-                    } else {
-                        await sendWhatsApp(cleanPhone, `Invalid selection. Please reply with a valid plan number.`);
-                    }
-                    return;
-                }
-            }
+							const msg = `*Quote: ${plan.planName}*\n` +
+										`Premium: R${plan.monthlyPremium.toFixed(2)}\n` +
+										`Admin Fee: R${pricing.totalFees.toFixed(2)}\n` +
+										`*Total Monthly: R${pricing.totalChargedToUser.toFixed(2)}*\n\n` +
+										`*Benefits Included:*\n${plan.benefitsSummary}\n\n` +
+										`To add extended family (children/adults) and complete your registration, click your secure link below:\n👉 ${quoteLink}\n\n` +
+										`Reply *Exit* to return to the start.`;
+							
+							session.step = 'AWAITING_QUOTE_ACCEPTANCE';
+							session.monthlyPremium = plan.monthlyPremium; 
+							await sendWhatsApp(cleanPhone, msg);
+						} else {
+							await sendWhatsApp(cleanPhone, `Invalid selection. Please reply with a valid plan number.`);
+						}
+						return;
+					}
+				}
 
-            // ================================================
-            // 🛡️ KYC & ONBOARDING UPLOADS (AI OCR)
-            // ================================================
-            if (incomingMsg.includes('accept the quote') || session.step === 'AWAITING_QUOTE_ACCEPTANCE') {
-                session.step = 'AWAITING_MEMBER_ID';
-                
-                const premiumMatch = incomingMsg.match(/r(\d+(\.\d+)?)\/month/);
-                if (premiumMatch) {
-                    session.monthlyPremium = parseFloat(premiumMatch[1]);
-                }
+				// ================================================
+				// 🛡️ KYC & ONBOARDING UPLOADS (AI OCR)
+				// ================================================
+				if (incomingMsg.includes('accept the quote') || session.step === 'AWAITING_QUOTE_ACCEPTANCE') {
+					session.step = 'AWAITING_MEMBER_ID';
+					
+					const premiumMatch = incomingMsg.match(/r(\d+(\.\d+)?)\/month/);
+					if (premiumMatch) {
+						session.monthlyPremium = parseFloat(premiumMatch[1]);
+					}
 
-                if (session.churchCode) {
-                    let draftMember = await prisma.member.findFirst({
-                        where: { phone: cleanPhone, churchCode: session.churchCode }
-                    });
-                    
-                    if (draftMember) {
-                        await prisma.member.update({
-                            where: { id: draftMember.id },
-                            data: { monthlyPremium: session.monthlyPremium }
-                        });
-                    } else {
-                        await prisma.member.create({
-                            data: {
-                                phone: cleanPhone,
-                                firstName: fName, 
-                                lastName: lName,  
-                                church: { connect: { id: session.churchId } }, 
-                                status: 'PENDING_KYC',
-                                kycStatus: 'PENDING',
-                                monthlyPremium: session.monthlyPremium
-                            }
-                        });
-                    }
-                }
+					if (session.churchCode) {
+						let draftMember = await prisma.member.findFirst({
+							where: { phone: cleanPhone, churchCode: session.churchCode }
+						});
+						
+						if (draftMember) {
+							await prisma.member.update({
+								where: { id: draftMember.id },
+								data: { monthlyPremium: session.monthlyPremium }
+							});
+						} else {
+							await prisma.member.create({
+								data: {
+									phone: cleanPhone,
+									firstName: fName, 
+									lastName: lName,  
+									church: { connect: { id: session.churchId } }, 
+									status: 'PENDING_KYC',
+									kycStatus: 'PENDING',
+									monthlyPremium: session.monthlyPremium
+								}
+							});
+						}
+					}
 
-                await sendWhatsApp(cleanPhone, "🎉 Fantastic! Your quote has been accepted.\n\nTo finalize your policy registration, we must complete a quick KYC compliance check.\n\nPlease reply directly to this message with a clear photo of your *ID Document* (Green Book or Smart ID).");
-                return;
-            }
+					await sendWhatsApp(cleanPhone, "🎉 Fantastic! Your quote has been accepted.\n\nTo finalize your policy registration, we must complete a quick KYC compliance check.\n\nPlease reply directly to this message with a clear photo of your *ID Document* (Green Book or Smart ID).");
+					return;
+				}
 
-            if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ID') {
-                if (!session.churchCode) {
-                    await sendWhatsApp(cleanPhone, "⚠️ Your session has expired. Please reply with *Join* to restart your registration.");
-                    return;
-                }
-                const idUrl = req.body.MediaUrl0; 
-                const mimeType = req.body.MediaContentType0 || 'image/jpeg';
-                await sendWhatsApp(cleanPhone, "⏳ *AI Processing...*\nReading your ID document. Please wait a moment.");
+				if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ID') {
+					if (!session.churchCode) {
+						await sendWhatsApp(cleanPhone, "⚠️ Your session has expired. Please reply with *Join* to restart your registration.");
+						return;
+					}
+					const idUrl = req.body.MediaUrl0; 
+					const mimeType = req.body.MediaContentType0 || 'image/jpeg';
+					await sendWhatsApp(cleanPhone, "⏳ *AI Processing...*\nReading your ID document. Please wait a moment.");
 
-                try {
-                    const authHeader = 'Basic ' + Buffer.from(`${process.env.TWILIO_SID}:${process.env.TWILIO_AUTH}`).toString('base64');
-                    const imgResponse = await fetch(idUrl, { headers: { 'Authorization': authHeader } });
-                    const arrayBuffer = await imgResponse.arrayBuffer();
-                    const base64Image = Buffer.from(arrayBuffer).toString('base64');
+					try {
+						const authHeader = 'Basic ' + Buffer.from(`${process.env.TWILIO_SID}:${process.env.TWILIO_AUTH}`).toString('base64');
+						const imgResponse = await fetch(idUrl, { headers: { 'Authorization': authHeader } });
+						const arrayBuffer = await imgResponse.arrayBuffer();
+						const base64Image = Buffer.from(arrayBuffer).toString('base64');
 
-                    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-                    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); 
-                    
-                    const prompt = `You are a strict KYC compliance bot for an insurance company. Read this South African ID (Green book or Smart Card). Extract the person's first name(s), last name (surname), and 13-digit ID number. Return ONLY a raw JSON object with no markdown formatting. Format: {"firstName": "John", "lastName": "Doe", "idNumber": "1234567890123", "confidenceScore": 95}`;
-                    
-                    const result = await model.generateContent([ prompt, { inlineData: { data: base64Image, mimeType: mimeType } } ]);
-                    const extractedData = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
+						const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+						const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); 
+						
+						const prompt = `You are a strict KYC compliance bot for an insurance company. Read this South African ID (Green book or Smart Card). Extract the person's first name(s), last name (surname), and 13-digit ID number. Return ONLY a raw JSON object with no markdown formatting. Format: {"firstName": "John", "lastName": "Doe", "idNumber": "1234567890123", "confidenceScore": 95}`;
+						
+						const result = await model.generateContent([ prompt, { inlineData: { data: base64Image, mimeType: mimeType } } ]);
+						const extractedData = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
 
-                    if (extractedData.confidenceScore > 75) {
-                        let draftMember = await prisma.member.findFirst({
-                            where: { phone: cleanPhone, churchCode: session.churchCode }
-                        });
-                        
-                        if (draftMember) {
-                            await prisma.member.update({
-                                where: { id: draftMember.id },
-                                data: { 
-                                    idPhotoUrl: idUrl, 
-                                    firstName: extractedData.firstName, 
-                                    lastName: extractedData.lastName, 
-                                    idNumber: extractedData.idNumber, 
-                                    isIdVerified: true, 
-                                    kycStatus: 'APPROVED', 
-                                    monthlyPremium: session.monthlyPremium,
-                                    policyNumber: session.policyNumber
-                                }
-                            });
-                        }
-                        
-                        session.step = 'AWAITING_MEMBER_ADDRESS';
-                        await sendWhatsApp(cleanPhone, `✅ *ID Verified Successfully!*\n\nWelcome, *${extractedData.firstName} ${extractedData.lastName}*\n(ID: ${extractedData.idNumber})\n\nAlmost done! Finally, please reply with a photo of your *Proof of Address* (e.g., a utility bill or bank statement).`);
-                    } else {
-                        throw new Error("AI Confidence too low.");
-                    }
-                } catch (error) {
-                    let draftMember = await prisma.member.findFirst({
-                        where: { phone: cleanPhone, churchCode: session.churchCode }
-                    });
-                    if (draftMember) {
-                        await prisma.member.update({
-                            where: { id: draftMember.id },
-                            data: { idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC', monthlyPremium: session.monthlyPremium, policyNumber: session.policyNumber }
-                        });
-                    }
-                    session.step = 'AWAITING_MEMBER_ADDRESS';
-                    await sendWhatsApp(cleanPhone, "⚠️ *Automatic Verification Failed*\n\nWe couldn't clearly read the ID automatically. It has been securely forwarded for manual review.\n\nTo continue, please reply with a photo of your *Proof of Address*.");
-                }
-                return;
-            }
+						if (extractedData.confidenceScore > 75) {
+							let draftMember = await prisma.member.findFirst({
+								where: { phone: cleanPhone, churchCode: session.churchCode }
+							});
+							
+							if (draftMember) {
+								await prisma.member.update({
+									where: { id: draftMember.id },
+									data: { 
+										idPhotoUrl: idUrl, 
+										firstName: extractedData.firstName, 
+										lastName: extractedData.lastName, 
+										idNumber: extractedData.idNumber, 
+										isIdVerified: true, 
+										kycStatus: 'APPROVED', 
+										monthlyPremium: session.monthlyPremium,
+										policyNumber: session.policyNumber
+									}
+								});
+							}
+							
+							session.step = 'AWAITING_MEMBER_ADDRESS';
+							await sendWhatsApp(cleanPhone, `✅ *ID Verified Successfully!*\n\nWelcome, *${extractedData.firstName} ${extractedData.lastName}*\n(ID: ${extractedData.idNumber})\n\nAlmost done! Finally, please reply with a photo of your *Proof of Address* (e.g., a utility bill or bank statement).`);
+						} else {
+							throw new Error("AI Confidence too low.");
+						}
+					} catch (error) {
+						let draftMember = await prisma.member.findFirst({
+							where: { phone: cleanPhone, churchCode: session.churchCode }
+						});
+						if (draftMember) {
+							await prisma.member.update({
+								where: { id: draftMember.id },
+								data: { idPhotoUrl: idUrl, isIdVerified: false, status: 'PENDING_KYC', monthlyPremium: session.monthlyPremium, policyNumber: session.policyNumber }
+							});
+						}
+						session.step = 'AWAITING_MEMBER_ADDRESS';
+						await sendWhatsApp(cleanPhone, "⚠️ *Automatic Verification Failed*\n\nWe couldn't clearly read the ID automatically. It has been securely forwarded for manual review.\n\nTo continue, please reply with a photo of your *Proof of Address*.");
+					}
+					return;
+				}
 
-            if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ADDRESS') {
-                const addressUrl = req.body.MediaUrl0;
-                try {
-                    const memberRecord = await prisma.member.findFirst({ 
-                        where: { phone: cleanPhone, churchCode: session.churchCode },
-                        orderBy: { id: 'desc' },
-                        include: { church: true } 
-                    });
-                    
-                    if (memberRecord) {
-                        const newStatus = memberRecord.isIdVerified ? 'ACTIVE' : 'PENDING_KYC';
-                        const orgName = memberRecord.church?.name || "the organization";
-                        const orgType = memberRecord.church?.type || "CHURCH";
-                        
-                        let welcomeMsg = "";
+				if (numMedia > 0 && session.step === 'AWAITING_MEMBER_ADDRESS') {
+					const addressUrl = req.body.MediaUrl0;
+					try {
+						const memberRecord = await prisma.member.findFirst({ 
+							where: { phone: cleanPhone, churchCode: session.churchCode },
+							orderBy: { id: 'desc' },
+							include: { church: true } 
+						});
+						
+						if (memberRecord) {
+							const newStatus = memberRecord.isIdVerified ? 'ACTIVE' : 'PENDING_KYC';
+							const orgName = memberRecord.church?.name || "the organization";
+							const orgType = memberRecord.church?.type || "CHURCH";
+							
+							let welcomeMsg = "";
 
-                        if (memberRecord.isIdVerified) {
-                            if (orgType === 'BURIAL_SOCIETY') {
-                                welcomeMsg = `🎉 *REGISTRATION COMPLETE & POLICY ACTIVE!*\n\nPolicy Number: *${memberRecord.policyNumber || 'N/A'}*\nMonthly Premium: *R${(memberRecord.monthlyPremium || 0).toFixed(2)}*\n\nYour policy is now fully active. You can reply with *Menu* at any time to view your policy details or make a payment.`;
-                            } else if (orgType === 'STOKVEL_SAVINGS') {
-                                welcomeMsg = `🎉 *STOKVEL REGISTRATION COMPLETE!*\n\nWelcome to *${orgName}*. Your savings profile is now fully active and verified.\n\nReply *Stokvel* or *Menu* at any time to view your contributions, access your digital card, or make a payment.`;
-                            } else if (orgType === 'NON_PROFIT') {
-                                welcomeMsg = `🎉 *REGISTRATION COMPLETE!*\n\nWelcome to *${orgName}*. Your member profile is now fully active and verified.\n\nReply *NPO* or *Menu* at any time to access your dashboard.`;
-                            } else {
-                                welcomeMsg = `🎉 *REGISTRATION COMPLETE!*\n\nWelcome to *${orgName}*. Your member profile is now fully active and verified.\n\nReply *Amen* or *Menu* at any time to access your dashboard and courses.`;
-                            }
-                        } else {
-                            const accountLabel = orgType === 'BURIAL_SOCIETY' ? 'policy' : (orgType === 'STOKVEL_SAVINGS' ? 'savings profile' : 'account');
-                            welcomeMsg = `✅ *Documents Received!*\n\nYour Proof of Address and ID have been securely vaulted for Admin Review. You will receive a WhatsApp notification as soon as your ${accountLabel} is officially activated!`;
-                        }
+							if (memberRecord.isIdVerified) {
+								if (orgType === 'BURIAL_SOCIETY') {
+									welcomeMsg = `🎉 *REGISTRATION COMPLETE & POLICY ACTIVE!*\n\nPolicy Number: *${memberRecord.policyNumber || 'N/A'}*\nMonthly Premium: *R${(memberRecord.monthlyPremium || 0).toFixed(2)}*\n\nYour policy is now fully active. You can reply with *Menu* at any time to view your policy details or make a payment.`;
+								} else if (orgType === 'STOKVEL_SAVINGS') {
+									welcomeMsg = `🎉 *STOKVEL REGISTRATION COMPLETE!*\n\nWelcome to *${orgName}*. Your savings profile is now fully active and verified.\n\nReply *Stokvel* or *Menu* at any time to view your contributions, access your digital card, or make a payment.`;
+								} else if (orgType === 'NON_PROFIT') {
+									welcomeMsg = `🎉 *REGISTRATION COMPLETE!*\n\nWelcome to *${orgName}*. Your member profile is now fully active and verified.\n\nReply *NPO* or *Menu* at any time to access your dashboard.`;
+								} else {
+									welcomeMsg = `🎉 *REGISTRATION COMPLETE!*\n\nWelcome to *${orgName}*. Your member profile is now fully active and verified.\n\nReply *Amen* or *Menu* at any time to access your dashboard and courses.`;
+								}
+							} else {
+								const accountLabel = orgType === 'BURIAL_SOCIETY' ? 'policy' : (orgType === 'STOKVEL_SAVINGS' ? 'savings profile' : 'account');
+								welcomeMsg = `✅ *Documents Received!*\n\nYour Proof of Address and ID have been securely vaulted for Admin Review. You will receive a WhatsApp notification as soon as your ${accountLabel} is officially activated!`;
+							}
 
-                        await prisma.member.update({
-                            where: { id: memberRecord.id },
-                            data: { 
-                                proofOfAddressUrl: addressUrl, 
-                                status: newStatus, 
-                                joinedAt: new Date(), 
-                                ...(memberRecord.isIdVerified && { verifiedAt: new Date() }) 
-                            }
-                        });
-                        
-                        clearSessionFlag = true; 
-                        await sendWhatsApp(cleanPhone, welcomeMsg);
-                    }
-                } catch (error) {
-                    await sendWhatsApp(cleanPhone, "⚠️ There was an issue saving your document. Please try sending the photo again.");
-                }
-                return;
-            }
+							await prisma.member.update({
+								where: { id: memberRecord.id },
+								data: { 
+									proofOfAddressUrl: addressUrl, 
+									status: newStatus, 
+									joinedAt: new Date(), 
+									...(memberRecord.isIdVerified && { verifiedAt: new Date() }) 
+								}
+							});
+							
+							clearSessionFlag = true; 
+							await sendWhatsApp(cleanPhone, welcomeMsg);
+						}
+					} catch (error) {
+						await sendWhatsApp(cleanPhone, "⚠️ There was an issue saving your document. Please try sending the photo again.");
+					}
+					return;
+				}
 
-            // ================================================
-            // 🖼️ MULTIMEDIA (CLAIMS)
-            // ================================================
-            if (numMedia > 0 && session.step === 'AWAITING_CLAIM_DOCUMENT') {
-                const code = member?.church?.code || member?.society?.code || session.churchCode;
-                const churchId = member?.churchId || 1;
-                
-                try {
-                    const { getPrice } = require('../services/pricing');
-                    const claimCost = await getPrice('CLAIM_AI'); 
-                    
-                    await prisma.transaction.create({ 
-                        data: {
-                            amount: -claimCost, 
-                            type: 'CLAIM_FEE',       
-                            status: 'SUCCESS',
-                            reference: `FEE-${Date.now()}`,
-                            method: 'INTERNAL', 
-                            description: 'Forensic Death Claim Analysis',
-                            phone: cleanPhone, 
-                            date: new Date(),
-                            church: { connect: { id: Number(churchId) } }
-                        }
-                    });
-                    console.log(`💰 [BILLING] Charged Org #${churchId} R${claimCost} for AI Claim Analysis`);
-                } catch (e) {
-                    console.error("🛑 BILLING FAILED (CRITICAL):", e.message);
-                }
+				// ================================================
+				// 🖼️ MULTIMEDIA (CLAIMS)
+				// ================================================
+				if (numMedia > 0 && session.step === 'AWAITING_CLAIM_DOCUMENT') {
+					const code = member?.church?.code || member?.society?.code || session.churchCode;
+					const churchId = member?.churchId || 1;
+					
+					try {
+						const { getPrice } = require('../services/pricing');
+						const claimCost = await getPrice('CLAIM_AI'); 
+						
+						await prisma.transaction.create({ 
+							data: {
+								amount: -claimCost, 
+								type: 'CLAIM_FEE',       
+								status: 'SUCCESS',
+								reference: `FEE-${Date.now()}`,
+								method: 'INTERNAL', 
+								description: 'Forensic Death Claim Analysis',
+								phone: cleanPhone, 
+								date: new Date(),
+								church: { connect: { id: Number(churchId) } }
+							}
+						});
+						console.log(`💰 [BILLING] Charged Org #${churchId} R${claimCost} for AI Claim Analysis`);
+					} catch (e) {
+						console.error("🛑 BILLING FAILED (CRITICAL):", e.message);
+					}
 
-                processTwilioClaim(cleanPhone, req.body.MediaUrl0, code);
-                clearSessionFlag = true;
-                await sendWhatsApp(cleanPhone, "⏳ *Document Received!*\n\nOur Gemini AI is now processing the claim. This usually takes 10-15 seconds. I will message you once the scan is complete.");
-                return;
-            }
+					processTwilioClaim(cleanPhone, req.body.MediaUrl0, code);
+					clearSessionFlag = true;
+					await sendWhatsApp(cleanPhone, "⏳ *Document Received!*\n\nOur Gemini AI is now processing the claim. This usually takes 10-15 seconds. I will message you once the scan is complete.");
+					return;
+				}
 
-            // ================================================
-            // ⛔ UNREGISTERED & ORPHAN CATCHERS
-            // ================================================
-            if (!member) {
-                await sendWhatsApp(cleanPhone, "👋 Welcome to Seabe! Please reply with *Join* to find your organization.");
-                return;
-            }
+				// ================================================
+				// ⛔ UNREGISTERED & ORPHAN CATCHERS
+				// ================================================
+				if (!member) {
+					await sendWhatsApp(cleanPhone, "👋 Welcome to Seabe! Please reply with *Join* to find your organization.");
+					return;
+				}
 
-            if (!member.church) {
-                await sendWhatsApp(cleanPhone, "⚠️ You are not currently linked to any organization. Please reply *Join* to search for yours.");
-                return;
-            }
+				if (!member.church) {
+					await sendWhatsApp(cleanPhone, "⚠️ You are not currently linked to any organization. Please reply *Join* to search for yours.");
+					return;
+				}
 
-            // ================================================
+				// ================================================
+				// 🏛️ BRANCH ROUTING (CHURCH, NPO, PROVIDERS)
+				// ================================================
+				// ================================================
             // 🏛️ BRANCH ROUTING (CHURCH, NPO, PROVIDERS)
             // ================================================
-            const menuKeywords = ['society', 'amen', 'hi', 'hello', 'menu', 'dashboard', 'npo', 'stokvel'];
+            const menuKeywords = ['society', 'amen', 'hi', 'hello', 'menu', 'dashboard', 'npo', 'stokvel', 'provider', 'salon'];
             const mappedMsg = menuKeywords.includes(incomingMsg) ? 'menu' : incomingMsg;
 
-            // 🚀 FIXED: Initialize NPO Mode correctly
+            // 🚀 FIXED: Initialize NPO & Provider Mode correctly
             if (!session.mode && member.church) {
                 if (member.church.type === 'BURIAL_SOCIETY') session.mode = 'SOCIETY';
                 else if (member.church.type === 'STOKVEL_SAVINGS') session.mode = 'STOKVEL';
                 else if (member.church.type === 'NON_PROFIT') session.mode = 'NPO';
+                // 👇 ADDED: Catch the new provider types
+                else if (member.church.type === 'SERVICE_PROVIDER' || member.church.type === 'PERSONAL_CARE') session.mode = 'PROVIDER';
                 else session.mode = 'CHURCH';
             }
 
@@ -580,45 +586,49 @@ router.post('/', (req, res) => {
             else if (session.mode === 'NPO') {
                 botResult = await handleNPOMessage(cleanPhone, mappedMsg, session, member) || {};
             }
+            // 👇 ADDED: Fire the Service Provider Bot!
+            else if (session.mode === 'PROVIDER') {
+                botResult = await handleServiceProviderMessage(cleanPhone, mappedMsg, session, member) || {};
+            }
 
             // If the domain bot knew the answer, stop here!
             if (botResult.handled) {
                 return; 
             }
 
-            // ================================================
-            // 🤖 AI NLP FALLBACK & TYPO CATCHER
-            // ================================================
-            // If we reach this line, the user typed something unknown (like "corses").
-            // Unleash the Hybrid NLP engine to catch the typo!
-            
-            const orgName = member?.church?.name || 'Seabe';
-            await handleSupportOrTypo(incomingMsg, cleanPhone, orgName);
-            return;
+				// ================================================
+				// 🤖 AI NLP FALLBACK & TYPO CATCHER
+				// ================================================
+				// If we reach this line, the user typed something unknown (like "corses").
+				// Unleash the Hybrid NLP engine to catch the typo!
+				
+				const orgName = member?.church?.name || 'Seabe';
+				await handleSupportOrTypo(incomingMsg, cleanPhone, orgName);
+				return;
 
-        } catch (e) { 
-            console.error("❌ ROUTER CRASH:", e);
-        } finally {
-		
-            // ================================================
-            // 💾 THE MAGIC: AUTO-SAVE SESSION TO DATABASE
-            // ================================================
-            try {
-                if (clearSessionFlag) {
-                    await prisma.botSession.deleteMany({ where: { phone: cleanPhone } });
-                } else if (Object.keys(session).length > 0) {
-                    const { step, mode, ...dataObj } = session;
-                    await prisma.botSession.upsert({
-                        where: { phone: cleanPhone },
-                        update: { step: step || null, mode: mode || null, data: dataObj },
-                        create: { phone: cleanPhone, step: step || null, mode: mode || null, data: dataObj }
-                    });
-                }
-            } catch (saveErr) {
-                console.error("❌ Failed to save session state to database:", saveErr);
-            }
-        }
-    })();
-});
+			} catch (e) { 
+				console.error("❌ ROUTER CRASH:", e);
+			} finally {
+			
+				// ================================================
+				// 💾 THE MAGIC: AUTO-SAVE SESSION TO DATABASE
+				// ================================================
+				try {
+					if (clearSessionFlag) {
+						await prisma.botSession.deleteMany({ where: { phone: cleanPhone } });
+					} else if (Object.keys(session).length > 0) {
+						const { step, mode, ...dataObj } = session;
+						await prisma.botSession.upsert({
+							where: { phone: cleanPhone },
+							update: { step: step || null, mode: mode || null, data: dataObj },
+							create: { phone: cleanPhone, step: step || null, mode: mode || null, data: dataObj }
+						});
+					}
+				} catch (saveErr) {
+					console.error("❌ Failed to save session state to database:", saveErr);
+				}
+			}
+		})();
+	});
 
-module.exports = router;
+	module.exports = router;
