@@ -5,12 +5,8 @@ const cron = require('node-cron');
 const { PrismaClient } = require('@prisma/client');
 const prisma = require('./prisma-client');
 const { sendWhatsApp } = require('./whatsapp'); // Adjust path if needed
-const sgMail = require('@sendgrid/mail');
-
-// Initialize SendGrid
-if (process.env.SENDGRID_KEY) {
-    sgMail.setApiKey(process.env.SENDGRID_KEY);
-}
+const { Resend } = require('resend');
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // ==========================================
 // 📧 EMAIL REPORT GENERATOR (For Mondays)
@@ -43,22 +39,22 @@ async function emailReport(churchCode) {
         });
         csvContent += `\nTOTAL,,,${total.toFixed(2)},`;
 
-        // Send Email via SendGrid
-        const msg = {
-            to: org.email,
-            from: process.env.EMAIL_FROM || 'admin@seabe.io',
-            subject: `📊 Weekly Financial Report: ${org.name}`,
-            text: `Attached is your weekly transaction report for ${org.name}.\n\nTotal Processed: R${total.toFixed(2)}`,
-            attachments: [{
-                content: Buffer.from(csvContent).toString('base64'),
-                filename: `Weekly_Report_${org.code}_${new Date().toISOString().split('T')[0]}.csv`,
-                type: 'text/csv',
-                disposition: 'attachment'
-            }]
-        };
-
-        await sgMail.send(msg);
-        console.log(`📧 Weekly report emailed successfully to ${org.email}`);
+        // Send Email via Resend
+        try {
+            await resend.emails.send({
+                to: org.email, // Note: Must be your verified email if using the free Resend testing tier
+                from: process.env.EMAIL_FROM || 'onboarding@resend.dev',
+                subject: `📊 Weekly Financial Report: ${org.name}`,
+                text: `Attached is your weekly transaction report for ${org.name}.\n\nTotal Processed: R${total.toFixed(2)}`,
+                attachments: [{
+                    filename: `Weekly_Report_${org.code}_${new Date().toISOString().split('T')[0]}.csv`,
+                    content: Buffer.from(csvContent).toString('base64') // Resend handles base64 perfectly
+                }]
+            });
+            console.log(`📧 Weekly report emailed successfully to ${org.email}`);
+        } catch (error) {
+            console.error(`❌ Failed to email weekly report to ${org.email}:`, error);
+        }
 
     } catch (error) {
         console.error(`❌ Failed to send report to ${churchCode}:`, error.message);
