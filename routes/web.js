@@ -284,10 +284,12 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                             <div>
                                 <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Org Type</label>
                                 <select name="type" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none bg-gray-50">
-                                    <option value="BURIAL_SOCIETY">Burial Society</option>
                                     <option value="CHURCH">Church</option>
+                                    <option value="BURIAL_SOCIETY">Society</option>
                                     <option value="STOKVEL_SAVINGS">Stokvel / Savings Club</option>
-                                    <option value="NON_PROFIT">NPO / NGO</option>
+                                    <option value="NON_PROFIT">NGO</option>
+                                    <option value="SERVICE_PROVIDER">Service Provider</option> 
+                                    <option value="PERSONAL_CARE">Salon / Barbershop</option>
                                 </select>
                             </div>
                         </div>
