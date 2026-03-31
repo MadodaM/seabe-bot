@@ -12,17 +12,60 @@ if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
     twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 }
 
+// Background Sender with Smart Chunking to bypass Twilio's 1600 char limit
 const sendWhatsApp = async (to, body) => {
-    if (!twilioClient) return;
+    if (!twilioClient) return console.log("⚠️ Twilio Keys Missing! Could not send message.");
     const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
-    try {
-        await twilioClient.messages.create({
-            from: `whatsapp:${cleanTwilioNumber}`, 
-            to: `whatsapp:${to}`,
-            body: body
-        });
-    } catch (err) {
-        console.error("❌ Twilio Send Error:", err.message);
+
+    // Twilio's hard limit is 1600. We use 1500 to be perfectly safe.
+    const MAX_LENGTH = 1500;
+    const messageChunks = [];
+
+    // 1. Chunk the message securely without breaking words
+    if (body.length > MAX_LENGTH) {
+        let remainingText = body;
+        while (remainingText.length > 0) {
+            if (remainingText.length <= MAX_LENGTH) {
+                messageChunks.push(remainingText);
+                break;
+            }
+            
+            // Try to find a natural break (like a double newline or space) near the limit
+            let chunk = remainingText.substring(0, MAX_LENGTH);
+            let splitIndex = MAX_LENGTH;
+            
+            let lastDoubleNewline = chunk.lastIndexOf('\n\n');
+            let lastNewline = chunk.lastIndexOf('\n');
+            let lastSpace = chunk.lastIndexOf(' ');
+
+            if (lastDoubleNewline > MAX_LENGTH - 300) { 
+                splitIndex = lastDoubleNewline; // Best: Break at a paragraph
+            } else if (lastNewline > MAX_LENGTH - 200) { 
+                splitIndex = lastNewline;       // Good: Break at a line
+            } else if (lastSpace > MAX_LENGTH - 100) { 
+                splitIndex = lastSpace;         // Fallback: Break at a word
+            }
+
+            messageChunks.push(remainingText.substring(0, splitIndex).trim());
+            remainingText = remainingText.substring(splitIndex).trim();
+        }
+    } else {
+        messageChunks.push(body); // Short message, no chunking needed
+    }
+
+    // 2. Send chunks sequentially with a tiny delay so they arrive in perfect order
+    for (const chunk of messageChunks) {
+        try {
+            await twilioClient.messages.create({
+                from: `whatsapp:${cleanTwilioNumber}`, 
+                to: `whatsapp:${to}`,
+                body: chunk
+            });
+            // 500ms delay to guarantee WhatsApp delivers them in the correct order
+            await new Promise(resolve => setTimeout(resolve, 500)); 
+        } catch (err) {
+            console.error("❌ Twilio Send Error:", err.message);
+        }
     }
 };
 
