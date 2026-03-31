@@ -353,7 +353,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                     
                     // 🚀 The Lazy KYC Flags
                     accountStatus: 'ACTIVE',
-                    kycTier: 'TIER_0',
+                    kycStatus: 'TIER_0',
                     canUseLMS: true,
                     canSendNews: true,
                     canCollectMoney: false // 🔒 LOCKED
@@ -445,7 +445,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             await prisma.church.update({
                 where: { id: org.id },
                 data: {
-                    kycTier: 'TIER_1',
+                    kycStatus: 'TIER_1',
                     canCollectMoney: true, // 🔓 GATEWAY UNLOCKED
                     bankDetail: {
                         create: {
