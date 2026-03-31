@@ -76,16 +76,34 @@ const sendWhatsApp = async (to, body) => {
 // 🚀 FIXED: Function signature exactly matches the router!
 async function processLmsMessage(cleanPhone, incomingMsg, session, member) {
     
-    // Create a raw message for the AI grader to read proper capitalization/punctuation
-    const rawMsg = incomingMsg; // The router passes lowercased, but the AI is smart enough to read it.
+    // 1. Normalize the message to be 100% safe
+    const rawMsg = incomingMsg; 
+    const cleanMsg = incomingMsg.toLowerCase().trim();
     
-    // 🚀 THE ESCAPE HATCH: Don't grade system commands!
-    const systemCommands = ['menu', 'profile', 'my profile', 'my courses', 'courses', 'exit', 'cancel', 'home', 'join', 'stokvel', 'npo', 'society', 'amen'];
+    // 2. The Escape Hatches (Added help, support, next, resume)
+    const systemCommands = [
+        'menu', 'profile', 'my profile', 'my courses', 'courses', 
+        'exit', 'cancel', 'home', 'join', 'stokvel', 'npo', 
+        'society', 'amen', 'help', 'support', 'next', 'resume'
+    ];
+    
+    // 3. The Menu Shield (Don't grade if they are navigating a menu!)
+    const activeMenuSteps = [
+        'AWAITING_COURSE_SELECTION', 
+        'PROFILE_MENU', 
+        'COURSE_ACTIONS', 
+        'UPDATE_NAME_FIRST', 
+        'UPDATE_NAME_LAST'
+    ];
+
+    const isSystemCommand = systemCommands.includes(cleanMsg);
+    const isInMenu = activeMenuSteps.includes(session.step);
 
     // ================================================
     // 🛑 0. LMS INTERCEPTOR: AI Quiz Evaluator
     // ================================================
-    if (member && !systemCommands.includes(incomingMsg)) {
+    // ONLY grade if they are NOT typing a system command, and NOT currently in a menu!
+    if (member && !isSystemCommand && !isInMenu) {
         // Find enrollment securely locked in a quiz
         const activeEnrollment = await prisma.enrollment.findFirst({
             where: { member: { phone: cleanPhone }, status: 'ACTIVE', quizState: 'AWAITING_ANSWER' },
