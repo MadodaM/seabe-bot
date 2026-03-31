@@ -13,6 +13,7 @@ const multer = require('multer');
 const netcash = require('../services/netcash'); // Required for Payment Redirect
 require('dotenv').config();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const QRCode = require('qrcode');
 
 const EMAIL_FROM = process.env.EMAIL_FROM;
 if (process.env.SENDGRID_KEY) sgMail.setApiKey(process.env.SENDGRID_KEY);
@@ -343,7 +344,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     // ==========================================
     // Using express.urlencoded to parse standard form data
     app.post('/register-church', express.urlencoded({ extended: true }), async (req, res) => {
-        const { churchName, email, tos, type, adminPhone } = req.body;
+        const { churchName, email, tos, type, adminPhone, firstName, lastName } = req.body;
         
         if (!tos) return res.send("⚠️ You must accept the Terms.");
 
@@ -371,15 +372,14 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 } 
             });
 
-            // Create the Admin Member so they exist in the DB
             // 1. Create the Admin Member so the WhatsApp Bot recognizes them instantly
             await prisma.member.create({
                 data: {
                     phone: adminPhone.replace(/[^0-9]/g, ''),
                     email: email,
-                    firstName: "Admin", // 👈 Required by Prisma
-                    lastName: "User",   // 👈 Required by Prisma
-                    churchCode: newCode, // 👈 Correct relation field
+                    firstName: firstName || "Admin", 
+                    lastName: lastName || "User",   
+                    churchCode: newCode, 
                     status: "ACTIVE"
                 }
             });
@@ -388,9 +388,9 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             await prisma.admin.create({
                 data: {
                     phone: adminPhone.replace(/[^0-9]/g, ''),
-                    name: "System Admin",
+                    name: `${firstName || 'System'} ${lastName || 'Admin'}`.trim(),
                     role: "OWNER",
-                    churchId: newOrg.id // 👈 Admin table uses churchId
+                    churchId: newOrg.id 
                 }
             });
 
@@ -403,22 +403,38 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 }).catch(e => console.error("Email Error:", e));
             }
             
-            // The "Aha!" Moment UI
+            // Generate the exact WhatsApp Link
+            const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER ? process.env.TWILIO_PHONE_NUMBER.replace(/[^0-9]/g, '') : '27600000000';
+            const whatsappLink = `https://wa.me/${cleanTwilioNumber}?text=Join%20${newCode}`;
+            
+            // Generate a Base64 QR Code Image on the fly
+            const qrCodeDataUrl = await QRCode.toDataURL(whatsappLink, { 
+                color: { dark: '#0f172a', light: '#ffffff' }, // Seabe Navy blue barcode
+                margin: 2
+            });
+            
+            // The "Aha!" Moment UI with QR Code
             res.send(`
                 <!DOCTYPE html>
-                <html><head>${sharedHead}</head><body class="bg-seabe-light flex items-center justify-center h-screen p-4">
-                <div class="bg-white p-10 rounded-2xl shadow-xl text-center max-w-md w-full border-t-8 border-seabe-teal">
+                <html><head>${sharedHead}</head><body class="bg-seabe-light flex items-center justify-center min-h-screen p-4 py-12">
+                <div class="bg-white p-8 md:p-10 rounded-2xl shadow-xl text-center max-w-md w-full border-t-8 border-seabe-teal">
                     <div class="text-5xl mb-4">🚀</div>
                     <h1 class="text-2xl font-extrabold text-seabe-navy mb-2">Workspace Created!</h1>
-                    <p class="text-gray-600 mb-6">Your AI bot is officially live. Grab your phone and test it out right now.</p>
+                    <p class="text-gray-600 mb-6">Your automated workspace is now active. Scan or click the link below to test the user experience right away.</p>
                     
                     <div class="bg-slate-50 p-6 rounded-xl border border-slate-200 mb-6">
                         <p class="text-sm font-bold text-gray-500 uppercase tracking-widest mb-2">Your Join Code</p>
-                        <p class="text-4xl font-mono font-black text-seabe-gold tracking-widest">${newCode}</p>
+                        <p class="text-4xl font-mono font-black text-seabe-gold tracking-widest mb-6">${newCode}</p>
+                        
+                        <div class="bg-white p-2 rounded-xl inline-block shadow-sm border border-gray-100 mb-2 hover:scale-105 transition transform duration-300">
+                            <img src="${qrCodeDataUrl}" alt="Scan to Join" class="w-40 h-40">
+                        </div>
+                        <p class="text-xs text-gray-400 font-semibold mt-2">Scan with your phone's camera</p>
                     </div>
 
-                    <a href="https://wa.me/${process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '').replace('+', '')}?text=Join%20${newCode}" target="_blank" class="w-full block bg-[#25d366] text-white font-bold py-4 rounded-lg hover:bg-green-500 transition shadow-lg mb-4">
-                        Test it on WhatsApp
+                    <a href="${whatsappLink}" target="_blank" class="w-full flex items-center justify-center gap-2 bg-[#25d366] text-white font-bold py-4 rounded-lg hover:bg-green-500 transition shadow-lg mb-4">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M13.601 2.326A7.854 7.854 0 0 0 7.994 0C3.627 0 .068 3.558.064 7.926c0 1.399.366 2.76 1.057 3.965L0 16l4.204-1.102a7.933 7.933 0 0 0 3.79.965h.004c4.368 0 7.926-3.558 7.93-7.93A7.898 7.898 0 0 0 13.6 2.326zM7.994 14.521a6.573 6.573 0 0 1-3.356-.92l-.24-.144-2.494.654.666-2.433-.156-.251a6.56 6.56 0 0 1-1.007-3.505c0-3.626 2.957-6.584 6.591-6.584a6.56 6.56 0 0 1 4.66 1.931 6.557 6.557 0 0 1 1.928 4.66c-.004 3.639-2.961 6.592-6.592 6.592z"/></svg>
+                        Open in WhatsApp
                     </a>
                     
                     <a href="/login" class="text-seabe-navy font-bold hover:underline text-sm">Go to Admin Dashboard &rarr;</a>
@@ -431,8 +447,8 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             res.send(`<h1>System Error</h1><p>Could not create workspace. Please try again.</p>`); 
         }
     });
-	
-	// ==========================================
+    
+    // ==========================================
     // 3.5. PHASE 2: BACKGROUND KYC UPLOAD
     // ==========================================
     // You will call this from your logged-in React/Next.js dashboard
