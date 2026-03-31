@@ -384,9 +384,14 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 }
             });
 
-            // 2. Create the Dashboard Admin profile for Web Login
-            await prisma.admin.create({
-                data: {
+            // 2. Create or Update the Dashboard Admin profile for Web Login
+            await prisma.admin.upsert({
+                where: { phone: adminPhone.replace(/[^0-9]/g, '') },
+                update: {
+                    name: `${firstName || 'System'} ${lastName || 'Admin'}`.trim(),
+                    churchId: newOrg.id // 👈 Updates their web login to the newest workspace
+                },
+                create: {
                     phone: adminPhone.replace(/[^0-9]/g, ''),
                     name: `${firstName || 'System'} ${lastName || 'Admin'}`.trim(),
                     role: "OWNER",
