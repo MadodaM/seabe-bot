@@ -7,7 +7,7 @@ const bodyParser = require('body-parser');
 const path = require('path');
 const multer = require('multer');
 const axios = require('axios'); 
-const sgMail = require('@sendgrid/mail'); 
+const { Resend } = require('resend');
 const prisma = require('./services/db');
 const netcash = require('./services/netcash');
 const cookieParser = require('cookie-parser');
@@ -36,7 +36,7 @@ app.set('trust proxy', 1);
 app.set('view engine', 'ejs'); 
 app.set('views', path.join(__dirname, 'views'));
 
-if (process.env.SENDGRID_KEY) sgMail.setApiKey(process.env.SENDGRID_KEY);
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const upload = multer({ dest: 'uploads/' }); 
 
