@@ -2,13 +2,9 @@
 const cron = require('node-cron');
 const { PrismaClient } = require('@prisma/client');
 const prisma = require('./prisma-client');
-const sgMail = require('@sendgrid/mail'); 
+const { Resend } = require('resend');
 const { calculateTransaction } = require('./pricingEngine'); // 🚀 INJECTED PRICING ENGINE
-
-// Ensure SendGrid is configured
-if (process.env.SENDGRID_API_KEY) {
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-}
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const startWeeklyReportEngine = () => {
     console.log("📊 Weekly Report Engine Initialized. Scheduled for Friday at 17:00 (SAST).");
@@ -103,9 +99,7 @@ const startWeeklyReportEngine = () => {
                     if (transactions.length > 0) {
                         attachments.push({
                             content: Buffer.from(txCsv).toString('base64'),
-                            filename: `Revenue_Report_${org.code}.csv`,
-                            type: 'text/csv',
-                            disposition: 'attachment'
+                            filename: `Revenue_Report_${org.code}.csv`
                         });
                     }
 
@@ -113,27 +107,25 @@ const startWeeklyReportEngine = () => {
                     if (claims.length > 0) {
                         attachments.push({
                             content: Buffer.from(claimCsv).toString('base64'),
-                            filename: `Claims_Report_${org.code}.csv`,
-                            type: 'text/csv',
-                            disposition: 'attachment'
+                            filename: `Claims_Report_${org.code}.csv`
                         });
                     }
 
-                    const msg = {
-                        to: org.email,
-                        from: process.env.EMAIL_FROM || 'admin@seabe.tech', // Make sure this matches your SendGrid verified sender!
+                    // Send via Resend
+                    await resend.emails.send({
+                        to: org.email, // ⚠️ Must be your verified Resend email on the free tier
+                        from: process.env.EMAIL_FROM || 'onboarding@resend.dev', 
                         subject: `📊 Weekly Summary & Settlement Report: ${org.name}`,
                         text: emailText,
-                        attachments: attachments
-                    };
-
-                    await sgMail.send(msg);
+                        // Resend only accepts the attachments array if it actually has items
+                        ...(attachments.length > 0 && { attachments }) 
+                    });
+                    
                     console.log(`✉️ Sent weekly report to ${org.name} (${org.email})`);
 
                 } catch (orgError) {
                     console.error(`❌ Failed to send report to ${org.name}:`, orgError.message);
                 }
-            }
 
             console.log(`🏆 [CRON] Friday Reporting sequence complete.`);
 
