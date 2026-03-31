@@ -278,6 +278,17 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                         
                         <div class="grid md:grid-cols-2 gap-4">
                             <div>
+                                <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Your First Name</label>
+                                <input type="text" name="firstName" required placeholder="e.g. John" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none bg-gray-50">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Your Last Name</label>
+                                <input type="text" name="lastName" required placeholder="e.g. Doe" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none bg-gray-50">
+                            </div>
+                        </div>
+
+                        <div class="grid md:grid-cols-2 gap-4">
+                            <div>
                                 <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Organization Name</label>
                                 <input type="text" name="churchName" required placeholder="e.g. St. Marks" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none bg-gray-50">
                             </div>
