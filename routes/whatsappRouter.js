@@ -128,9 +128,10 @@ router.post('/', (req, res) => {
                     if (member.church.type === 'BURIAL_SOCIETY') resetMsg += "\nReply *Society* for your main menu.";
                     else if (member.church.type === 'CHURCH') resetMsg += "\nReply *Amen* for your church menu, or *Courses* to learn.";
                     else if (member.church.type === 'NON_PROFIT') resetMsg += "\nReply *NPO* for your dashboard, or *Courses* for our learning center.";
+                    else if (member.church.type === 'SERVICE_PROVIDER' || member.church.type === 'PERSONAL_CARE') resetMsg += "\nReply *Menu* to access your service dashboard.";
                     else resetMsg += "\nReply *Menu* for your dashboard.";
                 } else {
-                    resetMsg += "\nReply *Amen* for Church, *Society* for Burial, or *NPO* for NGOs.";
+                    resetMsg += "\nReply *Menu* to access your dashboard.";
                 }
                 
                 await sendWhatsApp(cleanPhone, resetMsg);
@@ -145,8 +146,8 @@ router.post('/', (req, res) => {
                 session = {}; 
                 return; 
             }
-			
-			// ================================================
+
+            // ================================================
             // 🛠️ SERVICE PROVIDER INTERCEPTOR
             // ================================================
             const handledByProvider = await processProviderTrigger(incomingMsg, cleanPhone, session, sendWhatsApp);
@@ -564,6 +565,8 @@ router.post('/', (req, res) => {
                                 welcomeMsg = `🎉 *STOKVEL REGISTRATION COMPLETE!*\n\nWelcome to *${orgName}*. Your savings profile is now fully active and verified.\n\nReply *Stokvel* or *Menu* at any time to view your contributions, access your digital card, or make a payment.`;
                             } else if (orgType === 'NON_PROFIT') {
                                 welcomeMsg = `🎉 *REGISTRATION COMPLETE!*\n\nWelcome to *${orgName}*. Your member profile is now fully active and verified.\n\nReply *NPO* or *Menu* at any time to access your dashboard.`;
+                            } else if (orgType === 'SERVICE_PROVIDER' || orgType === 'PERSONAL_CARE') {
+                                welcomeMsg = `🎉 *REGISTRATION COMPLETE!*\n\nWelcome to *${orgName}*. Your profile is now fully active and verified.\n\nReply *Menu* at any time to access your dashboard.`;
                             } else {
                                 welcomeMsg = `🎉 *REGISTRATION COMPLETE!*\n\nWelcome to *${orgName}*. Your member profile is now fully active and verified.\n\nReply *Amen* or *Menu* at any time to access your dashboard and courses.`;
                             }
@@ -642,17 +645,32 @@ router.post('/', (req, res) => {
             // ================================================
             // 🏛️ BRANCH ROUTING (CHURCH, NPO, PROVIDERS)
             // ================================================
-            const menuKeywords = ['society', 'amen', 'hi', 'hello', 'menu', 'dashboard', 'npo', 'stokvel', 'provider', 'salon'];
-            const mappedMsg = menuKeywords.includes(incomingMsg) ? 'menu' : incomingMsg;
-
-            // 🚀 FIXED: Initialize NPO & Provider Mode correctly
+            
+            // 🚀 Ensure session mode is perfectly aligned BEFORE resolving keywords
             if (!session.mode && member.church) {
                 if (member.church.type === 'BURIAL_SOCIETY') session.mode = 'SOCIETY';
                 else if (member.church.type === 'STOKVEL_SAVINGS') session.mode = 'STOKVEL';
                 else if (member.church.type === 'NON_PROFIT') session.mode = 'NPO';
-                // Catch the new provider types
                 else if (member.church.type === 'SERVICE_PROVIDER' || member.church.type === 'PERSONAL_CARE') session.mode = 'PROVIDER';
                 else session.mode = 'CHURCH';
+            }
+
+            // Safe, strictly-isolated keyword mapping
+            const genericMenuKeywords = ['hi', 'hello', 'menu', 'dashboard', 'help'];
+            let mappedMsg = incomingMsg;
+
+            if (genericMenuKeywords.includes(incomingMsg)) {
+                mappedMsg = 'menu';
+            } else if (incomingMsg === 'amen' && session.mode === 'CHURCH') {
+                mappedMsg = 'menu'; // Amen ONLY works for Churches
+            } else if (incomingMsg === 'society' && session.mode === 'SOCIETY') {
+                mappedMsg = 'menu'; // Society ONLY works for Burial Societies
+            } else if (incomingMsg === 'npo' && session.mode === 'NPO') {
+                mappedMsg = 'menu';
+            } else if (incomingMsg === 'stokvel' && session.mode === 'STOKVEL') {
+                mappedMsg = 'menu';
+            } else if ((incomingMsg === 'provider' || incomingMsg === 'salon') && session.mode === 'PROVIDER') {
+                mappedMsg = 'menu';
             }
 
             // 🚀 ROUTES
@@ -670,7 +688,6 @@ router.post('/', (req, res) => {
             else if (session.mode === 'NPO') {
                 botResult = await handleNPOMessage(cleanPhone, mappedMsg, session, member) || {};
             }
-            // Fire the Service Provider Bot!
             else if (session.mode === 'PROVIDER') {
                 botResult = await handleServiceProviderMessage(cleanPhone, mappedMsg, session, member) || {};
             }
@@ -683,9 +700,6 @@ router.post('/', (req, res) => {
             // ================================================
             // 🤖 AI NLP FALLBACK & TYPO CATCHER
             // ================================================
-            // If we reach this line, the user typed something unknown (like "corses").
-            // Unleash the Hybrid NLP engine to catch the typo!
-            
             const orgName = member?.church?.name || 'Seabe';
             await handleSupportOrTypo(incomingMsg, cleanPhone, orgName);
             return;
