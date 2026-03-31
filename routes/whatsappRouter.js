@@ -215,8 +215,20 @@ router.post('/', (req, res) => {
                             }]
                         };
 
+                        // --- SEND VIA RESEND ---
                         try {
-                            await sgMail.send(msg);
+                            await resend.emails.send({
+                                to: org.email, // ⚠️ Must be your verified Resend email on the free tier
+                                from: process.env.EMAIL_FROM || 'onboarding@resend.dev',
+                                subject: `📊 Monthly Report: ${org.name}`,
+                                text: `Attached is the latest transaction report for ${org.name}.\n\nTotal Processed: R${total.toFixed(2)}`,
+                                attachments: [{
+                                    content: Buffer.from(csvContent).toString('base64'),
+                                    filename: `Report_${targetCode}.csv`
+                                    // Resend doesn't need 'type' or 'disposition'
+                                }]
+                            });
+                            
                             await sendWhatsApp(cleanPhone, `✅ Report for *${org.name}* has been emailed to *${org.email}*.`);
                         } catch (error) {
                             console.error("Email Error:", error);
