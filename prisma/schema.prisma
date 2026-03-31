@@ -88,6 +88,18 @@ model Church {
   password   String?
   mfaSecret  String?
   setupToken String?
+  
+  // Account Status
+  accountStatus     String   @default("TRIAL") // TRIAL, ACTIVE, SUSPENDED
+  
+  // Business KYC Status
+  kycStatus         String   @default("TIER_0") // TIER_0 (Unverified), TIER_1 (Docs Submitted), TIER_2 (Netcash Approved)
+  
+  // Feature Flags (The Magic)
+  canUseLMS         Boolean  @default(true)  // Instant access
+  canSendNews       Boolean  @default(true)  // Instant access
+  canCollectMoney   Boolean  @default(false) // Locked behind TIER_2 KYC
+  canProcessClaims  Boolean  @default(false) // Locked behind TIER_2 KYC
 
   // FICA Level 1 (Initial FICA)
   pastorIdUrl    String? // Cloudinary Vault Link

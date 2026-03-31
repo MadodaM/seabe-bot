@@ -176,6 +176,17 @@ async function handleNPOMessage(cleanPhone, incomingMsg, session, member) {
         // 3. PAYMENT PROCESSING
         // ====================================================
         else if (session.step === 'NPO_PAY') {
+			
+			// 🛑 THE KYC SOFT GATE
+            // Check if the organization is legally allowed to touch money yet
+            if (!member.church.canCollectMoney) {
+                const lockMsg = `🚧 *Payment Gateway Upgrading*\n\n` +
+                                `*${session.orgName}* is currently finalizing their secure banking integration with the central reserve.\n\n` +
+                                `Online payments will be activated shortly. Please try again later!`;
+                await sendWhatsApp(cleanPhone, lockMsg);
+                return { handled: true };
+            }
+			
             let amount = parseFloat(incomingMsg.replace(/\D/g,'')); 
             if (isNaN(amount) || amount < 10) {
                 reply = "⚠️ Please enter a valid amount (e.g. 100). Minimum is R10.";

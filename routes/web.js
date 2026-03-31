@@ -274,7 +274,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                         <p class="text-gray-500 text-sm mt-2">Complete this form to create your organization's secure vault.</p>
                     </div>
                     
-                    <form action="/register-church" method="POST" enctype="multipart/form-data" class="space-y-5">
+                    <form action="/register-church" method="POST" class="space-y-5">
                         
                         <div class="grid md:grid-cols-2 gap-4">
                             <div>
@@ -292,35 +292,24 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                             </div>
                         </div>
                         
-                        <div>
-                            <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Official Email</label>
-                            <input type="email" name="email" required placeholder="admin@org.co.za" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none bg-gray-50">
-                        </div>
-
-                        <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                            <h4 class="font-bold text-seabe-navy flex items-center gap-2 mb-3">
-                                <span class="bg-seabe-gold text-white text-xs px-2 py-1 rounded">MANDATORY</span> 
-                                Level 1 FICA Verification
-                            </h4>
-                            
-                            <div class="mb-4">
-                                <label class="block text-xs font-bold text-gray-600 mb-1">Upload Leader's ID (PDF/Img)</label>
-                                <input type="file" name="idDoc" accept="image/*,.pdf" required class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-seabe-teal/10 file:text-seabe-teal hover:file:bg-seabe-teal/20">
-                            </div>
-
+                        <div class="grid md:grid-cols-2 gap-4">
                             <div>
-                                <label class="block text-xs font-bold text-gray-600 mb-1">Proof of Bank Account</label>
-                                <input type="file" name="bankDoc" accept="image/*,.pdf" required class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-seabe-teal/10 file:text-seabe-teal hover:file:bg-seabe-teal/20">
+                                <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Admin Email</label>
+                                <input type="email" name="email" required placeholder="admin@org.co.za" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none bg-gray-50">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Admin Phone</label>
+                                <input type="text" name="adminPhone" required placeholder="e.g. 27820000000" class="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none bg-gray-50">
                             </div>
                         </div>
 
                         <div class="flex items-start gap-3 mt-4">
                             <input type="checkbox" name="tos" required class="mt-1 w-4 h-4 text-seabe-teal rounded border-gray-300"> 
-                            <span class="text-sm text-gray-600">I agree to the <a href="/terms" target="_blank" class="text-seabe-teal font-bold hover:underline">Terms of Service</a> and <a href="/privacy" target="_blank" class="text-seabe-teal font-bold hover:underline">Privacy Policy</a>.</span>
+                            <span class="text-sm text-gray-600">I agree to the <a href="/terms" target="_blank" class="text-seabe-teal font-bold hover:underline">Terms of Service</a>.</span>
                         </div>
 
                         <button type="submit" class="w-full bg-seabe-navy text-white font-bold py-4 rounded-lg hover:bg-slate-800 transition shadow-lg mt-4">
-                            Submit Verification & Register
+                            Create Workspace
                         </button>
                     </form>
                     <p class="text-center mt-6"><a href="/" class="text-gray-400 hover:text-gray-600 text-sm font-semibold">Cancel</a></p>
@@ -336,130 +325,145 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
     // ==========================================
     const kybUploads = uploadCloud.fields([{ name: 'idDoc', maxCount: 1 }, { name: 'bankDoc', maxCount: 1 }]);
 
-    app.post('/register-church', (req, res) => {
-        console.log("\n=========================================");
-        console.log("🚀 [STEP 1] /register-church POST route hit!");
-        console.log("🔍 [DIAGNOSTICS] Checking Cloudinary Keys:");
-        console.log("   Cloud Name:", process.env.CLOUDINARY_CLOUD_NAME ? "✅ SET" : "❌ MISSING");
-        console.log("   API Key:", process.env.CLOUDINARY_API_KEY ? "✅ SET" : "❌ MISSING");
-        console.log("   API Secret:", process.env.CLOUDINARY_API_SECRET ? "✅ SET" : "❌ MISSING");
-        console.log("=========================================\n");
+    // ==========================================
+    // 3. PHASE 1: INSTANT REGISTRATION (No Files)
+    // ==========================================
+    // Using express.urlencoded to parse standard form data
+    app.post('/register-church', express.urlencoded({ extended: true }), async (req, res) => {
+        const { churchName, email, tos, type, adminPhone } = req.body;
+        
+        if (!tos) return res.send("⚠️ You must accept the Terms.");
 
-        // Force Multer to try and parse the files
-        kybUploads(req, res, async (uploadError) => {
-            console.log("🚀 [STEP 2] Multer streaming attempt finished.");
+        try {
+            // Generate a crisp, 3-letter + 3-number WhatsApp Join Code
+            const prefix = churchName.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
+            const newCode = `${prefix}${Math.floor(100 + Math.random() * 900)}`;
 
-            if (uploadError) {
-                console.error("❌ [FATAL CRASH IN STEP 2]:", uploadError);
-                return res.send(`
-                    <div style="text-align:center; padding:50px; font-family:sans-serif;">
-                        <h1 style="color:#e74c3c;">Cloudinary Upload Failed</h1>
-                        <p>The server failed to stream the files to the secure vault.</p>
-                        <p style="color:#7f8c8d; font-size:12px;">Error: ${uploadError.message}</p>
-                    </div>
-                `);
-            }
-
-            console.log("✅ [STEP 3] Files and Form Data parsed successfully.");
-            console.log("📥 [BODY PAYLOAD]:", req.body);
-            console.log("📁 [FILES UPLOADED]:", req.files ? Object.keys(req.files) : "None detected!");
-
-            const { churchName, email, tos, type, adminPhone } = req.body;
-            
-            if (!type) console.warn("⚠️ WARNING: Form did not send 'type'!");
-            if (!tos) return res.send("⚠️ You must accept the Terms.");
-
-            try {
-                const idDocUrl = (req.files && req.files['idDoc']) ? req.files['idDoc'][0].path : null;
-                const bankDocUrl = (req.files && req.files['bankDoc']) ? req.files['bankDoc'][0].path : null;
-                const mimeType = (req.files && req.files['bankDoc']) ? req.files['bankDoc'][0].mimetype : 'image/jpeg';
-
-                if (!idDocUrl || !bankDocUrl) {
-                    return res.send("❌ Error: Documents missing from upload payload.");
-                }
-
-                const prefix = churchName.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
-                const newCode = `${prefix}${Math.floor(100 + Math.random() * 900)}`;
-
-                console.log(`⏳ [STEP 4] Sending Bank Document to Gemini 2.5...`);
-                
-                let extractedBank = {
-                    bankName: "Pending Review", accountName: churchName,
-                    accountNumber: "PENDING", branchCode: "PENDING", accountType: "CURRENT"
-                };
-
-                try {
-                    const fileResponse = await axios.get(bankDocUrl, { responseType: 'arraybuffer' });
-                    const base64Data = Buffer.from(fileResponse.data).toString('base64');
-
-                    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-                    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
-                    const prompt = `You are a strict financial compliance AI. Extract the banking details from this Proof of Bank Account / Confirmation Letter. 
-                    Return ONLY a raw JSON object with no markdown formatting. 
-                    Format: {"bankName": "FNB", "accountName": "Stokvel Savings", "accountNumber": "62000000000", "branchCode": "250655", "accountType": "CURRENT"}`;
-
-                    const result = await model.generateContent([
-                        prompt, { inlineData: { data: base64Data, mimeType: mimeType } }
-                    ]);
+            // Create the Org instantly, but lock the financial gateway
+            const newOrg = await prisma.church.create({ 
+                data: { 
+                    name: churchName, 
+                    code: newCode, 
+                    email: email, 
+                    adminPhone: adminPhone || '0000000000', 
+                    tosAcceptedAt: new Date(), 
+                    type: type || 'CHURCH', 
                     
-                    const cleanJson = result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim();
-                    extractedBank = JSON.parse(cleanJson);
-                    console.log("✅ [STEP 5] AI Extraction Success:", extractedBank.accountNumber);
-                } catch (aiError) {
-                    console.error("⚠️ [AI ERROR] Could not read document:", aiError.message);
+                    // 🚀 The Lazy KYC Flags
+                    accountStatus: 'ACTIVE',
+                    kycTier: 'TIER_0',
+                    canUseLMS: true,
+                    canSendNews: true,
+                    canCollectMoney: false // 🔒 LOCKED
+                } 
+            });
+
+            // Create the Admin Member so they exist in the DB
+            await prisma.member.create({
+                data: {
+                    phone: adminPhone.replace(/[^0-9]/g, ''),
+                    email: email,
+                    role: "ADMIN",
+                    churchId: newOrg.id,
+                    churchCode: newCode
                 }
+            });
 
-                console.log("💾 [STEP 6] Saving Organization to Prisma DB...");
-                await prisma.church.create({ 
-                    data: { 
-                        name: churchName, code: newCode, email: email, 
-                        adminPhone: adminPhone || '0000000000', 
-                        subaccountCode: 'PENDING_KYC', tosAcceptedAt: new Date(), 
-                        type: type || 'CHURCH', ficaStatus: 'LEVEL_1_PENDING',
-                        bankDetail: {
-                            create: {
-                                bankName: extractedBank.bankName, accountName: extractedBank.accountName,
-                                accountNumber: String(extractedBank.accountNumber), branchCode: String(extractedBank.branchCode),     
-                                accountType: extractedBank.accountType || 'CURRENT', accountstatus: false 
-                            }
-                        }
-                    } 
-                });
-
-                console.log("✅ [STEP 7] Registration Complete! Sending emails...");
-                
-                if (process.env.SENDGRID_KEY) {
-                    await sgMail.send({ 
-                        to: EMAIL_FROM, from: EMAIL_FROM, 
-                        subject: `📝 NEW FICA UPLOAD: ${churchName}`, 
-                        html: `<h2>New Application</h2><p><strong>Name:</strong> ${churchName}</p><hr><ul><li><a href="${idDocUrl}">📄 View Leader ID</a></li><li><a href="${bankDocUrl}">🏦 View Bank Proof</a></li></ul>` 
-                    }).catch(e => console.error("Email Error:", e.response.body));
-                }
-                
-                res.send(`
-                    <!DOCTYPE html>
-                    <html><head>${sharedHead}</head><body class="bg-seabe-light flex items-center justify-center h-screen">
-                    <div class="bg-white p-10 rounded-2xl shadow-xl text-center max-w-md">
-                        <div class="text-5xl mb-4">🎉</div>
-                        <h1 class="text-2xl font-bold text-seabe-navy mb-2">Application Received</h1>
-                        <p class="text-gray-500 mb-6">We have securely vaulted your FICA documents. Check your email (<strong>${email}</strong>) for next steps.</p>
-                        <a href="/" class="text-seabe-teal font-bold hover:underline">Return Home</a>
-                    </div>
-                    </body></html>
-                `);
-
-            } catch (e) { 
-                console.error("❌ [FATAL CRASH IN DB/LOGIC]:", e);
-                res.send(`
-                    <div style="text-align:center; padding:50px; font-family:sans-serif;">
-                        <h1 style="color:#e74c3c;">System Error</h1>
-                        <p>Something went wrong processing your documents.</p>
-                        <p style="color:#7f8c8d; font-size:12px;">${e.message}</p>
-                    </div>
-                `); 
+            // Welcome Email
+            if (process.env.SENDGRID_KEY) {
+                await sgMail.send({ 
+                    to: email, from: EMAIL_FROM, 
+                    subject: `Welcome to Seabe! Your Code is ${newCode}`, 
+                    html: `<h2>Welcome to Seabe Digital</h2><p>Your workspace for <strong>${churchName}</strong> is ready.</p><p>Your members can now text <strong>Join ${newCode}</strong> to our WhatsApp bot to connect.</p>` 
+                }).catch(e => console.error("Email Error:", e));
             }
-        }); 
+            
+            // The "Aha!" Moment UI
+            res.send(`
+                <!DOCTYPE html>
+                <html><head>${sharedHead}</head><body class="bg-seabe-light flex items-center justify-center h-screen p-4">
+                <div class="bg-white p-10 rounded-2xl shadow-xl text-center max-w-md w-full border-t-8 border-seabe-teal">
+                    <div class="text-5xl mb-4">🚀</div>
+                    <h1 class="text-2xl font-extrabold text-seabe-navy mb-2">Workspace Created!</h1>
+                    <p class="text-gray-600 mb-6">Your AI bot is officially live. Grab your phone and test it out right now.</p>
+                    
+                    <div class="bg-slate-50 p-6 rounded-xl border border-slate-200 mb-6">
+                        <p class="text-sm font-bold text-gray-500 uppercase tracking-widest mb-2">Your Join Code</p>
+                        <p class="text-4xl font-mono font-black text-seabe-gold tracking-widest">${newCode}</p>
+                    </div>
+
+                    <a href="https://wa.me/${process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '').replace('+', '')}?text=Join%20${newCode}" target="_blank" class="w-full block bg-[#25d366] text-white font-bold py-4 rounded-lg hover:bg-green-500 transition shadow-lg mb-4">
+                        Test it on WhatsApp
+                    </a>
+                    
+                    <a href="/login" class="text-seabe-navy font-bold hover:underline text-sm">Go to Admin Dashboard &rarr;</a>
+                </div>
+                </body></html>
+            `);
+
+        } catch (e) { 
+            console.error("❌ [REGISTRATION CRASH]:", e);
+            res.send(`<h1>System Error</h1><p>Could not create workspace. Please try again.</p>`); 
+        }
+    });
+	
+	// ==========================================
+    // 3.5. PHASE 2: BACKGROUND KYC UPLOAD
+    // ==========================================
+    // You will call this from your logged-in React/Next.js dashboard
+    app.post('/api/kyc/upload', uploadCloud.fields([{ name: 'idDoc', maxCount: 1 }, { name: 'bankDoc', maxCount: 1 }]), async (req, res) => {
+        
+        // We assume your dashboard sends the organization's unique code
+        const { churchCode } = req.body; 
+        
+        try {
+            const idDocUrl = (req.files && req.files['idDoc']) ? req.files['idDoc'][0].path : null;
+            const bankDocUrl = (req.files && req.files['bankDoc']) ? req.files['bankDoc'][0].path : null;
+            const mimeType = (req.files && req.files['bankDoc']) ? req.files['bankDoc'][0].mimetype : 'image/jpeg';
+
+            if (!idDocUrl || !bankDocUrl) return res.status(400).json({ error: "Missing documents" });
+
+            const org = await prisma.church.findUnique({ where: { code: churchCode } });
+            if (!org) return res.status(404).json({ error: "Org not found" });
+
+            // 🤖 Let Gemini do the heavy lifting in the background
+            const fileResponse = await axios.get(bankDocUrl, { responseType: 'arraybuffer' });
+            const base64Data = Buffer.from(fileResponse.data).toString('base64');
+
+            const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+            const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+            const prompt = `Extract banking details from this Proof of Account. Return raw JSON: {"bankName": "FNB", "accountName": "Name", "accountNumber": "123", "branchCode": "250655", "accountType": "CURRENT"}`;
+            const result = await model.generateContent([prompt, { inlineData: { data: base64Data, mimeType: mimeType } }]);
+            
+            const cleanJson = result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim();
+            const extractedBank = JSON.parse(cleanJson);
+
+            // Update the DB and unlock the financial gateway!
+            await prisma.church.update({
+                where: { id: org.id },
+                data: {
+                    kycTier: 'TIER_1',
+                    canCollectMoney: true, // 🔓 GATEWAY UNLOCKED
+                    bankDetail: {
+                        create: {
+                            bankName: extractedBank.bankName, 
+                            accountName: extractedBank.accountName,
+                            accountNumber: String(extractedBank.accountNumber), 
+                            branchCode: String(extractedBank.branchCode),     
+                            accountType: extractedBank.accountType || 'CURRENT', 
+                            accountstatus: false 
+                        }
+                    }
+                }
+            });
+
+            res.json({ success: true, message: "KYC processing complete. Payments Unlocked!" });
+
+        } catch (e) {
+            console.error("KYC Processing Error:", e);
+            res.status(500).json({ error: "Failed to process KYC documents" });
+        }
     });
     
     // ==========================================
