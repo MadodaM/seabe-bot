@@ -3,14 +3,12 @@ const cron = require('node-cron');
 const { PrismaClient } = require('@prisma/client');
 const prisma = require('./prisma-client');
 const axios = require('axios');
-const sgMail = require('@sendgrid/mail');
+const { Resend } = require('resend');
 const { calculateTransaction } = require('./pricingEngine');
 const { validateBatchRecord } = require('./netcashValidator'); // 🚀 NEW: Import Validator
 
 // Ensure SendGrid is configured for Admin Alerts
-if (process.env.SENDGRID_API_KEY) {
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-}
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Netcash File Upload Endpoint (Requires Base64 encoded file inside XML)
 const NETCASH_BATCH_URL = 'https://ws.netcash.co.za/NIWS/NIWS_NIF.svc';
@@ -109,20 +107,19 @@ const startBatchEngine = () => {
             console.log("✅ Netcash Response:", netcashResponse.data);
             */
 
-            // 7. Email the Super Admin (You) a success report
+            // 7. Email the Super Admin (You) a success report via Resend
             const adminEmailMsg = {
-                to: process.env.ADMIN_EMAIL || 'admin@seabe.tech',
-                from: process.env.EMAIL_FROM || 'admin@seabe.tech',
+                to: process.env.ADMIN_EMAIL || 'your-verified-email@example.com', // ⚠️ Must be your verified email on Resend's free tier
+                from: process.env.EMAIL_FROM || 'onboarding@resend.dev',
                 subject: `💰 Netcash Debit Order Batch Submitted!`,
                 text: `Success! The monthly debit order batch has been uploaded to Netcash.\n\nTotal Records: ${recordCount}\nTotal Value: R${formattedTotal}\nAction Date: ${actionDate}\n\nNetcash will process these funds on the 1st.`,
                 attachments: [{
-                    content: base64File,
-                    filename: `Seabe_Debit_Order_Batch_${actionDate}.txt`,
-                    type: 'text/plain',
-                    disposition: 'attachment'
+                    content: base64File, // Resend accepts base64 strings directly
+                    filename: `Seabe_Debit_Order_Batch_${actionDate}.txt`
                 }]
             };
-            await sgMail.send(adminEmailMsg);
+            
+            await resend.emails.send(adminEmailMsg);
             
             console.log(`🏆 [CRON] Batch sequence complete. Emailed summary to admin.`);
 
