@@ -15,12 +15,10 @@ const { handleNPOMessage } = require('../bots/NPOCbot');
 const { handleStokvelMessage } = require('../bots/stokvelBot');
 const { processGroomingMessage } = require('../bots/groomingBot');
 const { processLmsMessage } = require('../bots/LMSlogicBot'); 
-const { handleServiceProviderMessage } = require('../bots/serviceProviderBot');
+const { handleServiceProviderMessage, processProviderTrigger } = require('../bots/serviceProviderBot');
 const { handleSupportOrTypo } = require('../services/supportEngine');
 const { processTwilioClaim } = require('../services/aiClaimWorker');
 const { calculateTransaction } = require('../services/pricingEngine');
-
-const { handleServiceProviderMessage, processProviderTrigger } = require('../bots/serviceProviderBot');
 
 router.post('/', (req, res) => {
     const rawMsg = req.body.Body || '';
