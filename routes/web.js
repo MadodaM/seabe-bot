@@ -361,13 +361,25 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             });
 
             // Create the Admin Member so they exist in the DB
+            // 1. Create the Admin Member so the WhatsApp Bot recognizes them instantly
             await prisma.member.create({
                 data: {
                     phone: adminPhone.replace(/[^0-9]/g, ''),
                     email: email,
-                    role: "ADMIN",
-                    churchId: newOrg.id,
-                    churchCode: newCode
+                    firstName: "Admin", // 👈 Required by Prisma
+                    lastName: "User",   // 👈 Required by Prisma
+                    churchCode: newCode, // 👈 Correct relation field
+                    status: "ACTIVE"
+                }
+            });
+
+            // 2. Create the Dashboard Admin profile for Web Login
+            await prisma.admin.create({
+                data: {
+                    phone: adminPhone.replace(/[^0-9]/g, ''),
+                    name: "System Admin",
+                    role: "OWNER",
+                    churchId: newOrg.id // 👈 Admin table uses churchId
                 }
             });
 
