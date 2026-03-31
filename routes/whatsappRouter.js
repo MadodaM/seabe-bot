@@ -69,16 +69,22 @@ router.post('/', (req, res) => {
                 });
 
                 if (member) {
+                    // 🚀 FIXED: Wipe the Barber's identity and force the new Organization's identity
                     session.churchCode = member.churchCode;
+                    session.orgCode = member.churchCode;
+                    session.orgName = member.church?.name;
+                    
                     if (explicitType === 'BURIAL_SOCIETY') session.mode = 'SOCIETY';
                     else if (explicitType === 'STOKVEL_SAVINGS') session.mode = 'STOKVEL';
                     else if (explicitType === 'NON_PROFIT') session.mode = 'NPO';
                     else session.mode = 'CHURCH';
+                    
                     session.step = null; 
-                } else {
-                    const labels = { 'BURIAL_SOCIETY': 'Burial Society', 'CHURCH': 'Church', 'NON_PROFIT': 'Non-Profit', 'STOKVEL_SAVINGS': 'Stokvel / Savings Club' };
-                    await sendWhatsApp(cleanPhone, `⚠️ You are not currently linked to a ${labels[explicitType]}.\n\nReply *Join* to search for one.`);
-                    return;
+					} else {
+						// 🔒 If they don't belong to a church, block them and ask them to Join
+						const labels = { 'BURIAL_SOCIETY': 'Burial Society', 'CHURCH': 'Church', 'NON_PROFIT': 'Non-Profit', 'STOKVEL_SAVINGS': 'Stokvel / Savings Club' };
+						await sendWhatsApp(cleanPhone, `⚠️ You are not currently linked to a ${labels[explicitType]}.\n\nReply *Join* to search for one.`);
+						return;
                 }
             } else {
                 const activeOrgCode = session.churchCode || session.orgCode;
