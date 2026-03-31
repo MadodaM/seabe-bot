@@ -3,7 +3,7 @@ const cron = require('node-cron');
 const { PrismaClient } = require('@prisma/client');
 const prisma = require('./prisma-client');
 const { Resend } = require('resend');
-const { calculateTransaction } = require('./pricingEngine'); // 🚀 INJECTED PRICING ENGINE
+const { calculateTransaction } = require('./pricingEngine');
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 const startWeeklyReportEngine = () => {
@@ -111,13 +111,12 @@ const startWeeklyReportEngine = () => {
                         });
                     }
 
-                    // Send via Resend
+                    // --- SEND VIA RESEND ---
                     await resend.emails.send({
-                        to: org.email, // ⚠️ Must be your verified Resend email on the free tier
+                        to: org.email,
                         from: process.env.EMAIL_FROM || 'onboarding@resend.dev', 
                         subject: `📊 Weekly Summary & Settlement Report: ${org.name}`,
                         text: emailText,
-                        // Resend only accepts the attachments array if it actually has items
                         ...(attachments.length > 0 && { attachments }) 
                     });
                     
@@ -126,6 +125,7 @@ const startWeeklyReportEngine = () => {
                 } catch (orgError) {
                     console.error(`❌ Failed to send report to ${org.name}:`, orgError.message);
                 }
+            } // <-- This closes the "for" loop
 
             console.log(`🏆 [CRON] Friday Reporting sequence complete.`);
 
