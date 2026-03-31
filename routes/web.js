@@ -442,7 +442,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                         Open in WhatsApp
                     </a>
                     
-                    <a href="/login" class="text-seabe-navy font-bold hover:underline text-sm">Go to Admin Dashboard &rarr;</a>
+                    <a href="/admin/${newCode}" class="text-seabe-navy font-bold hover:underline text-sm">Go to Admin Dashboard &rarr;</a>
                 </div>
                 </body></html>
             `);
