@@ -2,6 +2,7 @@
 // SEABE PLATFORM - VERSION 4.1 (Stable)
 // ==========================================
 require('dotenv').config();
+const cookieParser = require('cookie-parser');
 const express = require('express');
 const bodyParser = require('body-parser');
 const path = require('path');

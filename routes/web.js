@@ -2,6 +2,7 @@
 // PURPOSE: Public Website (Home, Register, Demo, Terms, Privacy) + Cloudinary FICA + Netcash Redirect
 // DESIGN SYSTEM: Deep Navy (#0f172a), Warm Teal (#14b8a6), Gold (#f59e0b)
 
+const jwt = require('jsonwebtoken');
 const express = require('express');
 const axios = require('axios');
 const sgMail = require('@sendgrid/mail');
@@ -893,5 +894,221 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             console.error("PDF Send Error:", error);
             res.status(500).json({ success: false });
         }
+    });
+	
+	// ==========================================
+    // 🔐 AUTHENTICATION & SESSIONS
+    // ==========================================
+
+    // 1. The Login UI
+    app.get('/login', (req, res) => {
+        res.send(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head><title>Admin Login | Seabe</title>${sharedHead}</head>
+            <body class="bg-seabe-light min-h-screen flex items-center justify-center p-4">
+                <div class="bg-white p-8 md:p-10 rounded-2xl shadow-xl w-full max-w-md border border-gray-100">
+                    <div class="text-center mb-8">
+                        <a href="/" class="text-2xl font-extrabold text-seabe-navy tracking-tight">Seabe<span class="text-seabe-teal">.</span></a>
+                        <h2 class="text-xl font-bold text-gray-800 mt-6">Welcome Back</h2>
+                        <p class="text-gray-500 text-sm mt-1">Enter your registered admin phone number.</p>
+                    </div>
+                    <form action="/api/auth/request-otp" method="POST" class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-700 uppercase mb-1">WhatsApp Number</label>
+                            <input type="text" name="phone" required placeholder="e.g. 27820000000" class="w-full p-4 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none font-mono text-lg">
+                        </div>
+                        <button type="submit" class="w-full bg-seabe-navy text-white font-bold py-4 rounded-lg hover:bg-slate-800 transition shadow-lg">
+                            Send Secure Code
+                        </button>
+                    </form>
+                </div>
+            </body>
+            </html>
+        `);
+    });
+
+    // 2. Generate and Send OTP
+    app.post('/api/auth/request-otp', express.urlencoded({ extended: true }), async (req, res) => {
+        const cleanPhone = (req.body.phone || '').replace(/[^0-9]/g, '');
+        
+        try {
+            // Find the admin and include their church details
+            const admin = await prisma.admin.findUnique({ 
+                where: { phone: cleanPhone },
+                include: { church: true }
+            });
+
+            if (!admin) {
+                return res.send(`<h2>Access Denied</h2><p>No admin account found for this number.</p><a href="/login">Try Again</a>`);
+            }
+
+            // Generate a 6-digit OTP
+            const otp = Math.floor(100000 + Math.random() * 900000).toString();
+            const expires = new Date(Date.now() + 10 * 60000); // 10 minutes from now
+
+            // Save OTP to the Church record (per your schema)
+            await prisma.church.update({
+                where: { id: admin.churchId },
+                data: { otp: otp, otpExpires: expires }
+            });
+
+            // Send OTP via Twilio WhatsApp
+            if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
+                const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+                const botNum = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+                
+                await twilioClient.messages.create({
+                    from: `whatsapp:${botNum}`,
+                    to: `whatsapp:${cleanPhone}`,
+                    body: `🔐 *Seabe Admin Login*\n\nYour secure access code is: *${otp}*\n\n_Do not share this code with anyone. It expires in 10 minutes._`
+                });
+            }
+
+            // Render the OTP Input Screen
+            res.send(`
+                <!DOCTYPE html>
+                <html lang="en">
+                <head><title>Verify Login | Seabe</title>${sharedHead}</head>
+                <body class="bg-seabe-light min-h-screen flex items-center justify-center p-4">
+                    <div class="bg-white p-8 md:p-10 rounded-2xl shadow-xl w-full max-w-md border border-gray-100 text-center">
+                        <div class="text-4xl mb-4">📱</div>
+                        <h2 class="text-xl font-bold text-seabe-navy mb-2">Check Your WhatsApp</h2>
+                        <p class="text-gray-500 text-sm mb-8">We sent a 6-digit code to ending in **${cleanPhone.slice(-4)}</p>
+                        
+                        <form action="/api/auth/verify-otp" method="POST" class="space-y-4">
+                            <input type="hidden" name="phone" value="${cleanPhone}">
+                            <input type="text" name="otp" required maxlength="6" pattern="[0-9]{6}" placeholder="------" class="w-full p-4 border border-gray-200 rounded-lg focus:ring-2 focus:ring-seabe-teal outline-none font-mono text-center text-3xl tracking-[1em]">
+                            <button type="submit" class="w-full bg-seabe-teal text-white font-bold py-4 rounded-lg hover:bg-teal-500 transition shadow-lg mt-4">
+                                Verify & Login
+                            </button>
+                        </form>
+                    </div>
+                </body>
+                </html>
+            `);
+
+        } catch (error) {
+            console.error("OTP Request Error:", error);
+            res.send("System Error");
+        }
+    });
+
+    // 3. Verify OTP & Issue JWT Cookie
+    app.post('/api/auth/verify-otp', express.urlencoded({ extended: true }), async (req, res) => {
+        const { phone, otp } = req.body;
+
+        try {
+            const admin = await prisma.admin.findUnique({ 
+                where: { phone },
+                include: { church: true }
+            });
+
+            // Validate OTP and Expiry
+            if (!admin || admin.church.otp !== otp || new Date() > new Date(admin.church.otpExpires)) {
+                return res.send(`<h2>Verification Failed</h2><p>Invalid or expired code.</p><a href="/login">Start Over</a>`);
+            }
+
+            // Create JWT Payload
+            const tokenPayload = {
+                adminId: admin.id,
+                name: admin.name,
+                role: admin.role,
+                churchId: admin.church.id,
+                churchCode: admin.church.code,
+                churchName: admin.church.name
+            };
+
+            // Sign the Token (Expires in 12 hours)
+            const token = jwt.sign(tokenPayload, process.env.JWT_SECRET || 'fallback_secret_for_dev', { expiresIn: '12h' });
+
+            // Clear the OTP from the database for security
+            await prisma.church.update({
+                where: { id: admin.churchId },
+                data: { otp: null, otpExpires: null }
+            });
+
+            // Set the secure HTTP-only cookie
+            res.cookie('seabe_auth', token, { 
+                httpOnly: true, 
+                secure: process.env.NODE_ENV === 'production', // true if on HTTPS
+                maxAge: 12 * 60 * 60 * 1000 // 12 hours
+            });
+
+            // 🚀 BINGO! Route them to their specific workspace
+            res.redirect(`/admin/${admin.church.code}`);
+
+        } catch (error) {
+            console.error("OTP Verification Error:", error);
+            res.send("System Error");
+        }
+    });
+
+    // 4. The Security Middleware (Protects your Dashboard)
+    const requireAuth = (req, res, next) => {
+        const token = req.cookies.seabe_auth;
+        if (!token) return res.redirect('/login');
+
+        try {
+            const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev');
+            req.admin = decoded; // Attach admin details to the request
+            next();
+        } catch (e) {
+            res.clearCookie('seabe_auth');
+            res.redirect('/login');
+        }
+    };
+
+    // 5. The Protected Dashboard Route (Example)
+    app.get('/admin/:orgCode', requireAuth, async (req, res) => {
+        const requestedCode = req.params.orgCode;
+
+        // Security Check: Ensure the logged-in admin actually owns this workspace
+        if (req.admin.churchCode !== requestedCode) {
+            return res.status(403).send("Forbidden: You do not have access to this workspace.");
+        }
+
+        // Fetch their dashboard data
+        const church = await prisma.church.findUnique({
+            where: { code: requestedCode },
+            include: { transactions: { orderBy: { date: 'desc' }, take: 5 } }
+        });
+
+        res.send(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head><title>Dashboard | ${church.name}</title>${sharedHead}</head>
+            <body class="bg-slate-50 text-slate-800 p-8">
+                <div class="max-w-6xl mx-auto">
+                    <div class="flex justify-between items-center mb-8">
+                        <div>
+                            <h1 class="text-3xl font-extrabold text-seabe-navy">${church.name}</h1>
+                            <p class="text-gray-500">Welcome back, ${req.admin.name}</p>
+                        </div>
+                        <a href="/logout" class="bg-red-50 text-red-600 px-4 py-2 rounded-lg font-bold hover:bg-red-100">Log Out</a>
+                    </div>
+                    
+                    <div class="bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
+                        <h2 class="text-xl font-bold mb-4">Recent Activity</h2>
+                        ${church.transactions.length === 0 ? '<p class="text-gray-500">No transactions yet.</p>' : ''}
+                        <ul class="space-y-3">
+                            ${church.transactions.map(t => `
+                                <li class="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
+                                    <span class="font-mono text-sm text-gray-500">${t.reference}</span>
+                                    <span class="font-bold text-green-600">+R${t.amount.toFixed(2)}</span>
+                                </li>
+                            `).join('')}
+                        </ul>
+                    </div>
+                </div>
+            </body>
+            </html>
+        `);
+    });
+
+    // 6. Logout
+    app.get('/logout', (req, res) => {
+        res.clearCookie('seabe_auth');
+        res.redirect('/login');
     });
 };
