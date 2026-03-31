@@ -20,6 +20,8 @@ const { handleSupportOrTypo } = require('../services/supportEngine');
 const { processTwilioClaim } = require('../services/aiClaimWorker');
 const { calculateTransaction } = require('../services/pricingEngine');
 
+const { handleServiceProviderMessage, processProviderTrigger } = require('../bots/serviceProviderBot');
+
 router.post('/', (req, res) => {
     const rawMsg = req.body.Body || '';
     const incomingMsg = rawMsg.trim().toLowerCase();
@@ -142,6 +144,15 @@ router.post('/', (req, res) => {
             // ================================================
             const handledByGrooming = await processGroomingMessage(incomingMsg, cleanPhone, session, sendWhatsApp);
             if (handledByGrooming) {
+                session = {}; 
+                return; 
+            }
+			
+			// ================================================
+            // 🛠️ SERVICE PROVIDER INTERCEPTOR
+            // ================================================
+            const handledByProvider = await processProviderTrigger(incomingMsg, cleanPhone, session, sendWhatsApp);
+            if (handledByProvider) {
                 session = {}; 
                 return; 
             }

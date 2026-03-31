@@ -58,6 +58,50 @@ const sendWhatsApp = async (to, body) => {
 
 const gateway = netcash;
 
+// ====================================================
+// 0. THE TRIGGER: Check if they typed a Provider Name
+// ====================================================
+async function processProviderTrigger(cleanMsg, phone, session, sendWhatsAppFn) {
+    if (!session || session.mode !== 'PROVIDER') {
+        const provider = await prisma.church.findFirst({
+            where: { name: { equals: cleanMsg, mode: 'insensitive' }, type: 'SERVICE_PROVIDER' }
+        });
+
+        if (provider) {
+            const newStep = 'SP_MENU';
+            const newData = { orgName: provider.name, orgCode: provider.code };
+            
+            await prisma.botSession.upsert({
+                where: { phone: phone },
+                update: { mode: 'PROVIDER', step: newStep, data: newData },
+                create: { phone: phone, mode: 'PROVIDER', step: newStep, data: newData }
+            });
+
+            if (session) {
+                session.mode = 'PROVIDER';
+                session.step = newStep;
+                session.data = newData;
+            }
+
+            const menu = `🛠️ *${provider.name}*\n` +
+                         `_Professional Services_\n\n` +
+                         `1. Booking Request 📅\n` +
+                         `2. Pay Invoice 💳\n` +
+                         `3. My Profile & Address 👤\n` +
+                         `4. Statement 📜\n` +
+                         `5. Go to Lobby 🛡️\n\n` +
+                         `Reply with a number:`;
+            
+            // Use the passed-in sendWhatsApp (from router) or our local one
+            const sender = sendWhatsAppFn || sendWhatsApp;
+            await sender(phone, menu);
+            return true;
+        }
+    }
+    return false; 
+}
+
+
 // --- MAIN HANDLER ---
 async function handleServiceProviderMessage(cleanPhone, incomingMsg, session, member) {
     let reply = "";
@@ -280,4 +324,5 @@ async function handleServiceProviderMessage(cleanPhone, incomingMsg, session, me
     }
 }
 
-module.exports = { handleServiceProviderMessage };
+// 🚀 EXPORT BOTH FUNCTIONS
+module.exports = { handleServiceProviderMessage, processProviderTrigger };
