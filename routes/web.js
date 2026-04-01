@@ -432,14 +432,28 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 }
             });
 
-            // Welcome Email (PRODUCTION RESEND LOGIC - RICH HTML)
+            // ==========================================
+            // 1. GENERATE LINKS & QR CODE
+            // ==========================================
+            const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER ? process.env.TWILIO_PHONE_NUMBER.replace(/[^0-9]/g, '') : '27600000000';
+            const whatsappLink = `https://wa.me/${cleanTwilioNumber}?text=Join%20${newCode}`;
+            
+            // Generate a Base64 QR Code Image on the fly
+            const qrCodeDataUrl = await QRCode.toDataURL(whatsappLink, { 
+                color: { dark: '#0f172a', light: '#ffffff' }, // Seabe Navy blue barcode
+                margin: 2
+            });
+
+            // ==========================================
+            // 2. DISPATCH WELCOME EMAIL (RICH HTML + QR)
+            // ==========================================
             if (process.env.RESEND_API_KEY) {
                 console.log(`✉️ Sending rich welcome email to ${email}...`);
                 
-                // 1. Strip the "data:image/png;base64," prefix from the QR code for the attachment
+                // Strip the "data:image/png;base64," prefix from the QR code for the attachment
                 const base64Qr = qrCodeDataUrl.split(',')[1];
 
-                // 2. Build the beautiful email template
+                // Build the beautiful email template
                 const emailHtml = `
                     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f8fafc; padding: 20px; border-radius: 12px;">
                         <div style="background-color: #ffffff; padding: 40px; border-radius: 12px; border-top: 6px solid #0f766e; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
@@ -474,7 +488,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                     </div>
                 `;
                 
-                // 3. Send via Resend with the Inline Attachment
+                // Send via Resend with the Inline Attachment
                 const { error } = await resend.emails.send({ 
                     to: email, 
                     from: process.env.EMAIL_FROM || 'admin@seabe.tech', 
@@ -492,17 +506,9 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 }
             }
             
-            // Generate the exact WhatsApp Link
-            const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER ? process.env.TWILIO_PHONE_NUMBER.replace(/[^0-9]/g, '') : '27600000000';
-            const whatsappLink = `https://wa.me/${cleanTwilioNumber}?text=Join%20${newCode}`;
-            
-            // Generate a Base64 QR Code Image on the fly
-            const qrCodeDataUrl = await QRCode.toDataURL(whatsappLink, { 
-                color: { dark: '#0f172a', light: '#ffffff' }, // Seabe Navy blue barcode
-                margin: 2
-            });
-            
-            // The "Aha!" Moment UI with QR Code
+            // ==========================================
+            // 3. RENDER THE SUCCESS WEB PAGE
+            // ==========================================
             res.send(`
                 <!DOCTYPE html>
                 <html><head>${sharedHead}</head><body class="bg-seabe-light flex items-center justify-center min-h-screen p-4 py-12">
