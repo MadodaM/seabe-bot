@@ -433,29 +433,28 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             });
 
             // ==========================================
-            // 1. GENERATE LINKS & QR CODE
+            // 1. GENERATE SECURE MFA SETUP TOKEN
             // ==========================================
-            const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER ? process.env.TWILIO_PHONE_NUMBER.replace(/[^0-9]/g, '') : '27600000000';
-            const whatsappLink = `https://wa.me/${cleanTwilioNumber}?text=Join%20${newCode}`;
+            const crypto = require('crypto');
+            const setupToken = crypto.randomBytes(20).toString('hex');
             
-            // Generate a Base64 QR Code Image on the fly
-            const qrCodeDataUrl = await QRCode.toDataURL(whatsappLink, { 
-                color: { dark: '#0f172a', light: '#ffffff' }, // Seabe Navy blue barcode
-                margin: 2
+            // Save the setup token to the database for this new organization
+            await prisma.church.update({
+                where: { code: newCode },
+                data: { setupToken: setupToken }
             });
 
+            const hostUrl = process.env.HOST_URL || 'https://seabe.tech';
+            const setupLink = `${hostUrl}/org/setup/${setupToken}`;
+
             // ==========================================
-            // 2. DISPATCH WELCOME EMAIL (RICH HTML + QR)
+            // 2. DISPATCH WELCOME EMAIL (RICH HTML + QR + MFA)
             // ==========================================
             if (process.env.RESEND_API_KEY) {
-                console.log(`✉️ Sending rich welcome email to ${email}...`);
+                console.log(`✉️ Sending secure welcome email to ${email}...`);
                 
-                // Strip the "data:image/png;base64," prefix from the QR code for the attachment
                 const base64Qr = qrCodeDataUrl.split(',')[1];
 
-                // Build the beautiful email template
-                const hostUrl = process.env.HOST_URL || 'https://seabe.tech'; // Fallback for links
-                
                 const emailHtml = `
                     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f8fafc; padding: 20px; border-radius: 12px;">
                         <div style="background-color: #ffffff; padding: 40px; border-radius: 12px; border-top: 6px solid #0f766e; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
@@ -464,8 +463,22 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                                 Welcome to Seabe Digital. Your automated AI workspace for <strong>${churchName}</strong> is now active.
                             </p>
 
+                            <div style="background-color: #f0fdfa; border: 1px solid #ccfbf1; border-radius: 12px; padding: 25px 20px; margin-bottom: 30px; text-align: center;">
+                                <h3 style="color: #0f766e; font-size: 18px; margin-top: 0; margin-bottom: 10px;">
+                                    🔐 Secure Your Admin Account
+                                </h3>
+                                <p style="color: #115e59; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
+                                    Before you can access your dashboard, you must set up your password and link your Google Authenticator app.
+                                </p>
+                                <a href="${setupLink}" style="display: inline-block; background-color: #0f766e; color: #ffffff; text-decoration: none; font-weight: bold; padding: 14px 28px; border-radius: 8px; font-size: 16px;">
+                                    Set Up Password & MFA
+                                </a>
+                            </div>
+
+                            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
+
                             <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 30px 20px; margin-bottom: 20px;">
-                                <p style="color: #64748b; font-size: 12px; text-transform: uppercase; letter-spacing: 2px; margin: 0 0 10px 0; font-weight: bold;">Your Join Code</p>
+                                <p style="color: #64748b; font-size: 12px; text-transform: uppercase; letter-spacing: 2px; margin: 0 0 10px 0; font-weight: bold;">Your Client Join Code</p>
                                 <h2 style="color: #ca8a04; font-size: 40px; font-family: monospace; letter-spacing: 4px; margin: 0 0 20px 0;">${newCode}</h2>
 
                                 <div style="background-color: #ffffff; padding: 10px; border-radius: 12px; display: inline-block; border: 1px solid #e2e8f0;">
@@ -474,53 +487,30 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                                 <p style="color: #94a3b8; font-size: 13px; margin-top: 15px; margin-bottom: 0;">Scan with your phone's camera</p>
                             </div>
 
-                            <a href="${whatsappLink}" style="display: inline-block; background-color: #25d366; color: #ffffff; text-decoration: none; font-weight: bold; padding: 16px 32px; border-radius: 8px; font-size: 16px; margin-bottom: 20px;">
+                            <a href="${whatsappLink}" style="display: inline-block; background-color: #25d366; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 24px; border-radius: 8px; font-size: 14px; margin-bottom: 20px;">
                                 Open in WhatsApp
                             </a>
 
-                            <p style="color: #64748b; font-size: 14px; margin-bottom: 30px;">
-                                Or text <strong>Join ${newCode}</strong> to our WhatsApp bot.
-                            </p>
-
-                            <div style="background-color: #f0fdfa; border: 1px solid #ccfbf1; border-radius: 12px; padding: 25px 20px; margin-bottom: 30px; text-align: left;">
-                                <h3 style="color: #0f766e; font-size: 18px; margin-top: 0; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
-                                    🔐 Secure Passwordless Login
-                                </h3>
-                                <p style="color: #115e59; font-size: 14px; line-height: 1.6; margin: 0 0 15px 0;">
-                                    Because your workspace handles sensitive member data and payments, we use <strong>Passwordless WhatsApp Verification</strong>. You will never need to remember a password. 
-                                </p>
-                                <p style="color: #115e59; font-size: 14px; line-height: 1.6; margin: 0 0 15px 0;">
-                                    When you want to view your dashboard, simply visit the link below and we will text a secure 6-digit access code directly to your phone.
-                                </p>
-                                <a href="${hostUrl}/login" style="display: inline-block; background-color: #0f766e; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 24px; border-radius: 8px; font-size: 14px;">
-                                    Access Admin Dashboard
-                                </a>
-                            </div>
-
-                            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
-                            <p style="color: #94a3b8; font-size: 12px; margin: 0;">
+                            <p style="color: #64748b; font-size: 12px; margin: 0;">
                                 © ${new Date().getFullYear()} Seabe Digital. All rights reserved.
                             </p>
                         </div>
                     </div>
                 `;
                 
-                // Send via Resend with the Inline Attachment
                 const { error } = await resend.emails.send({ 
                     to: email, 
                     from: process.env.EMAIL_FROM || 'admin@seabe.tech', 
-                    subject: `🚀 Workspace Ready: ${churchName}`, 
+                    subject: `🔐 Action Required: Secure your Seabe Workspace`, 
                     html: emailHtml,
                     attachments: [{
                         filename: 'qrcode.png',
                         content: base64Qr,
-                        content_id: 'qrcode' // This links directly to the <img src="cid:qrcode"> in the HTML
+                        content_id: 'qrcode' 
                     }]
                 });
 
-                if (error) {
-                    console.error("❌ Resend Delivery Error:", error);
-                }
+                if (error) console.error("❌ Resend Delivery Error:", error);
             }
             
             // ==========================================
