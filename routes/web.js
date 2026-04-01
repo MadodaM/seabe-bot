@@ -433,7 +433,19 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             });
 
             // ==========================================
-            // 1. GENERATE SECURE MFA SETUP TOKEN
+            // 1. GENERATE LINKS & QR CODE
+            // ==========================================
+            const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER ? process.env.TWILIO_PHONE_NUMBER.replace(/[^0-9]/g, '') : '27600000000';
+            const whatsappLink = `https://wa.me/${cleanTwilioNumber}?text=Join%20${newCode}`;
+            
+            // Generate a Base64 QR Code Image on the fly
+            const qrCodeDataUrl = await QRCode.toDataURL(whatsappLink, { 
+                color: { dark: '#0f172a', light: '#ffffff' }, // Seabe Navy blue barcode
+                margin: 2
+            });
+
+            // ==========================================
+            // 2. GENERATE SECURE MFA SETUP TOKEN
             // ==========================================
             const crypto = require('crypto');
             const setupToken = crypto.randomBytes(20).toString('hex');
@@ -448,11 +460,12 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             const setupLink = `${hostUrl}/org/setup/${setupToken}`;
 
             // ==========================================
-            // 2. DISPATCH WELCOME EMAIL (RICH HTML + QR + MFA)
+            // 3. DISPATCH WELCOME EMAIL (RICH HTML + QR + MFA)
             // ==========================================
             if (process.env.RESEND_API_KEY) {
                 console.log(`✉️ Sending secure welcome email to ${email}...`);
                 
+                // Strip the "data:image/png;base64," prefix from the QR code for the attachment
                 const base64Qr = qrCodeDataUrl.split(',')[1];
 
                 const emailHtml = `
@@ -514,7 +527,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
             }
             
             // ==========================================
-            // 3. RENDER THE SUCCESS WEB PAGE
+            // 4. RENDER THE SUCCESS WEB PAGE
             // ==========================================
             res.send(`
                 <!DOCTYPE html>
