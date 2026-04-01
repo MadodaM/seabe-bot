@@ -432,15 +432,59 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 }
             });
 
-            // Welcome Email (PRODUCTION RESEND LOGIC)
+            // Welcome Email (PRODUCTION RESEND LOGIC - RICH HTML)
             if (process.env.RESEND_API_KEY) {
-                console.log(`✉️ Sending production welcome email to ${email}...`);
+                console.log(`✉️ Sending rich welcome email to ${email}...`);
                 
+                // 1. Strip the "data:image/png;base64," prefix from the QR code for the attachment
+                const base64Qr = qrCodeDataUrl.split(',')[1];
+
+                // 2. Build the beautiful email template
+                const emailHtml = `
+                    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f8fafc; padding: 20px; border-radius: 12px;">
+                        <div style="background-color: #ffffff; padding: 40px; border-radius: 12px; border-top: 6px solid #0f766e; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                            <h1 style="color: #0f172a; margin-bottom: 10px; font-size: 24px;">Workspace Created! 🚀</h1>
+                            <p style="color: #475569; font-size: 16px; line-height: 1.6; margin-bottom: 30px;">
+                                Welcome to Seabe Digital. Your automated AI workspace for <strong>${churchName}</strong> is now active.
+                            </p>
+
+                            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 30px 20px; margin-bottom: 30px;">
+                                <p style="color: #64748b; font-size: 12px; text-transform: uppercase; letter-spacing: 2px; margin: 0 0 10px 0; font-weight: bold;">Your Join Code</p>
+                                <h2 style="color: #ca8a04; font-size: 40px; font-family: monospace; letter-spacing: 4px; margin: 0 0 20px 0;">${newCode}</h2>
+
+                                <div style="background-color: #ffffff; padding: 10px; border-radius: 12px; display: inline-block; border: 1px solid #e2e8f0;">
+                                    <img src="cid:qrcode" alt="Scan to Join" style="width: 160px; height: 160px; display: block;" />
+                                </div>
+                                <p style="color: #94a3b8; font-size: 13px; margin-top: 15px; margin-bottom: 0;">Scan with your phone's camera</p>
+                            </div>
+
+                            <a href="${whatsappLink}" style="display: inline-block; background-color: #25d366; color: #ffffff; text-decoration: none; font-weight: bold; padding: 16px 32px; border-radius: 8px; font-size: 16px; margin-bottom: 20px;">
+                                Open in WhatsApp
+                            </a>
+
+                            <p style="color: #64748b; font-size: 14px;">
+                                Or text <strong>Join ${newCode}</strong> to our WhatsApp bot.
+                            </p>
+
+                            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
+                            <p style="color: #94a3b8; font-size: 12px; margin: 0;">
+                                © ${new Date().getFullYear()} Seabe Digital. All rights reserved.
+                            </p>
+                        </div>
+                    </div>
+                `;
+                
+                // 3. Send via Resend with the Inline Attachment
                 const { error } = await resend.emails.send({ 
-                    to: email, // Now this will work for ANY user!
-                    from: process.env.EMAIL_FROM || 'info@seabe.tech', // Using your verified domain
-                    subject: `Welcome to Seabe! Your Code is ${newCode}`, 
-                    html: `<h2>Welcome to Seabe Digital</h2><p>Your workspace for <strong>${churchName}</strong> is ready.</p><p>Your members can now text <strong>Join ${newCode}</strong> to our WhatsApp bot to connect.</p>` 
+                    to: email, 
+                    from: process.env.EMAIL_FROM || 'admin@seabe.tech', 
+                    subject: `🚀 Workspace Ready: ${churchName}`, 
+                    html: emailHtml,
+                    attachments: [{
+                        filename: 'qrcode.png',
+                        content: base64Qr,
+                        content_id: 'qrcode' // This links directly to the <img src="cid:qrcode"> in the HTML
+                    }]
                 });
 
                 if (error) {
