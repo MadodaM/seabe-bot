@@ -432,14 +432,20 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 }
             });
 
-            // Welcome Email (NEW RESEND LOGIC)
+            // Welcome Email (PRODUCTION RESEND LOGIC)
             if (process.env.RESEND_API_KEY) {
-                await resend.emails.send({ 
-                    to: email, // Note: In Resend's free unverified tier, this must be YOUR email
-                    from: process.env.EMAIL_FROM || 'onboarding@resend.dev', 
+                console.log(`✉️ Sending production welcome email to ${email}...`);
+                
+                const { error } = await resend.emails.send({ 
+                    to: email, // Now this will work for ANY user!
+                    from: process.env.EMAIL_FROM || 'info@seabe.tech', // Using your verified domain
                     subject: `Welcome to Seabe! Your Code is ${newCode}`, 
                     html: `<h2>Welcome to Seabe Digital</h2><p>Your workspace for <strong>${churchName}</strong> is ready.</p><p>Your members can now text <strong>Join ${newCode}</strong> to our WhatsApp bot to connect.</p>` 
-                }).catch(e => console.error("Email Error:", e));
+                });
+
+                if (error) {
+                    console.error("❌ Resend Delivery Error:", error);
+                }
             }
             
             // Generate the exact WhatsApp Link
