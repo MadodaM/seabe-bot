@@ -454,6 +454,8 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                 const base64Qr = qrCodeDataUrl.split(',')[1];
 
                 // Build the beautiful email template
+                const hostUrl = process.env.HOST_URL || 'https://seabe.tech'; // Fallback for links
+                
                 const emailHtml = `
                     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f8fafc; padding: 20px; border-radius: 12px;">
                         <div style="background-color: #ffffff; padding: 40px; border-radius: 12px; border-top: 6px solid #0f766e; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
@@ -462,7 +464,7 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                                 Welcome to Seabe Digital. Your automated AI workspace for <strong>${churchName}</strong> is now active.
                             </p>
 
-                            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 30px 20px; margin-bottom: 30px;">
+                            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 30px 20px; margin-bottom: 20px;">
                                 <p style="color: #64748b; font-size: 12px; text-transform: uppercase; letter-spacing: 2px; margin: 0 0 10px 0; font-weight: bold;">Your Join Code</p>
                                 <h2 style="color: #ca8a04; font-size: 40px; font-family: monospace; letter-spacing: 4px; margin: 0 0 20px 0;">${newCode}</h2>
 
@@ -476,9 +478,24 @@ module.exports = function(app, upload, { prisma, syncToHubSpot }) {
                                 Open in WhatsApp
                             </a>
 
-                            <p style="color: #64748b; font-size: 14px;">
+                            <p style="color: #64748b; font-size: 14px; margin-bottom: 30px;">
                                 Or text <strong>Join ${newCode}</strong> to our WhatsApp bot.
                             </p>
+
+                            <div style="background-color: #f0fdfa; border: 1px solid #ccfbf1; border-radius: 12px; padding: 25px 20px; margin-bottom: 30px; text-align: left;">
+                                <h3 style="color: #0f766e; font-size: 18px; margin-top: 0; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                                    🔐 Secure Passwordless Login
+                                </h3>
+                                <p style="color: #115e59; font-size: 14px; line-height: 1.6; margin: 0 0 15px 0;">
+                                    Because your workspace handles sensitive member data and payments, we use <strong>Passwordless WhatsApp Verification</strong>. You will never need to remember a password. 
+                                </p>
+                                <p style="color: #115e59; font-size: 14px; line-height: 1.6; margin: 0 0 15px 0;">
+                                    When you want to view your dashboard, simply visit the link below and we will text a secure 6-digit access code directly to your phone.
+                                </p>
+                                <a href="${hostUrl}/login" style="display: inline-block; background-color: #0f766e; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 24px; border-radius: 8px; font-size: 14px;">
+                                    Access Admin Dashboard
+                                </a>
+                            </div>
 
                             <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
                             <p style="color: #94a3b8; font-size: 12px; margin: 0;">
