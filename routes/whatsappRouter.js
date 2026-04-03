@@ -15,6 +15,7 @@ const { handleNPOMessage } = require('../bots/NPOCbot');
 const { handleStokvelMessage } = require('../bots/stokvelBot');
 const { processGroomingMessage } = require('../bots/groomingBot');
 const { processLmsMessage } = require('../bots/LMSlogicBot'); 
+const adminBot = require('../bots/adminBot');
 const { handleServiceProviderMessage, processProviderTrigger } = require('../bots/serviceProviderBot');
 const { handleSupportOrTypo } = require('../services/supportEngine');
 const { processTwilioClaim } = require('../services/aiClaimWorker');
@@ -113,6 +114,16 @@ router.post('/', (req, res) => {
                         data: { firstName: fName, lastName: lName },
                         include: { church: true, society: true }
                     });
+                }
+            }
+			
+			// --- 1. ADMIN OVERRIDE CHECK ---
+            // If the message starts with "admin", hand it to the Admin Bot
+            if (incomingMsg.startsWith('admin')) {
+                // Pass the sendWhatsApp function so the admin bot can reply in the background
+                const handledByAdmin = await adminBot.process(incomingMsg, cleanPhone, member, sendWhatsApp);
+                if (handledByAdmin) {
+                    return; // Stop processing and exit the background task
                 }
             }
 
