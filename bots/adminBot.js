@@ -58,7 +58,7 @@ module.exports.process = async (incomingMsg, cleanPhone, member, sendWhatsApp) =
         return true;
     }
 
-    // ==========================================
+// ==========================================
     // 📅 TODAY'S SCHEDULE
     // ==========================================
     if (action === 'schedule') {
@@ -85,10 +85,65 @@ module.exports.process = async (incomingMsg, cleanPhone, member, sendWhatsApp) =
         todayAppts.forEach(appt => {
             const time = new Date(appt.bookingDate).toLocaleTimeString('en-ZA', { hour: '2-digit', minute:'2-digit' });
             const statusIcon = appt.status === 'CONFIRMED' ? '✅' : (appt.status === 'PENDING_PAYMENT' ? '⏳' : '🗓️');
-            scheduleMsg += `${statusIcon} *${time}* - ${appt.member.firstName} (${appt.product.name})\n`;
+            // 🚀 Added [ID] so the admin knows which number to bill
+            scheduleMsg += `${statusIcon} *[ID: ${appt.id}]* ${time} - ${appt.member.firstName} (${appt.product.name})\n`;
         });
+        
+        scheduleMsg += `\n_To check a client out, type:_\n*Admin Bill [ID] [Amount] [Extras]*\n_Example: Admin Bill 14 150 Premium Beard Oil_`;
 
         await sendWhatsApp(cleanPhone, scheduleMsg);
+        return true;
+    }
+
+    // ==========================================
+    // 💳 SEND BILL + CONSUMABLES
+    // ==========================================
+    if (action === 'bill' || action === 'checkout') {
+        // Expected format: "Admin Bill 14 150 Hair dye and wash"
+        const apptId = parseInt(parts[2]);
+        const newAmount = parseFloat(parts[3]);
+        const extras = parts.slice(4).join(' ').trim(); // Grabs everything after the amount as text
+
+        if (!apptId || !newAmount) {
+            await sendWhatsApp(cleanPhone, "⚠️ *Invalid Format*\nPlease use: *Admin Bill [ID] [Amount] [Extras]*\n\n_Example: Admin Bill 14 150 Hair Dye_");
+            return true;
+        }
+
+        // 1. Verify the appointment belongs to this salon
+        const appt = await prisma.appointment.findUnique({
+            where: { id: apptId },
+            include: { member: true, product: true, church: true }
+        });
+
+        if (!appt || appt.churchId !== org.id) {
+            await sendWhatsApp(cleanPhone, "⚠️ *Error:* Appointment ID not found.");
+            return true;
+        }
+
+        // 2. Update the DB with the final amount and consumables
+        const updatedAppt = await prisma.appointment.update({
+            where: { id: apptId },
+            data: {
+                finalAmount: newAmount,
+                addedItems: extras || null,
+                status: 'PENDING_PAYMENT',
+                updatedAt: new Date()
+            }
+        });
+
+        // 3. Generate the Payment Link and Message for the Client
+        const host = process.env.HOST_URL || 'https://seabe.tech';
+        const payLink = `${host}/pay?apptId=${appt.id}&amount=${newAmount}`;
+        const extrasText = extras ? `\n➕ *Extras:* ${extras}` : '';
+        
+        const clientMsg = `🧾 *${appt.church.name} - Invoice*\n\nHi ${appt.member.firstName}, your payment link is ready.\n\n✂️ *Service:* ${appt.product.name}${extrasText}\n💰 *Total Due:* R${newAmount.toFixed(2)}\n\n👉 Click to securely pay via Ozow/Card:\n${payLink}`;
+
+        // 4. Send the WhatsApp message to the Client
+        const clientPhone = appt.member.phone.startsWith('0') ? '27' + appt.member.phone.substring(1) : appt.member.phone.replace('+', '');
+        await sendWhatsApp(clientPhone, clientMsg);
+
+        // 5. Confirm success back to the Admin
+        await sendWhatsApp(cleanPhone, `✅ *Bill Sent!*\n\nInvoice for R${newAmount.toFixed(2)} sent to ${appt.member.firstName}.\nThe appointment status is now ⏳ PENDING_PAYMENT.`);
         return true;
     }
 
