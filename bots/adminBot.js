@@ -2,17 +2,22 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-module.exports.process = async (incomingMsg, cleanPhone, member, sendWhatsApp) => {
+module.exports.process = async (incomingMsg, cleanPhone, member, sendWhatsApp, session) => {
     const msg = incomingMsg.trim();
     const command = msg.toLowerCase();
 
-    // 1. FAIL FAST: Is the user trying to use an admin command?
     if (!command.startsWith('admin')) return false;
 
-    // 2. AUTHENTICATION: Check if this phone number belongs to an Org Admin
+    const parts = msg.split(' ');
+    const action = parts[1] ? parts[1].toLowerCase() : 'menu';
     const localPhone = '0' + cleanPhone.substring(2);
+
+    // ==========================================
+    // 1. AUTHENTICATION & MULTI-TENANT PICKER
+    // ==========================================
     
-    const org = await prisma.church.findFirst({
+    // Find ALL organizations where this person is an admin
+    const authorizedOrgs = await prisma.church.findMany({
         where: {
             OR: [
                 { adminPhone: cleanPhone },
@@ -22,21 +27,57 @@ module.exports.process = async (incomingMsg, cleanPhone, member, sendWhatsApp) =
         }
     });
 
-    // If they aren't in the database as an admin, lock them out immediately
-    if (!org) {
-        await sendWhatsApp(cleanPhone, "⛔ *Security Alert: Access Denied*\nThis phone number is not registered as an administrator for any workspace.");
-        return true; 
+    if (authorizedOrgs.length === 0) {
+        await sendWhatsApp(cleanPhone, "⛔ *Security Alert: Access Denied*\nThis number is not registered as an administrator.");
+        return true;
     }
 
-    // 3. PARSE THE ACTION
-    const parts = msg.split(' ');
-    const action = parts[1] ? parts[1].toLowerCase() : 'menu';
+    // Determine which Org we are currently managing
+    // Priority: 1. Explicitly switched session code, 2. The first authorized org
+    let org = authorizedOrgs[0];
+    if (session?.adminOrgCode) {
+        const switchedOrg = authorizedOrgs.find(o => o.code === session.adminOrgCode);
+        if (switchedOrg) org = switchedOrg;
+    }
 
     // ==========================================
-    // 📱 ADMIN MENU
+    // 2. NEW: SWITCH & LIST COMMANDS
     // ==========================================
+
+    // COMMAND: Admin List
+    if (action === 'list' || action === 'orgs') {
+        let listMsg = `📂 *Your Authorized Workspaces:*\n\n`;
+        authorizedOrgs.forEach((o, i) => {
+            const active = o.code === org.code ? '✅ *ACTIVE*' : '🔹';
+            listMsg += `${active} ${o.name} (${o.code})\n`;
+        });
+        listMsg += `\n_To switch, type:_\n*Admin Switch [Code]*`;
+        await sendWhatsApp(cleanPhone, listMsg);
+        return true;
+    }
+
+    // COMMAND: Admin Switch [CODE]
+    if (action === 'switch') {
+        const targetCode = parts[2]?.toUpperCase();
+        const targetOrg = authorizedOrgs.find(o => o.code === targetCode);
+
+        if (!targetOrg) {
+            await sendWhatsApp(cleanPhone, `❌ *Switch Failed*\nYou are not authorized for code: ${targetCode || 'EMPTY'}.\nType *Admin List* to see your options.`);
+            return true;
+        }
+
+        // Update the session to persist the switch
+        session.adminOrgCode = targetOrg.code;
+        await sendWhatsApp(cleanPhone, `🔄 *Switched to ${targetOrg.name}*\nYour admin commands will now apply to this workspace.`);
+        return true;
+    }
+
+    // ==========================================
+    // 3. REST OF COMMANDS (Menu, Stats, Schedule, Bill, Blast)
+    // ==========================================
+    
     if (action === 'menu') {
-        await sendWhatsApp(cleanPhone, `💼 *${org.name} Admin Portal*\nWelcome back! Here are your quick commands:\n\n📊 *Admin Stats* - View pending payouts & member count\n📅 *Admin Schedule* - View today's appointments\n📢 *Admin Blast [Message]* - Send a broadcast to all clients\n\n_Example: Admin Blast We are closed tomorrow due to the holiday._`);
+        await sendWhatsApp(cleanPhone, `💼 *${org.name} Admin Portal*\nActive Workspace: *${org.code}*\n\n📊 *Admin Stats*\n📅 *Admin Schedule*\n📂 *Admin List* - Switch organizations\n📢 *Admin Blast [Message]*\n\n_Type Admin Switch [Code] to change businesses._`);
         return true;
     }
 

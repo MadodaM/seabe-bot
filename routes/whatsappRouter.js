@@ -121,7 +121,7 @@ router.post('/', (req, res) => {
             // If the message starts with "admin", hand it to the Admin Bot
             if (incomingMsg.startsWith('admin')) {
                 // Pass the sendWhatsApp function so the admin bot can reply in the background
-                const handledByAdmin = await adminBot.process(incomingMsg, cleanPhone, member, sendWhatsApp);
+                const handledByAdmin = await adminBot.process(incomingMsg, cleanPhone, member, sendWhatsApp, session);
                 if (handledByAdmin) {
                     return; // Stop processing and exit the background task
                 }
