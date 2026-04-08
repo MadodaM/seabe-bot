@@ -29,8 +29,8 @@ model Member {
   proofOfAddressUrl String? // Stores encrypted Cloudinary URL
   isIdVerified      Boolean   @default(false)
   mandateStatus     String?
-  lastInteractionAt DateTime @default(now())
-  engagementScore   Int      @default(100) // 100 = Perfect, drops over time
+  lastInteractionAt DateTime  @default(now())
+  engagementScore   Int       @default(100) // 100 = Perfect, drops over time
 
   // 🛡️ KYC Pipeline Tracker
   kycStatus           String    @default("UNVERIFIED") // UNVERIFIED, PENDING, APPROVED, REJECTED
@@ -66,6 +66,7 @@ model Member {
   enrollments    Enrollment[]
   appointments   Appointment[]
   paymentMethods PaymentMethod[]
+  bookings       Booking[]
 }
 
 model Dependent {
@@ -90,18 +91,18 @@ model Church {
   password   String?
   mfaSecret  String?
   setupToken String?
-  
+
   // Account Status
-  accountStatus     String   @default("TRIAL") // TRIAL, ACTIVE, SUSPENDED
-  
+  accountStatus String @default("TRIAL") // TRIAL, ACTIVE, SUSPENDED
+
   // Business KYC Status
-  kycStatus         String   @default("TIER_0") // TIER_0 (Unverified), TIER_1 (Docs Submitted), TIER_2 (Netcash Approved)
-  
+  kycStatus String @default("TIER_0") // TIER_0 (Unverified), TIER_1 (Docs Submitted), TIER_2 (Netcash Approved)
+
   // Feature Flags (The Magic)
-  canUseLMS         Boolean  @default(true)  // Instant access
-  canSendNews       Boolean  @default(true)  // Instant access
-  canCollectMoney   Boolean  @default(false) // Locked behind TIER_2 KYC
-  canProcessClaims  Boolean  @default(false) // Locked behind TIER_2 KYC
+  canUseLMS        Boolean @default(true) // Instant access
+  canSendNews      Boolean @default(true) // Instant access
+  canCollectMoney  Boolean @default(false) // Locked behind TIER_2 KYC
+  canProcessClaims Boolean @default(false) // Locked behind TIER_2 KYC
 
   // FICA Level 1 (Initial FICA)
   pastorIdUrl    String? // Cloudinary Vault Link
@@ -143,6 +144,8 @@ model Church {
   bankDetail   BankDetail?
   products     Product[]
   appointments Appointment[]
+  facilities   Facility[]
+  bookings     Booking[]
 
   // Member Relations
   churchMembers  Member[] @relation("ChurchMembers")
@@ -475,12 +478,12 @@ model Enrollment {
   status   String @default("ACTIVE") // ACTIVE, COMPLETED, PAUSED
 
   // 🚀 STATE MACHINE (New)
-  quizState String @default("IDLE") // IDLE, AWAITING_ANSWER
+  quizState       String @default("IDLE") // IDLE, AWAITING_ANSWER
   currentModuleId Int?
-  
+
   // Nudge Tracking fields
-  reminderCount   Int      @default(0)
-  lastActivityAt  DateTime @default(now())
+  reminderCount  Int      @default(0)
+  lastActivityAt DateTime @default(now())
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -640,22 +643,26 @@ model BankDetail {
 // ✂️ PERSONAL CARE & APPOINTMENT MODULE
 // ==========================================
 
-// 1. Manage Products/Services (e.g., "Fade", "Braids", "Manicure")
 model Product {
-  id       Int    @id @default(autoincrement())
-  churchId Int // Links to the Organization (Salon)
-  church   Church @relation(fields: [churchId], references: [id])
+  id           Int           @id @default(autoincrement())
+  churchId     Int 
+  church       Church        @relation(fields: [churchId], references: [id])
 
   name         String
   description  String?
   price        Float
-  durationMins Int? // Estimated time (e.g., 45 mins)
-  isActive     Boolean @default(true)
+  durationMins Int?          
+  isActive     Boolean       @default(true)
+
+  // 📦 Ensure these three lines are here and saved!
+  type         String        @default("SERVICE") 
+  barcode      String?       
+  stockLevel   Int           @default(0)
 
   appointments Appointment[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 }
 
 // 2. Manage Bookings
@@ -704,4 +711,32 @@ model PaymentMethod {
   expYear   String?
   isDefault Boolean  @default(true)
   createdAt DateTime @default(now())
+}
+
+// ==========================================
+// 🏢 FACILITIES & VENUE BOOKINGS
+// ==========================================
+
+model Facility {
+  id          Int       @id @default(autoincrement())
+  churchId    Int
+  church      Church    @relation(fields: [churchId], references: [id])
+  name        String // e.g., "Main Chapel", "Community Hall", "100-Seater Tent"
+  pricePerDay Float     @default(0)
+  bookings    Booking[]
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+}
+
+model Booking {
+  id          Int      @id @default(autoincrement())
+  facilityId  Int
+  facility    Facility @relation(fields: [facilityId], references: [id])
+  memberId    Int
+  member      Member   @relation(fields: [memberId], references: [id])
+  churchId    Int
+  church      Church   @relation(fields: [churchId], references: [id])
+  bookingDate DateTime @db.Date // Strictly stores the YYYY-MM-DD
+  status      String   @default("PENDING") // PENDING, CONFIRMED, CANCELLED
+  createdAt   DateTime @default(now())
 }
