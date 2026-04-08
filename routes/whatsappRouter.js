@@ -16,6 +16,7 @@ const { handleStokvelMessage } = require('../bots/stokvelBot');
 const { processGroomingMessage } = require('../bots/groomingBot');
 const { processLmsMessage } = require('../bots/LMSlogicBot'); 
 const adminBot = require('../bots/adminBot');
+const vendorBot = require('../bots/vendorBot');
 const { handleServiceProviderMessage, processProviderTrigger } = require('../bots/serviceProviderBot');
 const { handleSupportOrTypo } = require('../services/supportEngine');
 const { processTwilioClaim } = require('../services/aiClaimWorker');
@@ -118,14 +119,14 @@ router.post('/', (req, res) => {
             }
 			
 			// --- 1. ADMIN OVERRIDE CHECK ---
-            // If the message starts with "admin", hand it to the Admin Bot
-            if (incomingMsg.startsWith('admin')) {
-                // Pass the sendWhatsApp function so the admin bot can reply in the background
-                const handledByAdmin = await adminBot.process(incomingMsg, cleanPhone, member, sendWhatsApp, session);
-                if (handledByAdmin) {
-                    return; // Stop processing and exit the background task
-                }
-            }
+			if (incomingMsg.startsWith('admin')) {
+				const handledByAdmin = await adminBot.process(incomingMsg, cleanPhone, member, sendWhatsApp, session);
+				if (handledByAdmin) return; // FIX: Just return to exit the function
+			}
+
+			// 2. Check if it's a Vendor Submitting a Quote
+			const handledByVendor = await vendorBot.process(incomingMsg, cleanPhone, sendWhatsApp);
+			if (handledByVendor) return; // FIX: Just return to exit the function
 
             // ================================================
             // 🚦 GLOBAL RESET & COURSE SNOOZE
