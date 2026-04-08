@@ -229,6 +229,7 @@ module.exports = (app, { prisma }) => {
             if (type === 'CALL_ME_BACK') {
                 const adminPhone = org.adminPhone;
                 
+                // 1. Alert the Admin via WhatsApp
                 if (adminPhone) {
                     const cleanAdmin = adminPhone.startsWith('0') ? '27' + adminPhone.substring(1) : adminPhone.replace('+', '');
                     const alertMsg = `📢 *New Lead Alert: ${org.name}*\n\n*Name:* ${name}\n*Phone:* ${cleanPhone}\n\nThey requested a call back to join via your Seabe Pay link.`;
@@ -240,7 +241,37 @@ module.exports = (app, { prisma }) => {
                     }
                 }
 
-                // Render a success screen instead of forwarding to Netcash
+                // 2. 💾 SAVE LEAD TO DATABASE (The missing piece!)
+                try {
+                    let existingLead = await prisma.member.findFirst({
+                        where: { phone: cleanPhone, churchCode: org.code }
+                    });
+
+                    const fName = name.split(' ')[0] || 'Prospective';
+                    const lName = name.split(' ').slice(1).join(' ') || 'Member';
+
+                    if (!existingLead) {
+                        await prisma.member.create({
+                            data: {
+                                phone: cleanPhone,
+                                firstName: fName,
+                                lastName: lName,
+                                status: 'LEAD', // Flags them in the system for the engagement chaser later
+                                church: { connect: { code: org.code } }
+                            }
+                        });
+                    } else if (existingLead.status !== 'ACTIVE') {
+                        // If they are in the DB but dropped off during KYC, update them back to a Lead
+                        await prisma.member.update({
+                            where: { id: existingLead.id },
+                            data: { status: 'LEAD' }
+                        });
+                    }
+                } catch (dbErr) {
+                    console.error("Failed to save lead to database:", dbErr);
+                }
+
+                // 3. Render a success screen instead of forwarding to Netcash
                 return res.send(`
                     <!DOCTYPE html>
                     <html lang="en">
