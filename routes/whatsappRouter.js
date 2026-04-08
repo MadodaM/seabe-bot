@@ -18,6 +18,7 @@ const { processLmsMessage } = require('../bots/LMSlogicBot');
 const adminBot = require('../bots/adminBot');
 const vendorBot = require('../bots/vendorBot');
 const { processBookingMessage } = require('../bots/bookingBot');
+const { processBarcodeScan } = require('../bots/scannerBot');
 const { generateStatement } = require('../services/pdfGenerator');
 const { handleServiceProviderMessage, processProviderTrigger } = require('../bots/serviceProviderBot');
 const { handleSupportOrTypo } = require('../services/supportEngine');
@@ -679,6 +680,15 @@ router.post('/', (req, res) => {
                 } catch (error) {
                     await sendWhatsApp(cleanPhone, "⚠️ There was an issue saving your document. Please try sending the photo again.");
                 }
+                return;
+            }
+			
+			// ================================================
+            // 📸 AI INVENTORY: BARCODE SCANNER INTERCEPTOR
+            // ================================================
+            const scanResult = await processBarcodeScan(req.body, cleanPhone, session, member, sendWhatsApp);
+            if (scanResult.handled) {
+                if (scanResult.clearSessionFlag) clearSessionFlag = true;
                 return;
             }
 

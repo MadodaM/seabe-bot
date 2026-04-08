@@ -192,7 +192,7 @@ module.exports.process = async (incomingMsg, cleanPhone, member, sendWhatsApp, s
             return true;
         }
     }
-	
+		
 	// ==========================================
     // 📢 PROCUREMENT: REQUEST FOR QUOTE (RFQ) ENGINE
     // ==========================================
@@ -366,6 +366,117 @@ module.exports.process = async (incomingMsg, cleanPhone, member, sendWhatsApp, s
                 }
             }
 
+            return true;
+        }
+    }
+	
+	// ==========================================
+    // 🏢 FACILITIES & VENUES MANAGEMENT
+    // ==========================================
+    if (action === 'facility') {
+        const subAction = parts[2] ? parts[2].toLowerCase() : 'list';
+
+        // 🟢 COMMAND: Admin Facility Add [Name] [PricePerDay]
+        if (subAction === 'add') {
+            const priceStr = parts[parts.length - 1];
+            const price = parseFloat(priceStr);
+            const facilityName = parts.slice(3, isNaN(price) ? parts.length : parts.length - 1).join(' ');
+
+            if (!facilityName || isNaN(price)) {
+                await sendWhatsApp(cleanPhone, "⚠️ *Format Error*\nPlease use: *Admin Facility Add [Name] [Price]*\n_Example: Admin Facility Add Main Chapel 1500_");
+                return true;
+            }
+
+            await prisma.facility.create({
+                data: { name: facilityName, pricePerDay: price, churchId: org.id }
+            });
+
+            await sendWhatsApp(cleanPhone, `✅ *Venue Added!*\n\n*Facility:* ${facilityName}\n*Rate:* R${price.toFixed(2)} / day\n\nYour members can now check availability and book this venue.`);
+            return true;
+        }
+
+        // 🔵 COMMAND: Admin Facility List
+        if (subAction === 'list') {
+            const facilities = await prisma.facility.findMany({ where: { churchId: org.id, isActive: true } });
+            
+            if (facilities.length === 0) {
+                await sendWhatsApp(cleanPhone, "📂 You have no active facilities. Type *Admin Facility Add [Name] [Price]* to create one.");
+                return true;
+            }
+
+            let msg = `🏢 *${org.name} Venues:*\n\n`;
+            facilities.forEach(f => {
+                msg += `🔹 *${f.name}* - R${f.pricePerDay.toFixed(2)}/day (ID: ${f.id})\n`;
+            });
+            await sendWhatsApp(cleanPhone, msg);
+            return true;
+        }
+    }
+	
+	// ==========================================
+    // 📸 INVENTORY: AI BARCODE SCANNER
+    // ==========================================
+    if (action === 'scan') {
+        session.step = 'ADMIN_AWAITING_BARCODE';
+        await sendWhatsApp(cleanPhone, "📷 *Barcode Scanner Ready*\n\nPlease snap a clear photo of the product's barcode and send it to me.");
+        return true;
+    }
+
+    // ==========================================
+    // 📦 INVENTORY: MANUAL MANAGEMENT
+    // ==========================================
+    if (action === 'product') {
+        const subAction = parts[2] ? parts[2].toLowerCase() : 'list';
+
+        // COMMAND: Admin Product Add [Name] | [Price] | [Barcode]
+        if (subAction === 'add') {
+            const fullStr = parts.slice(3).join(' ');
+            const [name, priceStr, barcode] = fullStr.split('|').map(s => s?.trim());
+            
+            if (!name || !priceStr) {
+                await sendWhatsApp(cleanPhone, "⚠️ *Format Error*\nPlease use: *Admin Product Add [Name] | [Price] | [Optional Barcode]*\n_Example: Admin Product Add Shampoo | 150 | 600123456789_");
+                return true;
+            }
+
+            const isRetail = barcode ? true : false;
+
+            const newProduct = await prisma.product.create({
+                data: {
+                    churchId: org.id,
+                    name: name,
+                    price: parseFloat(priceStr),
+                    type: isRetail ? 'RETAIL' : 'SERVICE', // 💡 Automatically flags it!
+                    barcode: barcode || null,
+                    stockLevel: 0
+                }
+            });
+
+            await sendWhatsApp(cleanPhone, `✅ *Product Added!*\n\n📦 ${newProduct.name}\n💰 R${newProduct.price.toFixed(2)}\n🏷️ Type: ${newProduct.type}\n📶 Barcode: ${newProduct.barcode || 'None'}`);
+            return true;
+        }
+
+        // COMMAND: Admin Product Stock [Barcode] [Qty to Add]
+        if (subAction === 'stock') {
+            const barcode = parts[3];
+            const qty = parseInt(parts[4]);
+
+            if (!barcode || isNaN(qty)) {
+                await sendWhatsApp(cleanPhone, "⚠️ *Format Error*\nPlease use: *Admin Product Stock [Barcode] [Qty]*\n_Example: Admin Product Stock 6001234 10_");
+                return true;
+            }
+
+            const product = await prisma.product.findFirst({ where: { barcode: barcode, churchId: org.id } });
+            if (!product) {
+                await sendWhatsApp(cleanPhone, "❌ Product not found with that barcode.");
+                return true;
+            }
+
+            const updated = await prisma.product.update({
+                where: { id: product.id },
+                data: { stockLevel: { increment: qty } }
+            });
+
+            await sendWhatsApp(cleanPhone, `✅ *Stock Updated!*\n\n📦 ${updated.name}\n📈 New Stock Level: ${updated.stockLevel}`);
             return true;
         }
     }
