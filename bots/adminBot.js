@@ -267,6 +267,108 @@ module.exports.process = async (incomingMsg, cleanPhone, member, sendWhatsApp, s
         await sendWhatsApp(cleanPhone, `✅ *RFQ Broadcast Sent!*\n\n*RFQ ID:* ${rfq.id}\n*Category:* ${category}\n*Sent to:* ${successfulSends} vendor(s)\n\nWe will notify you here when the quotes start coming in.`);
         return true;
     }
+	
+	// ==========================================
+    // 💼 PROCUREMENT: QUOTE REVIEW & PURCHASE ORDERS
+    // ==========================================
+    if (action === 'quote') {
+        const subAction = parts[2] ? parts[2].toLowerCase() : 'list';
+
+        // 🟡 COMMAND: Admin Quote List [RFQ_ID]
+        if (subAction === 'list') {
+            const rfqId = parseInt(parts[3], 10);
+            if (isNaN(rfqId)) {
+                await sendWhatsApp(cleanPhone, "⚠️ *Format Error*\nPlease use: *Admin Quote List [RFQ_ID]*\n_Example: Admin Quote List 42_");
+                return true;
+            }
+
+            const quotes = await prisma.quote.findMany({
+                where: { rfqId: rfqId, rfq: { churchId: org.id } },
+                include: { vendor: true, rfq: true },
+                orderBy: { amount: 'asc' } // Show cheapest first!
+            });
+
+            if (quotes.length === 0) {
+                await sendWhatsApp(cleanPhone, `📉 *No Quotes Yet*\nRFQ #${rfqId} has not received any bids from vendors yet.`);
+                return true;
+            }
+
+            let msg = `📊 *Quotes for RFQ #${rfqId}*\n*Job:* ${quotes[0].rfq.title}\n\n`;
+            quotes.forEach((q, index) => {
+                const medal = index === 0 ? '🥇 (Cheapest)' : '🔹';
+                msg += `${medal}\n*Vendor:* ${q.vendor.name}\n*Amount:* R${q.amount.toFixed(2)}\n*Quote ID:* ${q.id}\n_Notes: ${q.notes || 'None'}_\n\n`;
+            });
+
+            msg += `_To accept a quote and generate a PO, type:_\n*Admin Quote Accept [Quote_ID]*`;
+            await sendWhatsApp(cleanPhone, msg);
+            return true;
+        }
+
+        // 🟢 COMMAND: Admin Quote Accept [Quote_ID]
+        if (subAction === 'accept') {
+            const quoteId = parseInt(parts[3], 10);
+            if (isNaN(quoteId)) {
+                await sendWhatsApp(cleanPhone, "⚠️ *Format Error*\nPlease use: *Admin Quote Accept [Quote_ID]*\n_Example: Admin Quote Accept 7_");
+                return true;
+            }
+
+            // 1. Fetch the quote and verify ownership
+            const winningQuote = await prisma.quote.findUnique({
+                where: { id: quoteId },
+                include: { vendor: true, rfq: true }
+            });
+
+            if (!winningQuote || winningQuote.rfq.churchId !== org.id) {
+                await sendWhatsApp(cleanPhone, "❌ *Error:* Quote not found or doesn't belong to your organization.");
+                return true;
+            }
+
+            if (winningQuote.rfq.status !== 'OPEN') {
+                await sendWhatsApp(cleanPhone, `⚠️ *Notice:* RFQ #${winningQuote.rfqId} is already closed or fulfilled.`);
+                return true;
+            }
+
+            // 2. Transaction: Update Quote, Update RFQ, and Create PO
+            const poNumber = `PO-${org.code}-${Date.now().toString().slice(-6)}`;
+            
+            await prisma.$transaction([
+                // Mark winning quote
+                prisma.quote.update({ where: { id: quoteId }, data: { status: 'ACCEPTED' } }),
+                // Mark losing quotes
+                prisma.quote.updateMany({ where: { rfqId: winningQuote.rfqId, id: { not: quoteId } }, data: { status: 'REJECTED' } }),
+                // Close the RFQ
+                prisma.requestForQuote.update({ where: { id: winningQuote.rfqId }, data: { status: 'FULFILLED' } }),
+                // Generate the Purchase Order
+                prisma.purchaseOrder.create({
+                    data: {
+                        poNumber: poNumber,
+                        churchId: org.id,
+                        vendorId: winningQuote.vendorId,
+                        amount: winningQuote.amount,
+                        lineItems: JSON.stringify([{ description: winningQuote.rfq.description, amount: winningQuote.amount, quoteId: quoteId }]),
+                        status: 'ISSUED'
+                    }
+                })
+            ]);
+
+            // 3. Notify the Admin
+            await sendWhatsApp(cleanPhone, `✅ *Purchase Order Generated!*\n\n*PO Number:* ${poNumber}\n*Vendor:* ${winningQuote.vendor.name}\n*Amount:* R${winningQuote.amount.toFixed(2)}\n\n_The vendor has been notified to proceed with the job. You can later mark this as paid by attaching a Proof of Payment._`);
+
+            // 4. Notify the Vendor!
+            if (winningQuote.vendor.phone) {
+                const vendorPhone = winningQuote.vendor.phone.startsWith('0') ? '27' + winningQuote.vendor.phone.substring(1) : winningQuote.vendor.phone.replace('+', '');
+                const vendorMsg = `🎉 *Quote Accepted!*\n\nCongratulations ${winningQuote.vendor.name}, your quote for *R${winningQuote.amount.toFixed(2)}* has been approved by ${org.name}.\n\n*Official PO Number:* ${poNumber}\n\nPlease reference this PO Number on your final invoice. You may proceed with the work!`;
+                
+                try {
+                    await sendWhatsApp(vendorPhone, vendorMsg);
+                } catch (err) {
+                    console.error("Failed to notify vendor of winning bid:", err);
+                }
+            }
+
+            return true;
+        }
+    }
 
     // ==========================================
     // 💳 SEND BILL + CONSUMABLES
