@@ -135,6 +135,138 @@ module.exports.process = async (incomingMsg, cleanPhone, member, sendWhatsApp, s
         await sendWhatsApp(cleanPhone, scheduleMsg);
         return true;
     }
+	
+	// ==========================================
+    // 🛒 VENDOR MANAGEMENT DIRECTORY
+    // ==========================================
+    if (action === 'vendor') {
+        const subAction = parts[2] ? parts[2].toLowerCase() : 'list';
+
+        // 🟢 COMMAND: Admin Vendor Add [Name] [Phone] [Category]
+        if (subAction === 'add') {
+            const vendorName = parts[3];
+            const vendorPhone = parts[4] || '';
+            const vendorCategory = parts.slice(5).join(' ') || 'General';
+
+            if (!vendorName) {
+                await sendWhatsApp(cleanPhone, "⚠️ *Invalid Format*\nPlease use: *Admin Vendor Add [Name] [Phone] [Category]*\n\n_Example: Admin Vendor Add Makro 0800123456 Wholesale_");
+                return true;
+            }
+
+            // Save to Database
+            const newVendor = await prisma.vendor.create({
+                data: {
+                    name: vendorName,
+                    phone: vendorPhone,
+                    category: vendorCategory,
+                    churchId: org.id
+                }
+            });
+
+            await sendWhatsApp(cleanPhone, `✅ *Vendor Added Successfully!*\n\n*Name:* ${newVendor.name}\n*Category:* ${newVendor.category}\n*Phone:* ${newVendor.phone}\n\nType *Admin Vendor List* to view your directory.`);
+            return true;
+        }
+
+        // 🔵 COMMAND: Admin Vendor List
+        if (subAction === 'list') {
+            const vendors = await prisma.vendor.findMany({
+                where: { churchId: org.id },
+                take: 15,
+                orderBy: { name: 'asc' }
+            });
+
+            if (vendors.length === 0) {
+                await sendWhatsApp(cleanPhone, `📂 *Vendor Directory*\n\nYou currently have no vendors saved. Add one by typing:\n*Admin Vendor Add [Name] [Phone]*`);
+                return true;
+            }
+
+            let msg = `📂 *${org.name} Vendor Directory*\n\n`;
+            vendors.forEach(v => {
+                msg += `🏢 *${v.name}* (${v.category})\n📞 ${v.phone || 'N/A'}\n_ID: ${v.id}_\n\n`;
+            });
+            
+            // Teaser for the next feature we will build
+            msg += `_To pay a vendor, type:_\n*Admin PO Create [VendorID] [Amount] [Details]*`;
+
+            await sendWhatsApp(cleanPhone, msg);
+            return true;
+        }
+    }
+	
+	// ==========================================
+    // 📢 PROCUREMENT: REQUEST FOR QUOTE (RFQ) ENGINE
+    // ==========================================
+    if (action === 'rfq') {
+        // Expected format: Admin RFQ Category | Description
+        // e.g., Admin RFQ Tent Hire | Need a 100-seater marquee for Saturday
+        const fullMessage = msg.substring(10).trim(); // Removes "admin rfq "
+        const splitIndex = fullMessage.indexOf('|');
+
+        if (splitIndex === -1) {
+            await sendWhatsApp(cleanPhone, "⚠️ *Invalid Format*\nPlease use: *Admin RFQ [Category] | [Description]*\n\n_Example: Admin RFQ Tent Hire | Need a 100-seater marquee for Saturday_");
+            return true;
+        }
+
+        const category = fullMessage.substring(0, splitIndex).trim();
+        const description = fullMessage.substring(splitIndex + 1).trim();
+
+        if (!category || !description) {
+            await sendWhatsApp(cleanPhone, "⚠️ *Error:* Category and description cannot be empty.");
+            return true;
+        }
+
+        // 1. Find Matching Vendors for this Business/Church
+        const vendors = await prisma.vendor.findMany({
+            where: {
+                churchId: org.id,
+                category: {
+                    equals: category,
+                    mode: 'insensitive' // Ensures "tent hire" matches "Tent Hire"
+                },
+                status: 'ACTIVE'
+            }
+        });
+
+        if (vendors.length === 0) {
+            await sendWhatsApp(cleanPhone, `❌ *No Vendors Found*\nYou don't have any ACTIVE vendors listed under the category: *${category}*.\n\nType *Admin Vendor List* to check your categories.`);
+            return true;
+        }
+
+        // 2. Create the RFQ in the database
+        const requiredDate = new Date();
+        requiredDate.setDate(requiredDate.getDate() + 3); // Default: Quotes required in 3 days
+
+        const rfq = await prisma.requestForQuote.create({
+            data: {
+                churchId: org.id,
+                title: `${category} Request`,
+                description: description,
+                requiredBy: requiredDate,
+                status: 'OPEN'
+            }
+        });
+
+        // 3. Broadcast to Vendors via WhatsApp
+        let successfulSends = 0;
+        for (const vendor of vendors) {
+            if (!vendor.phone) continue;
+
+            const vendorPhone = vendor.phone.startsWith('0') ? '27' + vendor.phone.substring(1) : vendor.phone.replace('+', '');
+            
+            const rfqMessage = `📢 *New Request for Quote*\n*From:* ${org.name}\n\n*Job Description:*\n${description}\n\nTo submit your quote, reply directly to this message exactly like this:\n*Quote ${rfq.id} [Your Amount]*\n\n_Example: Quote ${rfq.id} 1500_`;
+
+            try {
+                await sendWhatsApp(vendorPhone, rfqMessage);
+                successfulSends++;
+            } catch (err) {
+                console.error(`Failed to send RFQ to vendor ${vendor.name}:`, err);
+            }
+        }
+
+        // 4. Confirm with the Admin
+        await sendWhatsApp(cleanPhone, `✅ *RFQ Broadcast Sent!*\n\n*RFQ ID:* ${rfq.id}\n*Category:* ${category}\n*Sent to:* ${successfulSends} vendor(s)\n\nWe will notify you here when the quotes start coming in.`);
+        return true;
+    }
 
     // ==========================================
     // 💳 SEND BILL + CONSUMABLES
