@@ -29,6 +29,8 @@ model Member {
   proofOfAddressUrl String? // Stores encrypted Cloudinary URL
   isIdVerified      Boolean   @default(false)
   mandateStatus     String?
+  lastInteractionAt DateTime @default(now())
+  engagementScore   Int      @default(100) // 100 = Perfect, drops over time
 
   // 🛡️ KYC Pipeline Tracker
   kycStatus           String    @default("UNVERIFIED") // UNVERIFIED, PENDING, APPROVED, REJECTED
