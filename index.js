@@ -20,6 +20,9 @@ const { startDripCampaign } = require('./services/dripCampaign');
 const { startBillingEngine } = require('./services/billingCron');
 const { startBatchEngine } = require('./services/batchCron');  
 const { startWeeklyReportEngine } = require('./services/weeklyReportCron');
+const { runEngagementMonitor } = require('./jobs/engagementMonitor');
+const cron = require('node-cron');
+const { runArrearsChaser } = require('./jobs/arrearsChaser');
 
 // Route Imports
 const blastEngineRoute = require('./routes/blastEngine');
@@ -177,6 +180,11 @@ if (process.env.NODE_ENV !== 'test') {
         }
     });
 }
+
+// Run Arrears Chaser every morning at 09:00 AM
+cron.schedule('0 9 * * *', () => {
+    runArrearsChaser();
+});
 
 // Keep-Warm
 if (process.env.HOST_URL) {
