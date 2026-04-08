@@ -17,6 +17,7 @@ const { processGroomingMessage } = require('../bots/groomingBot');
 const { processLmsMessage } = require('../bots/LMSlogicBot'); 
 const adminBot = require('../bots/adminBot');
 const vendorBot = require('../bots/vendorBot');
+const { processBookingMessage } = require('../bots/bookingBot');
 const { generateStatement } = require('../services/pdfGenerator');
 const { handleServiceProviderMessage, processProviderTrigger } = require('../bots/serviceProviderBot');
 const { handleSupportOrTypo } = require('../services/supportEngine');
@@ -117,6 +118,15 @@ router.post('/', (req, res) => {
                         include: { church: true, society: true }
                     });
                 }
+            }
+			
+			// --- NEW: TOUCH LAST INTERACTION ---
+            if (member) {
+                // Background update so it doesn't slow down the bot response
+                prisma.member.update({
+                    where: { id: member.id },
+                    data: { lastInteractionAt: new Date(), engagementScore: 100 }
+                }).catch(err => console.error("Failed to touch interaction date:", err));
             }
 			
 			// --- 1. ADMIN OVERRIDE CHECK ---
@@ -287,6 +297,15 @@ router.post('/', (req, res) => {
                     }
                 }
                 return; 
+            }
+			
+			// ================================================
+            // 📅 FACILITIES & VENUE BOOKING INTERCEPTOR
+            // ================================================
+            const bookingResult = await processBookingMessage(incomingMsg, cleanPhone, session, member, sendWhatsApp);
+            if (bookingResult.handled) {
+                if (bookingResult.clearSessionFlag) clearSessionFlag = true;
+                return;
             }
 
             // ================================================
