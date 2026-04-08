@@ -1,12 +1,12 @@
 // bots/scannerBot.js
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { decodeBarcode } = require('../services/localScanner'); 
+const { GoogleGenerativeAI } = require('@google/generative-ai'); // 👈 Bring the AI back
 
 async function processBarcodeScan(reqBody, cleanPhone, session, member, sendWhatsApp) {
     const numMedia = parseInt(reqBody.NumMedia || '0');
 
-    // 1. Ensure it's a media message AND the bot is waiting for a barcode
     if (numMedia > 0 && session.step === 'ADMIN_AWAITING_BARCODE') {
         if (!member || !member.churchId) {
             await sendWhatsApp(cleanPhone, "⚠️ Session expired or invalid organization.");
@@ -18,27 +18,40 @@ async function processBarcodeScan(reqBody, cleanPhone, session, member, sendWhat
         await sendWhatsApp(cleanPhone, "🔍 *Scanning barcode...*");
 
         try {
-            // 2. Fetch Image from Twilio
+            // 1. Fetch Image from Twilio into a Buffer
             const authHeader = 'Basic ' + Buffer.from(`${process.env.TWILIO_SID}:${process.env.TWILIO_AUTH}`).toString('base64');
             const imgResponse = await fetch(imgUrl, { headers: { 'Authorization': authHeader } });
             const arrayBuffer = await imgResponse.arrayBuffer();
-            const base64Image = Buffer.from(arrayBuffer).toString('base64');
+            const buffer = Buffer.from(arrayBuffer);
 
-            // 3. Send to Gemini Vision
-            const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-            const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); 
-            
-            const prompt = `You are a high-speed retail barcode scanner. Look at this image and extract the exact numerical sequence of the barcode. Return ONLY the numbers, with no spaces, no letters, and no markdown formatting. If you absolutely cannot see or read a barcode, return the exact word 'FAILED'.`;
-            
-            const result = await model.generateContent([ prompt, { inlineData: { data: base64Image, mimeType: mimeType } } ]);
-            const barcode = result.response.text().trim();
+            // 2. ⚡ ATTEMPT 1: FAST LOCAL SCAN (Free)
+            let barcode = await decodeBarcode(buffer);
 
-            if (barcode === 'FAILED' || !/^\d+$/.test(barcode)) {
-                await sendWhatsApp(cleanPhone, "⚠️ *Scan Failed*\nI couldn't read the barcode clearly. Please try sending a closer, clearer photo, or type *Exit*.");
+            // 3. 🧠 ATTEMPT 2: AI FALLBACK (If the local scanner couldn't read it)
+            if (!barcode) {
+                console.log("Local scan failed, handing over to Gemini AI...");
+                const base64Image = buffer.toString('base64');
+                const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+                const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); 
+                
+                const prompt = `You are a high-speed retail barcode scanner. Look at this image and extract the exact numerical sequence of the barcode. Return ONLY the numbers, with no spaces, no letters, and no markdown formatting. If you absolutely cannot see or read a barcode, return the exact word 'FAILED'.`;
+                
+                const result = await model.generateContent([ prompt, { inlineData: { data: base64Image, mimeType: mimeType } } ]);
+                const aiResult = result.response.text().trim();
+
+                if (aiResult !== 'FAILED' && /^\d+$/.test(aiResult)) {
+                    barcode = aiResult;
+                    console.log("Gemini successfully rescued the scan!");
+                }
+            }
+
+            // 4. FINAL CHECK: Did both systems fail?
+            if (!barcode) {
+                await sendWhatsApp(cleanPhone, "⚠️ *Scan Failed*\nBoth our fast-scanner and AI couldn't read the barcode. Please ensure the photo is clear, well-lit, and flat. Try again, or type *Exit*.");
                 return { handled: true, clearSessionFlag: false };
             }
 
-            // 4. Lookup the Product in the DB
+            // 5. Lookup the Product in the DB
             const product = await prisma.product.findFirst({ 
                 where: { barcode: barcode, churchId: member.churchId } 
             });
@@ -49,7 +62,6 @@ async function processBarcodeScan(reqBody, cleanPhone, session, member, sendWhat
                 await sendWhatsApp(cleanPhone, `⚠️ *Unrecognized Barcode*\n\nScanned Code: *${barcode}*\n\nThis product is not in your inventory. Would you like to add it?\n\n_Copy and paste this to add it:_\n*Admin Product Add [Name] | [Price] | ${barcode}*`);
             }
 
-            // Return true to tell the router to stop processing, and clear the scan step
             return { handled: true, clearSessionFlag: true };
 
         } catch (error) {
@@ -59,7 +71,6 @@ async function processBarcodeScan(reqBody, cleanPhone, session, member, sendWhat
         }
     }
 
-    // Not a barcode scan, let the router continue
     return { handled: false };
 }
 
