@@ -17,6 +17,7 @@ const { processGroomingMessage } = require('../bots/groomingBot');
 const { processLmsMessage } = require('../bots/LMSlogicBot'); 
 const adminBot = require('../bots/adminBot');
 const vendorBot = require('../bots/vendorBot');
+const { generateStatement } = require('../services/pdfGenerator');
 const { handleServiceProviderMessage, processProviderTrigger } = require('../bots/serviceProviderBot');
 const { handleSupportOrTypo } = require('../services/supportEngine');
 const { processTwilioClaim } = require('../services/aiClaimWorker');
@@ -127,6 +128,43 @@ router.post('/', (req, res) => {
 			// 2. Check if it's a Vendor Submitting a Quote
 			const handledByVendor = await vendorBot.process(incomingMsg, cleanPhone, sendWhatsApp);
 			if (handledByVendor) return; // FIX: Just return to exit the function
+
+			// ================================================
+            // 📄 UNIVERSAL MEMBER STATEMENT GENERATOR
+            // ================================================
+            if (incomingMsg === 'statement') {
+                if (!member || !member.churchId) {
+                    await sendWhatsApp(cleanPhone, "⚠️ We couldn't find an active profile for you. Reply *Join* to get started.");
+                    return;
+                }
+
+                await sendWhatsApp(cleanPhone, "⏳ *Generating Statement...*\nGathering your payment history. This will take a few seconds.");
+
+                try {
+                    // Fetch last 12 months of successful transactions
+                    const transactions = await prisma.transaction.findMany({
+                        where: { 
+                            phone: cleanPhone, 
+                            churchId: member.churchId,
+                            status: 'SUCCESS'
+                        },
+                        orderBy: { date: 'desc' },
+                        take: 50 // Limit to last 50 to keep the PDF clean
+                    });
+
+                    // Generate the PDF
+                    const pdfUrl = await generateStatement(member, transactions, member.church);
+
+                    // Send the PDF via Twilio
+                    // Note: Ensure your sendWhatsApp function accepts a mediaUrl as the third parameter!
+                    await sendWhatsApp(cleanPhone, `✅ *Statement Ready*\n\nHere is your official payment history for *${member.church.name}*.`, pdfUrl);
+
+                } catch (err) {
+                    console.error("Statement Generation Error:", err);
+                    await sendWhatsApp(cleanPhone, "❌ Sorry, we encountered an error while generating your statement. Please try again later.");
+                }
+                return;
+            }
 
             // ================================================
             // 🚦 GLOBAL RESET & COURSE SNOOZE
