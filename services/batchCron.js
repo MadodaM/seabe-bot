@@ -8,7 +8,7 @@ const { calculateTransaction } = require('./pricingEngine');
 const { validateBatchRecord } = require('./netcashValidator'); // 🚀 NEW: Import Validator
 
 // Ensure SendGrid is configured for Admin Alerts
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = new Resend(process.env.RESEND_API_KEY || 're_test_fallback_123456789');
 
 // Netcash File Upload Endpoint (Requires Base64 encoded file inside XML)
 const NETCASH_BATCH_URL = 'https://ws.netcash.co.za/NIWS/NIWS_NIF.svc';

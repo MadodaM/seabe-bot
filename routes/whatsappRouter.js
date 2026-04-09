@@ -25,7 +25,7 @@ const { handleServiceProviderMessage, processProviderTrigger } = require('../bot
 const { handleSupportOrTypo } = require('../services/supportEngine');
 const { processTwilioClaim } = require('../services/aiClaimWorker');
 const { calculateTransaction } = require('../services/pricingEngine');
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = new Resend(process.env.RESEND_API_KEY || 're_test_fallback_123456789');
 
 router.post('/', (req, res) => {
     const rawMsg = req.body.Body || '';

@@ -39,7 +39,7 @@ app.set('trust proxy', 1);
 app.set('view engine', 'ejs'); 
 app.set('views', path.join(__dirname, 'views'));
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = new Resend(process.env.RESEND_API_KEY || 're_test_fallback_123456789');
 
 const upload = multer({ dest: 'uploads/' }); 
 
@@ -182,9 +182,11 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 // Run Arrears Chaser every morning at 09:00 AM
-cron.schedule('0 9 * * *', () => {
-    runArrearsChaser();
-});
+if (process.env.NODE_ENV !== 'test') {
+    cron.schedule('0 9 * * *', () => {
+        runArrearsChaser();
+    });
+}	
 
 // Keep-Warm
 if (process.env.HOST_URL) {

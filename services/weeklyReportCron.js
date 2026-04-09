@@ -4,7 +4,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = require('./prisma-client');
 const { Resend } = require('resend');
 const { calculateTransaction } = require('./pricingEngine');
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = new Resend(process.env.RESEND_API_KEY || 're_test_fallback_123456789');
 
 const startWeeklyReportEngine = () => {
     console.log("📊 Weekly Report Engine Initialized. Scheduled for Friday at 17:00 (SAST).");

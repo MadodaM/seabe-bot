@@ -6,7 +6,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = require('./prisma-client');
 const { sendWhatsApp } = require('./whatsapp'); // Adjust path if needed
 const { Resend } = require('resend');
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = new Resend(process.env.RESEND_API_KEY || 're_test_fallback_123456789');
 
 // ==========================================
 // 📧 EMAIL REPORT GENERATOR (For Mondays)
