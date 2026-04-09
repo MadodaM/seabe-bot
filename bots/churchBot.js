@@ -189,11 +189,13 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
             }
 			
             let amount = parseFloat(incomingMsg.replace(/\D/g,'')); 
-            if (isNaN(amount) || amount < 10) {
-                reply = "⚠️ Please enter a valid amount (e.g. 100).";
-                await sendWhatsApp(cleanPhone, reply);
-                return { handled: true };
-            }
+			const minGift = await getPrice('MIN_CHURCH_GIFT');
+			
+            if (isNaN(amount) || amount < minGift) {
+				reply = `⚠️ Please enter a valid amount (Minimum: R${minGift.toFixed(2)}).`;
+				await sendWhatsApp(cleanPhone, reply);
+				return { handled: true };
+			}
             
             let type = ''; 
             if (session.selectedEvent && session.selectedEvent.isDonation) type = `PROJECT-${session.selectedEvent.id}`;

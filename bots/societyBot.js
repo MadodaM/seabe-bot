@@ -8,6 +8,7 @@ const { generatePolicyCard } = require('../services/cardGenerator');
 const { generateKYCLink } = require('../routes/kyc');
 const { calculateTransaction } = require('../services/pricingEngine');
 const { getPrice } = require('../services/pricing');
+const { t } = require('../utils/i18n'); 
 
 let twilioClient;
 if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
@@ -70,6 +71,8 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
     const orgCode = session.orgCode || member?.churchCode || member?.societyCode;
     const societyId = member?.societyId || 1; 
     const churchId = member?.churchId || member?.society?.churchId || 1;
+	
+	const userLang = member?.language || 'en';
 
     try {
         // 1. MENU TRIGGER
@@ -77,16 +80,11 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
         
         if (societyTriggers.includes(incomingMsg.toLowerCase()) && !['ADD_DEP_NAME', 'ADD_DEP_RELATION', 'PROFILE_MENU', 'UPDATE_NAME', 'UPDATE_EMAIL', 'CONFIRM_UNLINK', 'PAYMENT_OPTIONS', 'KYC_INPUT', 'AWAITING_CLAIM_DOCUMENT'].includes(session.step)) {
             session.step = 'SOCIETY_MENU';
-            reply = `🛡️ *${orgName}*\n_Burial Society Portal_\n\n` +
-                    `1. My Policy 📜\n` +
-                    `2. My Dependents 👨‍👩‍👧‍👦\n` +
-                    `3. KYC Compliance 🏦\n` +
-                    `4. Digital Card 🪪\n` +
-                    `5. Pay Premium 💳\n` +
-                    `6. Log a Death Claim 📑\n` +
-                    `7. My Profile 👤\n` +
-                    `8. Exit to Lobby ⛪\n\n` +
-                    `Reply with a number:`;
+            
+            // 🌐 Use the translation dictionary!
+            reply = `🛡️ *${orgName}*\n_${t('society_welcome', userLang)}_\n\n` +
+                    `${t('society_menu', userLang)}\n\n` +
+                    `_Reply with a number / Phendula ngenombolo / Araba ka nomoro:_`;
         }
 
         // 2. MAIN MENU NAVIGATION
@@ -206,10 +204,12 @@ async function handleSocietyMessage(cleanPhone, incomingMsg, session, member) {
         // ==========================================
         else if (session.step === 'PAYMENT_AMOUNT_INPUT') {
             const inputAmount = parseFloat(incomingMsg.replace(/\D/g, ''));
-            if (isNaN(inputAmount) || inputAmount < 10) {
-                reply = "⚠️ Invalid amount. Please enter a value like '150'.";
-            } else {
-                session.tempPaymentAmount = inputAmount;
+			const minAmount = await getPrice('MIN_TRANSACTION');
+			
+            if (isNaN(inputAmount) || inputAmount < minAmount) {
+				reply = `⚠️ The minimum payment allowed is R${minAmount.toFixed(2)}. Please enter a valid amount:`;
+			} else {
+				session.tempPaymentAmount = inputAmount;
                 session.step = 'PAYMENT_OPTIONS';
                 reply = `💳 *Premium Payment*\nAmount: R${inputAmount.toFixed(2)}.\n\nHow would you like to pay today?\n\n` +
                         `*1️⃣ Set up a Monthly Debit Order* (Recommended)\n` +
