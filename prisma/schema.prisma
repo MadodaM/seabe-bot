@@ -755,3 +755,4 @@ model WebhookLog {
   createdAt   DateTime @default(now())
   processedAt DateTime?
 }
+

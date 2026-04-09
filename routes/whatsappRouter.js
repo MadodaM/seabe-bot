@@ -52,11 +52,26 @@ router.post('/', (req, res) => {
 
         try {
             // ================================================
-            // 🧠 LOAD SESSION FROM DATABASE
+            // 🧠 LOAD SESSION FROM DATABASE & CHECK TTL
             // ================================================
             const dbSession = await prisma.botSession.findUnique({ where: { phone: cleanPhone } });
+            
+            // 1. Define the Time-To-Live (24 Hours in milliseconds)
+            const SESSION_TTL = 24 * 60 * 60 * 1000; 
+
             if (dbSession) {
-                session = { step: dbSession.step, mode: dbSession.mode, ...(dbSession.data || {}) };
+                const lastUpdate = new Date(dbSession.updatedAt).getTime();
+                const now = Date.now();
+
+                // 2. Check if the session has expired (older than 24h)
+                if (now - lastUpdate > SESSION_TTL) {
+                    console.log(`🧹 [SESSION] Expired session wiped for ${cleanPhone}.`);
+                    session = {}; // Start fresh
+                    clearSessionFlag = true; // Tell the DB to wipe it at the end of the route
+                } else {
+                    // Session is valid, load it
+                    session = { step: dbSession.step, mode: dbSession.mode, ...(dbSession.data || {}) };
+                }
             }
 
             const numMedia = parseInt(req.body.NumMedia || '0'); 

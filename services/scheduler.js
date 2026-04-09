@@ -148,6 +148,32 @@ const startCronJobs = () => {
         scheduled: true,
         timezone: "Africa/Johannesburg" 
     });
+	
+	// ---------------------------------------------------------
+    // 3. DAILY: Database Session Cleanup (TTL Sweep)
+    // ⏰ Runs EVERY DAY at 00:00 (Midnight) SAST
+    // ---------------------------------------------------------
+    cron.schedule('0 0 * * *', async () => {
+        console.log("🧹 [SCHEDULER] Running global session cleanup...");
+        const expirationDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+        try {
+            const deleted = await prisma.botSession.deleteMany({
+                where: {
+                    updatedAt: {
+                        lt: expirationDate // Delete anything older than 24 hours
+                    }
+                }
+            });
+            console.log(`✅ [SCHEDULER] Purged ${deleted.count} inactive sessions.`);
+        } catch (error) {
+            console.error("❌ [SCHEDULER] Session cleanup failed:", error.message);
+        }
+    }, {
+        scheduled: true,
+        timezone: "Africa/Johannesburg" 
+    });
+
 };
 
 module.exports = { startCronJobs };
