@@ -17,6 +17,7 @@ const { processGroomingMessage } = require('../bots/groomingBot');
 const { processLmsMessage } = require('../bots/LMSlogicBot'); 
 const adminBot = require('../bots/adminBot');
 const vendorBot = require('../bots/vendorBot');
+const { t } = require('../utils/i18n');
 const { processBookingMessage } = require('../bots/bookingBot');
 const { processBarcodeScan } = require('../bots/scannerBot');
 const { generateStatement } = require('../services/pdfGenerator');
@@ -204,6 +205,47 @@ router.post('/', (req, res) => {
                 
                 await sendWhatsApp(cleanPhone, resetMsg);
                 return;
+            }
+			
+			// ================================================
+            // 🌐 MULTI-LANGUAGE TOGGLE INTERCEPTOR
+            // ================================================
+            const langKeywords = ['language', 'ulimi', 'puo'];
+            
+            if (langKeywords.includes(incomingMsg) || session.step === 'AWAITING_LANGUAGE') {
+                if (!member) {
+                    await sendWhatsApp(cleanPhone, "⚠️ Please reply *Join* first to register your profile.");
+                    return;
+                }
+
+                if (langKeywords.includes(incomingMsg)) {
+                    session.step = 'AWAITING_LANGUAGE';
+                    await sendWhatsApp(cleanPhone, "🌐 Choose your language / Khetha ulimi lwakho / Khetha puo ea hau:\n\n1️⃣ English\n2️⃣ isiZulu\n3️⃣ Sesotho");
+                    return;
+                }
+
+                if (session.step === 'AWAITING_LANGUAGE') {
+                    let newLang = 'en';
+                    if (incomingMsg === '1' || incomingMsg === 'english') newLang = 'en';
+                    else if (incomingMsg === '2' || incomingMsg === 'zulu' || incomingMsg === 'isizulu') newLang = 'zu';
+                    else if (incomingMsg === '3' || incomingMsg === 'sotho' || incomingMsg === 'sesotho') newLang = 'st';
+                    else {
+                        await sendWhatsApp(cleanPhone, "⚠️ Invalid choice. Reply 1, 2, or 3.");
+                        return;
+                    }
+
+                    // Save to Database
+                    await prisma.member.update({ where: { id: member.id }, data: { language: newLang } });
+                    member.language = newLang; // Update local object for the rest of the flow
+                    clearSessionFlag = true;
+
+                    // Confirm and redirect
+                    const confirmMsg = t('lang_changed', newLang);
+                    const promptMsg = member.church.type === 'BURIAL_SOCIETY' ? '\n\nReply *Society* for your menu.' : '\n\nReply *Menu* to continue.';
+                    
+                    await sendWhatsApp(cleanPhone, confirmMsg + promptMsg);
+                    return;
+                }
             }
 
             // ================================================
