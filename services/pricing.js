@@ -12,7 +12,7 @@ const DEFAULT_PRICES = {
     'MEMBER_CARD': 2.50,
     'DEBIT_ORDER_FEE': 5.00,
 	'MIN_TRANSACTION': 100.00, // 👈 Standardized minimum for Burial Societies
-    'MIN_CHURCH_GIFT': 10.00   // 👈 Lower minimum for Church offerings
+    'MIN_CHURCH_GIFT': 10.00,   // 👈 Lower minimum for Church offerings
 
     // --- Transaction Fees: Capitec Pay / EFT ---
     'TX_CAPITEC_WH_PCT': 0.016,  
