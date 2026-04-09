@@ -743,3 +743,15 @@ model Booking {
   status      String   @default("PENDING") // PENDING, CONFIRMED, CANCELLED
   createdAt   DateTime @default(now())
 }
+
+model WebhookLog {
+  id          Int      @id @default(autoincrement())
+  provider    String   @default("NETCASH")
+  reference   String?  // The transaction reference
+  payload     Json     // Store the exact raw data Netcash sent
+  status      String   @default("PENDING") // PENDING, SUCCESS, FAILED
+  errorReason String?  @db.Text
+  
+  createdAt   DateTime @default(now())
+  processedAt DateTime?
+}
