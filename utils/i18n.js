@@ -23,7 +23,7 @@ const dictionary = {
         'en': '1️⃣ View Policy & Dependents\n2️⃣ Make a Premium Payment\n3️⃣ Log a Death Claim\n4️⃣ Download Statement\n5️⃣ Change Language',
         'zu': '1️⃣ Buka Ipholisi Nabancike Kuwe\n2️⃣ Khokha Imali Yeprimiyamu\n3️⃣ Faka Isicelo Sokushona\n4️⃣ Landa Isitatimende\n5️⃣ Shintsha Ulimi',
         'st': '1️⃣ Sheba Leano le Ba itšetlehileng ka uena\n2️⃣ Etsa Tefo ea Premium\n3️⃣ Kenya Kopo ea Lefu\n4️⃣ Khoasolla Setatemente\n5️⃣ Fetola Puo'
-    }
+    },
 	
 	// --- Church Main Menu ---
     'church_menu': {
