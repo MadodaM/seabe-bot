@@ -7,6 +7,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient(); 
 const netcash = require('../services/netcash'); 
 const { calculateTransaction } = require('../services/pricingEngine'); 
+const { t } = require('../utils/i18n');
 
 // Safely initialize Twilio
 let twilioClient;
@@ -55,7 +56,9 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
 
     session.orgName = session.orgName || member?.church?.name || "Church";
     session.orgCode = session.orgCode || member?.churchCode;
-
+	
+	const userLang = member?.language || 'en';
+	
     try {
         // ====================================================
         // 1. MAIN MENU TRIGGER
@@ -68,17 +71,10 @@ async function handleChurchMessage(cleanPhone, incomingMsg, session, member) {
             session.step = 'CHURCH_MENU';
             const adText = await getAdSuffix(session.orgCode); 
             
+            // 🌐 Use the translation dictionary!
             reply = `⛪ *${session.orgName}*\n\n` +
-                    `1. Offering 🎁\n` +
-                    `2. Tithe 🏛️\n` +
-                    `3. Events 🎟️\n` +
-                    `4. Partner 🔁\n` +
-                    `5. News 📰\n` +
-                    `6. Profile 👤\n` +
-                    `7. History 📜\n` +
-                    `8. Discipleship Courses 🎓\n` +
-                    `9. Go to Lobby 🛡️\n\n` +
-                    `Reply with a number:${adText}`;
+                    `${t('church_menu', userLang)}\n\n` +
+                    `_Reply with a number / Phendula ngenombolo / Araba ka nomoro:_${adText}`;
         }
 
         // ====================================================

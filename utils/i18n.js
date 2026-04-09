@@ -24,6 +24,15 @@ const dictionary = {
         'zu': '1️⃣ Buka Ipholisi Nabancike Kuwe\n2️⃣ Khokha Imali Yeprimiyamu\n3️⃣ Faka Isicelo Sokushona\n4️⃣ Landa Isitatimende\n5️⃣ Shintsha Ulimi',
         'st': '1️⃣ Sheba Leano le Ba itšetlehileng ka uena\n2️⃣ Etsa Tefo ea Premium\n3️⃣ Kenya Kopo ea Lefu\n4️⃣ Khoasolla Setatemente\n5️⃣ Fetola Puo'
     }
+	
+	// --- Church Main Menu ---
+    'church_menu': {
+        'en': '1️⃣ Offering 🎁\n2️⃣ Tithe 🏛️\n3️⃣ Events 🎟️\n4️⃣ Partner 🔁\n5️⃣ News 📰\n6️⃣ Profile 👤\n7️⃣ History 📜\n8️⃣ Discipleship Courses 🎓\n9️⃣ Change Language 🌐\n0️⃣ Go to Lobby 🛡️',
+        
+        'zu': '1️⃣ Umnikelo 🎁\n2️⃣ Okweshumi 🏛️\n3️⃣ Imicimbi 🎟️\n4️⃣ Ukubambisana 🔁\n5️⃣ Izindaba 📰\n6️⃣ Iphrofayela 👤\n7️⃣ Umlando 📜\n8️⃣ Izifundo 🎓\n9️⃣ Shintsha Ulimi 🌐\n0️⃣ Phuma 🛡️',
+        
+        'st': '1️⃣ Nyehelo 🎁\n2️⃣ Karolo ea Leshome 🏛️\n3️⃣ Liketsahalo 🎟️\n4️⃣ Tšebelisano 🔁\n5️⃣ Litaba 📰\n6️⃣ Boemo 👤\n7️⃣ Nalane 📜\n8️⃣ Lithuto 🎓\n9️⃣ Fetola Puo 🌐\n0️⃣ Tsoa 🛡️'
+    },
 };
 
 /**
