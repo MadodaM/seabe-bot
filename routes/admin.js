@@ -1080,47 +1080,89 @@ module.exports = (app, { prisma }) => {
                 `;
             }).join('') || '<tr><td colspan="3" style="text-align:center; color:#95a5a6;">No active courses yet.</td></tr>';
 
-            // 4. Generate Student Progress HTML Rows
-            const studentRows = enrollments.map(e => {
-                const totalModules = e.course._count.modules || 1; 
-                
-                let progressPercent = Math.round((e.progress / totalModules) * 100);
-                if (progressPercent > 100) progressPercent = 100;
-                
-                let deliveryBadge = `<span class="badge" style="background:#f39c12;">Module ${e.progress} Sent</span>`;
-                
-                if (e.status === 'COMPLETED') {
-                    deliveryBadge = `<span class="badge" style="background:#27ae60;">✅ Graduated</span>`;
-                } else if (e.status === 'PAUSED') {
-                    deliveryBadge = `<span class="badge" style="background:#e74c3c;">⏸️ Paused</span>`;
-                } else if (e.quizState === 'AWAITING_ANSWER') {
-                    deliveryBadge = `<span class="badge" style="background:#8e44ad;">⏳ Waiting on Quiz Reply</span>`;
-                }
+            // 4. Generate Student Progress HTML Accordions (Grouped by Course)
+            let studentRosterHtml = '';
+            
+            if (courses.length === 0) {
+                studentRosterHtml = '<p style="text-align:center; color:#95a5a6; padding:20px;">No active courses found.</p>';
+            } else {
+                courses.forEach((course, index) => {
+                    const courseEnrollments = enrollments.filter(e => e.course.id === course.id);
+                    
+                    const isFirst = index === 0;
+                    const displayStyle = isFirst ? 'block' : 'none';
+                    const icon = isFirst ? '▼' : '▶';
 
-                // 🚀 Added the View Answers button column here
-                return `
-                    <tr>
-                        <td>
-                            <strong>${e.member.firstName} ${e.member.lastName || ''}</strong><br>
-                            <a href="https://wa.me/${e.member.phone.replace('+', '')}" target="_blank" style="font-size:11px; color:#0984e3; text-decoration:none;">${e.member.phone}</a>
-                        </td>
-                        <td><strong>${e.course.title}</strong></td>
-                        <td>
-                            <strong>${progressPercent}%</strong><br>
-                            <span style="font-size:11px; color:#7f8c8d;">Module ${e.progress} / ${totalModules}</span>
-                        </td>
-                        <td>
-                            ${deliveryBadge}<br>
-                            <span style="font-size:10px; color:#aaa;">Last active: ${new Date(e.updatedAt).toLocaleDateString()}</span>
-                        </td>
-                        <td style="text-align:right;">
-                            <button onclick="viewAnswers(${e.id}, '${e.member.firstName.replace(/'/g, "\\'")}')" class="btn" style="background:#8e44ad; padding:6px 12px; font-size:11px; width:auto;">
-                                📝 View Answers
-                            </button>
-                        </td>
-                    </tr>
-                `;
-            }).join('');
+                    studentRosterHtml += `
+                    <div style="border: 1px solid #ddd; border-radius: 8px; margin-bottom: 15px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                        
+                        <div onclick="toggleAccordion('roster-${course.id}')" 
+                             style="background: #f8f9fa; padding: 15px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee;">
+                            <h4 style="margin:0; color:#2c3e50; font-size: 16px; display: flex; align-items: center;">
+                                👨‍🎓 ${course.title} 
+                                <span style="font-size: 11px; font-weight: normal; background: #e0e6ed; color: #2c3e50; padding: 3px 8px; border-radius: 12px; margin-left: 10px;">
+                                    ${courseEnrollments.length} Students Enrolled
+                                </span>
+                            </h4>
+                            <span id="icon-roster-${course.id}" style="color: #7f8c8d; font-size: 14px; font-weight: bold;">${icon}</span>
+                        </div>
+
+                        <div id="roster-${course.id}" style="display: ${displayStyle}; padding: 15px; background: white; overflow-x: auto;">
+                            <table style="margin-bottom:0;">
+                                <thead>
+                                    <tr>
+                                        <th>Student Details</th>
+                                        <th>Progress</th>
+                                        <th>WhatsApp Delivery Status</th>
+                                        <th style="text-align:right;">Assessments</th>
+                                    </tr>
+                                </thead>
+                                <tbody>`;
+
+                    if (courseEnrollments.length === 0) {
+                        studentRosterHtml += `<tr><td colspan="4" style="text-align:center; color:#95a5a6; padding: 20px;">No students enrolled in this course yet.</td></tr>`;
+                    } else {
+                        courseEnrollments.forEach(e => {
+                            const totalModules = e.course._count.modules || 1; 
+                            let progressPercent = Math.round((e.progress / totalModules) * 100);
+                            if (progressPercent > 100) progressPercent = 100;
+                            
+                            let deliveryBadge = `<span class="badge" style="background:#f39c12;">Module ${e.progress} Sent</span>`;
+                            
+                            if (e.status === 'COMPLETED') {
+                                deliveryBadge = `<span class="badge" style="background:#27ae60;">✅ Graduated</span>`;
+                            } else if (e.status === 'PAUSED') {
+                                deliveryBadge = `<span class="badge" style="background:#e74c3c;">⏸️ Paused</span>`;
+                            } else if (e.quizState === 'AWAITING_ANSWER') {
+                                deliveryBadge = `<span class="badge" style="background:#8e44ad;">⏳ Waiting on Quiz Reply</span>`;
+                            }
+
+                            studentRosterHtml += `
+                                <tr>
+                                    <td>
+                                        <strong>${e.member.firstName} ${e.member.lastName || ''}</strong><br>
+                                        <a href="https://wa.me/${e.member.phone.replace('+', '')}" target="_blank" style="font-size:11px; color:#0984e3; text-decoration:none;">${e.member.phone}</a>
+                                    </td>
+                                    <td>
+                                        <strong>${progressPercent}%</strong><br>
+                                        <span style="font-size:11px; color:#7f8c8d;">Module ${e.progress} / ${totalModules}</span>
+                                    </td>
+                                    <td>
+                                        ${deliveryBadge}<br>
+                                        <span style="font-size:10px; color:#aaa;">Last active: ${new Date(e.updatedAt).toLocaleDateString()}</span>
+                                    </td>
+                                    <td style="text-align:right;">
+                                        <button onclick="viewAnswers(${e.id}, '${e.member.firstName.replace(/'/g, "\\'")}')" class="btn" style="background:#8e44ad; padding:6px 12px; font-size:11px; width:auto;">
+                                            📝 View Answers
+                                        </button>
+                                    </td>
+                                </tr>
+                            `;
+                        });
+                    }
+                    studentRosterHtml += `</tbody></table></div></div>`;
+                });
+            }
 
             // 5. The Dashboard UI Layout
             const content = `
@@ -1129,7 +1171,7 @@ module.exports = (app, { prisma }) => {
                         <h2 style="margin:0; color:#00d2d3;">🎓 Academy Mission Control</h2>
                         <p style="margin:5px 0 0 0; font-size:13px; color:#b2bec3;">Track student progress, course uptake, and WhatsApp delivery logs.</p>
                     </div>
-					<a href="/admin/${req.org.code}/courses/new" class="btn" style="background:#00d2d3; color:#1e272e; width:auto; text-decoration:none;">
+                    <a href="/admin/${req.org.code}/courses/new" class="btn" style="background:#00d2d3; color:#1e272e; width:auto; text-decoration:none;">
                         + Create New Course
                     </a>
                 </div>
@@ -1159,19 +1201,9 @@ module.exports = (app, { prisma }) => {
                     </table>
                 </div>
 
-                <div class="card" style="overflow-x:auto;">
-                    <h3 style="margin-top:0;">👨‍🎓 Student Roster & Delivery Logs</h3>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Student</th>
-                                <th>Enrolled Course</th>
-                                <th>Progress</th>
-                                <th>WhatsApp Delivery Status</th>
-                                <th style="text-align:right;">Assessments</th> </tr>
-                        </thead>
-                        <tbody>${studentRows.length > 0 ? studentRows : '<tr><td colspan="5" style="text-align:center; color:#999; padding:20px;">No enrollments found.</td></tr>'}</tbody>
-                    </table>
+                <div class="card">
+                    <h3 style="margin-top:0; margin-bottom:15px;">👨‍🎓 Student Roster & Delivery Logs</h3>
+                    ${studentRosterHtml}
                 </div>
 				
 				<div class="card" style="overflow-x:auto;">
