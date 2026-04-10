@@ -998,15 +998,37 @@ module.exports = (app, { prisma }) => {
                 include: { modules: { orderBy: { order: 'asc' } } }
             });
 
+            // 🚀 NEW: Accordion UI for Course Library
             let courseLibraryHtml = '';
-            courses.forEach(course => {
-                courseLibraryHtml += `<h4 style="margin-top:20px; color:#2c3e50; border-bottom:2px solid #eee; padding-bottom:5px;">📖 ${course.title}</h4>
-                <table style="margin-bottom:25px;">
-                    <thead><tr><th>Module</th><th>Content Summary</th><th>Media File</th><th style="text-align:right;">Action</th></tr></thead>
-                    <tbody>`;
+            courses.forEach((course, index) => {
+                // Keep the first course open by default, hide the rest
+                const isFirst = index === 0;
+                const displayStyle = isFirst ? 'block' : 'none';
+                const icon = isFirst ? '▼' : '▶';
+
+                courseLibraryHtml += `
+                <div style="border: 1px solid #ddd; border-radius: 8px; margin-bottom: 15px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                    
+                    <div onclick="toggleAccordion('course-${course.id}')" 
+                         style="background: #f8f9fa; padding: 15px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee;">
+                        <h4 style="margin:0; color:#2c3e50; font-size: 16px; display: flex; align-items: center;">
+                            📖 ${course.title} 
+                            <span style="font-size: 11px; font-weight: normal; background: #e0e6ed; color: #2c3e50; padding: 3px 8px; border-radius: 12px; margin-left: 10px;">
+                                ${course.modules.length} Modules
+                            </span>
+                        </h4>
+                        <span id="icon-course-${course.id}" style="color: #7f8c8d; font-size: 14px; font-weight: bold;">${icon}</span>
+                    </div>
+
+                    <div id="course-${course.id}" style="display: ${displayStyle}; padding: 15px; background: white;">
+                        <table style="margin-bottom:0;">
+                            <thead>
+                                <tr><th>Module</th><th>Content Summary</th><th>Media File</th><th style="text-align:right;">Action</th></tr>
+                            </thead>
+                            <tbody>`;
                 
                 if (course.modules.length === 0) {
-                    courseLibraryHtml += `<tr><td colspan="4" style="text-align:center; color:#95a5a6;">No modules created for this course yet.</td></tr>`;
+                    courseLibraryHtml += `<tr><td colspan="4" style="text-align:center; color:#95a5a6; padding: 20px;">No modules created for this course yet.</td></tr>`;
                 }
 
                 course.modules.forEach(mod => {
@@ -1021,12 +1043,12 @@ module.exports = (app, { prisma }) => {
                             <td>${mediaBadge}</td>
                             <td style="text-align:right;">
                                 <button onclick="openMediaModal(${mod.id}, '${mod.title.replace(/'/g, "\\'")}')" class="btn" style="background:#3498db; padding:6px 12px; font-size:11px; width:auto;">
-                                    📎 Attach Audio/Image
+                                    📎 Attach
                                 </button>
                             </td>
                         </tr>`;
                 });
-                courseLibraryHtml += `</tbody></table>`;
+                courseLibraryHtml += `</tbody></table></div></div>`;
             });
             
             // Group by Course to see Uptake
@@ -1242,6 +1264,19 @@ module.exports = (app, { prisma }) => {
                 <script>
                     function closeAnswersModal() {
                         document.getElementById('answersModal').style.display = 'none';
+                    }
+					
+					// 🚀 NEW: Accordion Toggle Logic
+                    function toggleAccordion(id) {
+                        const content = document.getElementById(id);
+                        const icon = document.getElementById('icon-' + id);
+                        if (content.style.display === 'none') {
+                            content.style.display = 'block';
+                            icon.innerText = '▼';
+                        } else {
+                            content.style.display = 'none';
+                            icon.innerText = '▶';
+                        }
                     }
 
                     async function viewAnswers(enrollmentId, studentName) {
