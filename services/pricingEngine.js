@@ -19,10 +19,15 @@ async function calculateTransaction(baseAmount, moduleType = 'STANDARD', payment
     let gatePct  = await getPrice(`${keyPrefix}_RT_PCT`);
     let gateFlat = await getPrice(`${keyPrefix}_RT_FLAT`);
 
-    // Safety net: If DB isn't fully seeded yet, use standard Netcash fallback (1.5% + R2.50)
-    if (gatePct === 0 && gateFlat === 0 && keyPrefix === 'TX_CARD') {
-        gatePct = 0.015;
-        gateFlat = 2.50;
+    // Safety net: If DB isn't fully seeded yet, use standard Netcash fallback
+    if (gatePct === 0 && gateFlat === 0) {
+        if (keyPrefix === 'TX_DEBIT') {
+            gatePct = 0.00;
+            gateFlat = 3.50; // Standard Netcash Debit Order flat fee
+        } else {
+            gatePct = 0.015;
+            gateFlat = 2.50; // Standard Card fallback
+        }
     }
 
     // 3. Fetch Module Variables from DB (Seabe's Platform Fee)
@@ -40,6 +45,11 @@ async function calculateTransaction(baseAmount, moduleType = 'STANDARD', payment
         modFlat = await getPrice('MOD_REST_FLAT') || 0;
     } else if (moduleType === 'RETAIL_ORDER') {
         modFlat = await getPrice('MOD_RETAIL_FLAT') || 0;
+    } else if (moduleType === 'LWAZI_SUB') {
+        // 🚀 NEW: Lwazi Subscription
+        // Seabe owns Lwazi, so we charge 0% internal platform fee.
+        modPct = 0;
+        modFlat = 0;
     }
 
     // 4. Calculate Fees (Calculated ONCE, correctly)
@@ -55,10 +65,10 @@ async function calculateTransaction(baseAmount, moduleType = 'STANDARD', payment
 
     if (passFeesToUser) {
         totalChargedToUser = amount + totalFees;
-        netSettlement = amount; // Church gets exactly what they asked for
+        netSettlement = amount; // Church/Lwazi gets exactly what they asked for
     } else {
         totalChargedToUser = amount; // User pays exactly what they typed
-        netSettlement = amount - totalFees; // Church absorbs the costs
+        netSettlement = amount - totalFees; // Church/Lwazi absorbs the costs
     }
 
     // 🚀 ALIGNED WITH NETCASH.JS EXPECTATIONS
@@ -68,7 +78,7 @@ async function calculateTransaction(baseAmount, moduleType = 'STANDARD', payment
         netcashFee: parseFloat(netcashFee.toFixed(2)),   // 3. Gateway Fee
         totalFees: parseFloat(totalFees.toFixed(2)),
         totalChargedToUser: parseFloat(totalChargedToUser.toFixed(2)), // 1. Gross Amount
-        netSettlement: parseFloat(netSettlement.toFixed(2)), // 4. Final Payout to Church
+        netSettlement: parseFloat(netSettlement.toFixed(2)), // 4. Final Payout to Church/Lwazi
         currency: "ZAR"
     };
 }

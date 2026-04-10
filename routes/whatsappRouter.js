@@ -26,13 +26,32 @@ const { handleSupportOrTypo } = require('../services/supportEngine');
 const { processTwilioClaim } = require('../services/aiClaimWorker');
 const { calculateTransaction } = require('../services/pricingEngine');
 const resend = new Resend(process.env.RESEND_API_KEY || 're_test_fallback_123456789');
+const { processLwaziMessage } = require('../bots/lwaziBot');
 
 router.post('/', (req, res) => {
     const rawMsg = req.body.Body || '';
     const incomingMsg = rawMsg.trim().toLowerCase();
     const cleanPhone = (req.body.From || '').replace('whatsapp:', '');
-	const mediaUrl = req.body.MediaUrl0 || null;
+    const toPhone = (req.body.To || '').replace('whatsapp:', ''); // 👈 NEW: Who did they message?
+    const mediaUrl = req.body.MediaUrl0 || null;
     
+    // 🚀 LWAZI INTERCEPTOR: Check if the message was sent to the Lwazi Tutor number
+    const LWAZI_NUMBER = process.env.LWAZI_PHONE_NUMBER; // e.g., '+27871234567'
+    
+    if (toPhone === LWAZI_NUMBER) {
+        res.type('text/xml').send('<Response></Response>'); // Ack Twilio immediately
+        
+        (async () => {
+            try {
+                // Route strictly to the Lwazi ecosystem
+                await processLwaziMessage(cleanPhone, incomingMsg, mediaUrl, sendWhatsApp);
+            } catch (e) {
+                console.error("Lwazi Router Error:", e);
+            }
+        })();
+        return; // 🛑 HALT EXECUTION: Do not run Church/SurePol logic
+    }
+        
     // Extract and split the WhatsApp Profile Name
     const profileName = req.body.ProfileName || '';
     let fName = 'Member';
