@@ -31,6 +31,7 @@ router.post('/', (req, res) => {
     const rawMsg = req.body.Body || '';
     const incomingMsg = rawMsg.trim().toLowerCase();
     const cleanPhone = (req.body.From || '').replace('whatsapp:', '');
+	const mediaUrl = req.body.MediaUrl0 || null;
     
     // Extract and split the WhatsApp Profile Name
     const profileName = req.body.ProfileName || '';
@@ -284,7 +285,8 @@ router.post('/', (req, res) => {
             // ================================================
             // 🎓 LMS / ACADEMY ROUTER
             // ================================================
-            const lmsResult = await processLmsMessage(cleanPhone, incomingMsg, session, member) || {};
+            // 👈 NEW: Pass mediaUrl as the final argument
+            const lmsResult = await processLmsMessage(cleanPhone, incomingMsg, session, member, mediaUrl) || {};
             
             if (lmsResult.handled) {
                 if (lmsResult.clearSessionFlag) clearSessionFlag = true;

@@ -17,11 +17,9 @@ const sendWhatsApp = async (to, body) => {
     if (!twilioClient) return console.log("⚠️ Twilio Keys Missing! Could not send message.");
     const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
 
-    // Twilio's hard limit is 1600. We use 1500 to be perfectly safe.
     const MAX_LENGTH = 1500;
     const messageChunks = [];
 
-    // 1. Chunk the message securely without breaking words
     if (body.length > MAX_LENGTH) {
         let remainingText = body;
         while (remainingText.length > 0) {
@@ -30,7 +28,6 @@ const sendWhatsApp = async (to, body) => {
                 break;
             }
             
-            // Try to find a natural break (like a double newline or space) near the limit
             let chunk = remainingText.substring(0, MAX_LENGTH);
             let splitIndex = MAX_LENGTH;
             
@@ -39,21 +36,20 @@ const sendWhatsApp = async (to, body) => {
             let lastSpace = chunk.lastIndexOf(' ');
 
             if (lastDoubleNewline > MAX_LENGTH - 300) { 
-                splitIndex = lastDoubleNewline; // Best: Break at a paragraph
+                splitIndex = lastDoubleNewline; 
             } else if (lastNewline > MAX_LENGTH - 200) { 
-                splitIndex = lastNewline;       // Good: Break at a line
+                splitIndex = lastNewline;       
             } else if (lastSpace > MAX_LENGTH - 100) { 
-                splitIndex = lastSpace;         // Fallback: Break at a word
+                splitIndex = lastSpace;         
             }
 
             messageChunks.push(remainingText.substring(0, splitIndex).trim());
             remainingText = remainingText.substring(splitIndex).trim();
         }
     } else {
-        messageChunks.push(body); // Short message, no chunking needed
+        messageChunks.push(body);
     }
 
-    // 2. Send chunks sequentially with a tiny delay so they arrive in perfect order
     for (const chunk of messageChunks) {
         try {
             await twilioClient.messages.create({
@@ -61,7 +57,6 @@ const sendWhatsApp = async (to, body) => {
                 to: `whatsapp:${to}`,
                 body: chunk
             });
-            // 500ms delay to guarantee WhatsApp delivers them in the correct order
             await new Promise(resolve => setTimeout(resolve, 500)); 
         } catch (err) {
             console.error("❌ Twilio Send Error:", err.message);
@@ -71,33 +66,107 @@ const sendWhatsApp = async (to, body) => {
 
 /**
  * Handles all LMS / Academy logic. 
- * Returns { handled: true, clearSessionFlag: boolean } if the message was processed here.
+ * 🚀 FIXED: Added `mediaUrl` to the signature to handle WhatsApp images!
  */
-// 🚀 FIXED: Function signature exactly matches the router!
-async function processLmsMessage(cleanPhone, incomingMsg, session, member) {
+async function processLmsMessage(cleanPhone, incomingMsg, session, member, mediaUrl = null) {
     
     // 1. Normalize the message to be 100% safe
     const rawMsg = incomingMsg; 
-    const cleanMsg = incomingMsg.toLowerCase().trim();
+    const cleanMsg = (incomingMsg || '').toLowerCase().trim();
     
-    // 2. The Escape Hatches (Added help, support, next, resume)
+    // 2. The Escape Hatches (Added 'tutor', 'ask', 'solve')
     const systemCommands = [
         'menu', 'profile', 'my profile', 'my courses', 'courses', 
         'exit', 'cancel', 'home', 'join', 'stokvel', 'npo', 
-        'society', 'amen', 'help', 'support', 'next', 'resume'
+        'society', 'amen', 'help', 'support', 'next', 'resume',
+        'tutor', 'ask', 'solve'
     ];
     
-    // 3. The Menu Shield (Don't grade if they are navigating a menu!)
+    // 3. The Menu Shield
     const activeMenuSteps = [
         'AWAITING_COURSE_SELECTION', 
         'PROFILE_MENU', 
         'COURSE_ACTIONS', 
         'UPDATE_NAME_FIRST', 
-        'UPDATE_NAME_LAST'
+        'UPDATE_NAME_LAST',
+        'AWAITING_TUTOR_QUESTION' // 👈 Added new state here
     ];
 
     const isSystemCommand = systemCommands.includes(cleanMsg);
     const isInMenu = activeMenuSteps.includes(session.step);
+
+    // ================================================
+    // 🧠 NEW: MULTIMODAL AI TUTOR (Text + Image Solver)
+    // ================================================
+    const tutorTriggers = ['tutor', 'ask', 'solve', 'ask tutor'];
+    
+    if (tutorTriggers.includes(cleanMsg)) {
+        session.step = 'AWAITING_TUTOR_QUESTION';
+        await sendWhatsApp(cleanPhone, "🧠 *AI Tutor Mode*\n\nSend me your question, or upload a clear photo of a math/logic problem. I'll break it down and show you how to solve it step-by-step!\n\n_Reply *Cancel* to exit._");
+        return { handled: true, clearSessionFlag: false };
+    }
+
+    if (session.step === 'AWAITING_TUTOR_QUESTION') {
+        if (cleanMsg === 'cancel' || cleanMsg === 'exit') {
+            session.step = null;
+            await sendWhatsApp(cleanPhone, "🔙 Exited Tutor Mode. Reply *Menu* to see your options.");
+            return { handled: true, clearSessionFlag: false };
+        }
+
+        if (!rawMsg && !mediaUrl) {
+            await sendWhatsApp(cleanPhone, "⚠️ Please type a question or send a photo of a problem.");
+            return { handled: true, clearSessionFlag: false };
+        }
+
+        await sendWhatsApp(cleanPhone, "⏳ *Analyzing your problem...*");
+
+        try {
+            const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+            const aiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+            // Structure the prompt to force logical, step-by-step breakdowns
+            const promptParts = [
+                "You are an expert, highly patient AI tutor helping a student on WhatsApp.",
+                "The user has asked a question or provided an image of a math, logic, or academic problem.",
+                "1. DO NOT just give the final answer.",
+                "2. Break down the methodology step-by-step so the student actually learns how to solve it.",
+                "3. Format cleanly for WhatsApp (use * for bold, _ for italics). Use bullet points for steps.",
+                `User's text input: "${rawMsg || '[No text provided, rely entirely on the image]'}"`
+            ];
+
+            // 📸 Securely fetch the Twilio Image if one was sent
+            if (mediaUrl) {
+                // Using Basic Auth in case your Twilio account strictly protects media URLs
+                const authHeader = 'Basic ' + Buffer.from(`${process.env.TWILIO_SID}:${process.env.TWILIO_AUTH}`).toString('base64');
+                const response = await fetch(mediaUrl, { headers: { 'Authorization': authHeader } });
+                
+                if (!response.ok) throw new Error("Failed to fetch media from Twilio");
+                
+                const arrayBuffer = await response.arrayBuffer();
+                const buffer = Buffer.from(arrayBuffer);
+                
+                promptParts.push({
+                    inlineData: {
+                        data: buffer.toString("base64"),
+                        mimeType: response.headers.get("content-type") || "image/jpeg"
+                    }
+                });
+            }
+
+            const result = await aiModel.generateContent(promptParts);
+            const aiResponse = result.response.text();
+
+            await sendWhatsApp(cleanPhone, `🎓 *Tutor Solution:*\n\n${aiResponse.trim()}\n\n_Send another question or reply *Cancel* to exit._`);
+            
+            // Keep them in the loop so they can ask follow-up questions
+            return { handled: true, clearSessionFlag: false };
+
+        } catch (error) {
+            console.error("Tutor AI Error:", error);
+            await sendWhatsApp(cleanPhone, "⚠️ I had trouble analyzing that. Please ensure the photo is clear, or try typing the question out.");
+            return { handled: true, clearSessionFlag: false };
+        }
+    }
 
     // ================================================
     // 🛑 0. LMS INTERCEPTOR: AI Quiz Evaluator
