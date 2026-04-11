@@ -67,6 +67,7 @@ const syncToHubSpot = async (data) => {
 
 // A. Public & Static
 app.get('/ping', (req, res) => res.status(200).send("Heartbeat received. Seabe Engine is awake."));
+app.use('/meta-webhook', metaRouter);
 app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacy.html')));
 app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
 app.get('/passport-test', (req, res) => res.sendFile(path.join(__dirname, 'views', 'credit-passport.html')));
@@ -93,7 +94,6 @@ try {
 // D. API & WhatsApp
 app.use('/api/whatsapp', require('./routes/whatsappRouter'));
 app.use('/api/public', require('./routes/quoteGenerator')); 
-app.use('/meta-webhook', metaRouter);
 
 // E. Feature Specific Routes
 try { app.use('/kyc', require('./routes/kyc').router); } catch(e){}
