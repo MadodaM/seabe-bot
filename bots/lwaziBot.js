@@ -30,12 +30,13 @@ async function processLwaziMessage(phone, msg, mediaUrl, sendWhatsApp) {
     // 2. Handle Subscription & Pricing Engine
     if (msg === 'subscribe' || member.status === 'PENDING_SUBSCRIPTION') {
         // Tap into your exact Seabe Four-Pillar pricing engine
-        const pricing = await calculateTransaction(69.00, 'LWAZI_SUB', 'DEBIT_ORDER', false);
+        const pricing = await calculateTransaction(69.00, 'LWAZI_SUB', 'CARD', false);
         const host = process.env.HOST_URL || 'https://seabe.tech';
         
-        const payLink = `${host}/pay?memberId=${member.id}&amount=${pricing.totalChargedToUser}&type=LWAZI`;
-        
-        await sendWhatsApp(phone, `📚 *Lwazi Premium Subscription*\n\nMonthly Fee: R${pricing.totalChargedToUser.toFixed(2)}\n\n💳 *Tap to setup your secure monthly mandate:*\n👉 ${payLink}\n\nOnce paid, reply *Menu* to start learning.`);
+        // Inside bots/lwaziBot.js
+		const payLink = `${host}/pay?memberId=${member.id}&amount=${pricing.totalChargedToUser}&type=LWAZI&setupToken=true`;
+
+		await sendWhatsApp(phone, `📚 *Lwazi Premium Subscription*\n\nMonthly Fee: R${pricing.totalChargedToUser.toFixed(2)}\n\n💳 *Tap to securely link your card:*\n👉 ${payLink}\n\nYour card will be charged R69 today, and automatically every 30 days. You can cancel at any time.`);
         return;
     }
 

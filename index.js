@@ -30,6 +30,7 @@ const webhooksRoute = require('./routes/webhooks');
 const crmClaimsRoute = require('./routes/crmClaims');
 const ficaPortalRoutes = require('./routes/ficaPortal');
 const mandatesRouter = require('./routes/mandates');
+const metaRouter = require('./routes/metaRouter');
 
 const app = express();
 
@@ -92,6 +93,7 @@ try {
 // D. API & WhatsApp
 app.use('/api/whatsapp', require('./routes/whatsappRouter'));
 app.use('/api/public', require('./routes/quoteGenerator')); 
+app.use('/meta-webhook', metaRouter);
 
 // E. Feature Specific Routes
 try { app.use('/kyc', require('./routes/kyc').router); } catch(e){}
