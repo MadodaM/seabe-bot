@@ -179,11 +179,41 @@ async function processNetcashITN(webhookLogId) {
                     where: { reference: debtRef },
                     data: { status: 'PAID', paidAt: new Date() }
                 });
+            } else if (correctType === 'LWAZI_MULTI' || correctType === 'LWAZI_SUB') {
+                // 🎓 LWAZI MULTI-SUBSCRIPTION ACTIVATION
+                if (tx.notes) {
+                    // Assuming targetIds were saved as a comma-separated string in tx.notes (e.g., "15,16,17")
+                    const idsToActivate = tx.notes.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+
+                    if (idsToActivate.length > 0) {
+                        // 1. Activate all student profiles in the database
+                        await prisma.member.updateMany({
+                            where: { id: { in: idsToActivate } },
+                            data: { status: 'ACTIVE', lastPaymentDate: new Date(), consecutiveFailures: 0 }
+                        });
+
+                        // 2. Loop through and send the WhatsApp Welcome Message to each student!
+                        for (const studentId of idsToActivate) {
+                            const student = await prisma.member.findUnique({ where: { id: studentId } });
+                            if (student && student.phone) {
+                                // Important: We use the Lwazi phone number override here!
+                                const welcomeText = `Hi! Welcome to Lwazi CAPS Micro-Tutor. 🧠 Your Premium account has just been activated! Are you ready to start today's quiz? Reply 'Yes' to begin!`;
+                                await sendWhatsApp(student.phone, welcomeText, null, '+27875511057');
+                            }
+                        }
+                    }
+                } else if (tx.memberId) {
+                    // Fallback for single subscriptions just in case
+                    await prisma.member.update({
+                        where: { id: tx.memberId },
+                        data: { status: 'ACTIVE', lastPaymentDate: new Date(), consecutiveFailures: 0 }
+                    });
+                }
             } else if (reference.includes('-PREM-') || reference.includes('-ONCEOFF-')) {
-                 if (tx.memberId) {
-                     await prisma.member.update({
-                         where: { id: tx.memberId },
-                         data: { status: 'ACTIVE', lastPaymentDate: new Date(), consecutiveFailures: 0 }
+                if (tx.memberId) {
+                    await prisma.member.update({
+                        where: { id: tx.memberId },
+                        data: { status: 'ACTIVE', lastPaymentDate: new Date(), consecutiveFailures: 0 }
                      });
                  }
             } else if (reference.startsWith('APPT-') || reference.includes('-GROOMING-')) {
