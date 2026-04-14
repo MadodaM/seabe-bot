@@ -435,5 +435,119 @@
 			res.status(200).send({ status: "success", updated: fixes });
 		} catch (e) { res.status(500).send("Internal Error"); }
 	});
+	
+	// 🚀 NEW: Auto-Billing Engine for Subscriptions
+router.get('/cron/auto-bill', async (req, res) => {
+    // 1. Security check to prevent hackers from triggering mass billing
+    const cronKey = req.headers['x-cron-key'] || req.query.key;
+    if (cronKey !== process.env.SECRET_CRON_KEY) return res.status(401).send("Unauthorized");
+
+    console.log("🕒 [CRON] Starting Daily Auto-Billing Sweep...");
+
+    try {
+        // Calculate the date exactly 30 days ago
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+        // 2. Find all ACTIVE members with a vaulted card who are due for billing
+        const dueMembers = await prisma.member.findMany({
+            where: {
+                status: 'ACTIVE',
+                lastPaymentDate: { lte: thirtyDaysAgo }, // Paid 30+ days ago
+                paymentMethods: { some: { isDefault: true } } // Has a saved card
+            },
+            include: {
+                paymentMethods: { where: { isDefault: true } },
+                church: true
+            }
+        });
+
+        let successfulCharges = 0;
+        let failedCharges = 0;
+
+        for (const member of dueMembers) {
+            const vault = member.paymentMethods[0];
+            const amountToCharge = 69.00; // Base Lwazi rate
+            const reference = `AUTO-${member.id}-${Date.now().toString().slice(-6)}`;
+
+            console.log(`💸 [BILLING] Attempting to charge ${member.phone} R${amountToCharge} via Token...`);
+
+            // 3. Create the PENDING transaction in your ledger
+            const tx = await prisma.transaction.create({
+                data: {
+                    reference: reference,
+                    amount: amountToCharge,
+                    status: 'PENDING',
+                    type: 'LWAZI_RENEWAL',
+                    method: 'TOKEN_CHARGE',
+                    memberId: member.id,
+                    churchCode: member.church.code || 'LWAZI_HQ',
+                    phone: member.phone
+                }
+            });
+
+            // 4. Hit the Netcash API with the Token
+            const chargeResult = await netcash.chargeVaultedToken(vault.token, amountToCharge, reference);
+
+            if (chargeResult.success) {
+                // ✅ SUCCESS: Update Transaction, Ledger, and Member Date
+                await prisma.transaction.update({
+                    where: { id: tx.id },
+                    data: { status: 'SUCCESS' }
+                });
+
+                // Fire your awesome ledger splitter to divide the R69
+                await recordSplit(tx.id).catch(console.error);
+
+                // Reset their clock for another 30 days
+                await prisma.member.update({
+                    where: { id: member.id },
+                    data: { lastPaymentDate: new Date(), consecutiveFailures: 0 }
+                });
+
+                // Send WhatsApp Receipt
+                const msg = `✅ *Subscription Renewed!*\n\nYour Lwazi Premium subscription has been successfully renewed for R69.00 using your saved card ending in ${vault.last4}.\n\nKeep learning! 🦉`;
+                await client.messages.create({ from: 'whatsapp:+27875511057', to: `whatsapp:+${member.phone.replace('+', '')}`, body: msg }).catch(() => {});
+                successfulCharges++;
+
+            } else {
+                // ❌ FAILED: Log failure, increment strikes
+                await prisma.transaction.update({
+                    where: { id: tx.id },
+                    data: { status: 'FAILED' }
+                });
+
+                const newFailCount = (member.consecutiveFailures || 0) + 1;
+                
+                // If the card fails 2 months in a row, suspend the account
+                const newStatus = newFailCount >= 2 ? 'SUSPENDED_PAYMENT' : 'ACTIVE';
+
+                await prisma.member.update({
+                    where: { id: member.id },
+                    data: { consecutiveFailures: newFailCount, status: newStatus }
+                });
+
+                const failMsg = newFailCount >= 2 
+                    ? `⚠️ *Subscription Suspended*\n\nWe could not process your automatic renewal (Reason: ${chargeResult.reason}). Your Lwazi access is currently paused.\n\nPlease reply *Subscribe* to update your payment method.`
+                    : `⚠️ *Renewal Failed*\n\nWe couldn't process your Lwazi renewal using your saved card (Reason: ${chargeResult.reason}). We will try again tomorrow.`;
+                
+                await client.messages.create({ from: 'whatsapp:+27875511057', to: `whatsapp:+${member.phone.replace('+', '')}`, body: failMsg }).catch(() => {});
+                failedCharges++;
+            }
+        }
+
+        res.status(200).json({ 
+            status: "success", 
+            message: "Auto-billing sweep complete",
+            processed: dueMembers.length,
+            success: successfulCharges,
+            failed: failedCharges
+        });
+
+    } catch (error) {
+        console.error("❌ CRON Auto-Billing Error:", error);
+        res.status(500).send("Internal Server Error");
+    }
+});
 
 	module.exports = router;

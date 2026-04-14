@@ -346,14 +346,45 @@ async function chargeSavedToken(token, amount, reference) {
     }
 }
 
+async function chargeVaultedToken(token, amount, reference) {
+    try {
+        // NOTE: Replace this with your exact Netcash NIWS API endpoint for Token Billing
+        // Depending on your Netcash merchant setup, this is typically an XML POST to their WebServices URL
+        const NETCASH_TOKEN_API = "https://ws.netcash.co.za/NIWS/niws_nif.svc/ProcessToken"; 
+        
+        // This is a standard payload structure. Check your Netcash Tokenization API docs for the exact XML/JSON keys required by your specific account.
+        const payload = {
+            MerchantAccount: process.env.NETCASH_ACCOUNT_ID,
+            SoftwareVendorKey: process.env.NETCASH_VENDOR_KEY,
+            Token: token,
+            Amount: amount.toFixed(2),
+            Reference: reference
+        };
+
+        // Example API Call
+        const response = await axios.post(NETCASH_TOKEN_API, payload);
+
+        // Assume response.data.Status === '000' is success for this example
+        if (response.data && response.data.Status === '000') {
+            return { success: true, transactionId: response.data.TransactionId };
+        } else {
+            return { success: false, reason: response.data.Reason || "Declined by issuing bank" };
+        }
+    } catch (error) {
+        console.error("❌ Netcash Token Charge Error:", error.message);
+        return { success: false, reason: "Gateway timeout or error" };
+    }
+}
+
 module.exports = { 
     createPaymentLink, 
     generateAutoPostForm,
-	decryptReference,
+    decryptReference,
     verifyPayment, 
     getTransactionHistory,
     setupDebitOrderMandate,
     listActiveSubscriptions,
-	executeBankTransfer,
-	chargeSavedToken
+    executeBankTransfer,
+    chargeSavedToken,
+    chargeVaultedToken
 };
