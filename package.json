@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+	"seed:lwazi": "node scripts/seedLwazi.js",
     "test": "jest --detectOpenHandles",
     "start": "node index.js",
     "onboard": "node scripts/onboard.js",

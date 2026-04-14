@@ -5,6 +5,7 @@ const { calculateTransaction } = require('./pricingEngine');
 const { screenUserForRisk } = require('./complianceEngine');
 const { sendWhatsApp } = require('./whatsapp'); 
 const { generateReceiptPDF } = require('./receiptGenerator');
+const { recordSplit } = require('./ledgerEngine');
 
 const NETCASH_VALIDATE_URL = "https://paynow.netcash.co.za/site/validate.aspx";
 
@@ -145,6 +146,15 @@ async function processNetcashITN(webhookLogId) {
                     }
                 })
             ]);
+			
+			// 💰 🚀 NEW: FIRE THE LEDGER SPLITTER HERE!
+            try {
+                console.log(`💸 [LEDGER] Triggering split for TX ${tx.id}`);
+                await recordSplit(tx.id);
+            } catch (ledgerErr) {
+                console.error(`❌ [LEDGER] Split failed for TX ${tx.id}:`, ledgerErr);
+                // We don't throw here so the user still gets their receipt below even if the ledger math hiccups
+            }
 
             // 💳 STEP 3.5: SEABE ID VAULTING
             if (token && tx.memberId) {
