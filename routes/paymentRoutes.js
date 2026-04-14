@@ -78,7 +78,8 @@
 	// 1. Render the Payment Input Screen
 	router.get('/pay', async (req, res) => {
 		try {
-			const { memberId, code, apptId, amount } = req.query;
+			// 🚀 UPDATED: Grab targetIds and type
+			const { memberId, code, apptId, amount, targetIds, type } = req.query;
 
 			// ----------------------------------------------------
 			// SCENARIO A: SALON / APPOINTMENT DEPOSIT
@@ -92,7 +93,6 @@
 				if (!appointment) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Appointment not found.', true));
 
 				const org = appointment.church;
-				// Use the amount passed in the URL (from the bot), or calculate 25% fallback
 				const depositAmount = amount || (appointment.product.price * 0.25).toFixed(2);
 
 				return res.send(`
@@ -131,7 +131,54 @@
 			}
 
 			// ----------------------------------------------------
-			// SCENARIO B: STOKVEL / SOCIETY CONTRIBUTION
+			// 🚀 NEW SCENARIO B: LWAZI MULTI-SUBSCRIPTION
+			// ----------------------------------------------------
+			if (type && type.startsWith('LWAZI')) {
+				const payer = await prisma.member.findUnique({
+					where: { id: parseInt(req.query.payerId || memberId) }
+				});
+
+				if (!payer) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Payer profile not found.', true));
+
+				return res.send(`
+					<!DOCTYPE html>
+					<html>
+					<head>
+						<meta name="viewport" content="width=device-width, initial-scale=1">
+						<title>Lwazi Premium Setup</title>
+						<style>${seabeStyles}</style>
+					</head>
+					<body>
+						<div class="card">
+							<div class="tag">EDUCATION</div>
+							<h2>Lwazi Premium</h2>
+							<p style="margin-bottom: 20px;">Monthly Auto-Renewing Subscription</p>
+							
+							<form action="/pay/process" method="POST">
+								<input type="hidden" name="memberId" value="${payer.id}">
+								<input type="hidden" name="type" value="${type}">
+								<input type="hidden" name="targetIds" value="${targetIds || ''}"> 
+								
+								<div class="input-group">
+									<label>Total Monthly Amount</label>
+									<div class="currency-wrapper">
+										<span>ZAR</span>
+										<input type="number" name="amount" step="0.01" value="${amount}" readonly style="background:#f8f9fa; color:#7f8c8d;">
+									</div>
+								</div>
+								
+								<button type="submit" class="btn">Start Subscription</button>
+							</form>
+							<div style="margin-top: 15px; font-size: 11px; color: #95a5a6;">🔒 Secured by Netcash & Capitec Pay</div>
+						</div>
+						<div class="seabe-brand">Secured by Seabe <span>Pay</span></div>
+					</body>
+					</html>
+				`);
+			}
+
+			// ----------------------------------------------------
+			// SCENARIO C: STOKVEL / SOCIETY CONTRIBUTION
 			// ----------------------------------------------------
 			if (memberId && code) {
 				const member = await prisma.member.findUnique({
@@ -188,92 +235,108 @@
 	});
 
 	// 2. Process the Payment and Auto-Redirect via netcash.js
-router.post('/pay/process', express.urlencoded({ extended: true }), async (req, res) => {
-    try {
-        const { memberId, code, amount, apptId } = req.body;
-        const payAmount = parseFloat(amount);
+	router.post('/pay/process', express.urlencoded({ extended: true }), async (req, res) => {
+		try {
+			// 🚀 UPDATED: Extract targetIds and type
+			const { memberId, code, amount, apptId, targetIds, type } = req.body;
+			const payAmount = parseFloat(amount);
 
-        // 🚀 FIX 1: Correctly declared 'reference'
-        let org, reference, txType, description, phone, dbMemberId;
+			let org, reference, txType, description, phone, dbMemberId, notes;
 
-        // ----------------------------------------------------
-        // SCENARIO A: SALON / APPOINTMENT DEPOSIT
-        // ----------------------------------------------------
-        if (apptId) {
-            const appointment = await prisma.appointment.findUnique({
-                where: { id: parseInt(apptId) },
-                include: { church: true, member: true, product: true }
-            });
-            if (!appointment) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Appointment not found.', true));
+			// ----------------------------------------------------
+			// SCENARIO A: SALON / APPOINTMENT DEPOSIT
+			// ----------------------------------------------------
+			if (apptId) {
+				const appointment = await prisma.appointment.findUnique({
+					where: { id: parseInt(apptId) },
+					include: { church: true, member: true, product: true }
+				});
+				if (!appointment) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Appointment not found.', true));
 
-            org = appointment.church;
-            reference = `APPT-${appointment.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`; 
-            txType = 'Personal Grooming';
-            description = `Deposit: ${appointment.product.name}`;
-            phone = appointment.member.phone;
-            dbMemberId = appointment.memberId;
-        } 
-        // ----------------------------------------------------
-        // SCENARIO B: STOKVEL / SOCIETY CONTRIBUTION
-        // ----------------------------------------------------
-        else if (memberId && code) {
-            const member = await prisma.member.findUnique({ 
-                where: { id: parseInt(memberId) },
-                include: { church: true }
-            });
-            if (!member || !member.church) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Organization or member not found.', true));
+				org = appointment.church;
+				reference = `APPT-${appointment.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`; 
+				txType = 'Personal Grooming';
+				description = `Deposit: ${appointment.product.name}`;
+				phone = appointment.member.phone;
+				dbMemberId = appointment.memberId;
+			} 
+			// ----------------------------------------------------
+			// 🚀 NEW SCENARIO B: LWAZI MULTI-SUBSCRIPTION
+			// ----------------------------------------------------
+			else if (type && type.startsWith('LWAZI')) {
+				const member = await prisma.member.findUnique({ 
+					where: { id: parseInt(memberId) },
+					include: { church: true }
+				});
+				if (!member) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Member not found.', true));
 
-            org = member.church;
-            reference = `STK-${member.id}-${Date.now().toString().slice(-6)}`;
-            txType = 'CONTRIBUTION';
-            description = `Contribution to ${org.name}`;
-            
-            // 🚀 FIX 2: Correctly grabs the member's actual phone number
-            phone = member.phone; 
-            dbMemberId = parseInt(memberId);
-        } else {
-            return res.send(renderPage('Error', '⚠️', 'Invalid Request', 'Missing payment parameters.', true));
-        }
+				org = member.church || { code: 'LWAZI_HQ', name: 'Lwazi Caps Tutor' };
+				reference = `LWAZI-${member.id}-${Date.now().toString().slice(-6)}`;
+				txType = type; // LWAZI_MULTI or LWAZI_SUB
+				description = `Lwazi Premium Subscription`;
+				phone = member.phone; 
+				dbMemberId = parseInt(memberId);
+				notes = targetIds || null; // 📦 THE HANDOFF: Save the target IDs for the Webhook Worker!
+			}
+			// ----------------------------------------------------
+			// SCENARIO C: STOKVEL / SOCIETY CONTRIBUTION
+			// ----------------------------------------------------
+			else if (memberId && code) {
+				const member = await prisma.member.findUnique({ 
+					where: { id: parseInt(memberId) },
+					include: { church: true }
+				});
+				if (!member || !member.church) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Organization or member not found.', true));
 
-        // 1. Calculate precise fees
-        const fees = await calculateTransaction(payAmount, 'STANDARD', 'PAYMENT_LINK', true);
+				org = member.church;
+				reference = `STK-${member.id}-${Date.now().toString().slice(-6)}`;
+				txType = 'CONTRIBUTION';
+				description = `Contribution to ${org.name}`;
+				phone = member.phone; 
+				dbMemberId = parseInt(memberId);
+			} else {
+				return res.send(renderPage('Error', '⚠️', 'Invalid Request', 'Missing payment parameters.', true));
+			}
 
-        // 2. Safely log the PENDING transaction
-        await prisma.transaction.create({
-            data: {
-                reference: reference,
-                amount: fees.totalChargedToUser,
-                netcashFee: fees.netcashFee,
-                platformFee: fees.platformFee,
-                // 🚀 FIX 3: Uses the correct schema field name
-                netSettlement: fees.netSettlement,
-                status: 'PENDING',
-                type: txType,
-                churchCode: org.code,
-                phone: phone,
-                memberId: dbMemberId
-            }
-        });
+			// 1. Calculate precise fees
+			const fees = await calculateTransaction(payAmount, 'STANDARD', 'PAYMENT_LINK', true);
 
-        // 3. Tell netcash.js to generate the exact compliant form
-        const txData = {
-            reference: reference,
-            amount: fees.totalChargedToUser,
-            description: description,
-            email: org.email || '', 
-            phone: phone
-        };
+			// 2. Safely log the PENDING transaction
+			await prisma.transaction.create({
+				data: {
+					reference: reference,
+					amount: fees.totalChargedToUser,
+					netcashFee: fees.netcashFee,
+					platformFee: fees.platformFee,
+					netSettlement: fees.netSettlement,
+					status: 'PENDING',
+					type: txType,
+					churchCode: org.code,
+					phone: phone,
+					memberId: dbMemberId,
+					notes: notes // 📦 Pushed safely to DB!
+				}
+			});
 
-        const htmlForm = netcash.generateAutoPostForm(txData);
+			// 3. Tell netcash.js to generate the exact compliant form
+			const txData = {
+				reference: reference,
+				amount: fees.totalChargedToUser,
+				description: description,
+				email: org.email || '', 
+				phone: phone
+			};
 
-        // 4. Send the auto-submitting Netcash loader to the user's phone
-        res.send(htmlForm);
+			const htmlForm = netcash.generateAutoPostForm(txData);
 
-    } catch (error) {
-        console.error("Payment Process Error:", error);
-        res.send(renderPage('Error', '⚠️', 'Gateway Error', 'An error occurred connecting to Netcash.', true));
-    }
-});
+			// 4. Send the auto-submitting Netcash loader to the user's phone
+			res.send(htmlForm);
+
+		} catch (error) {
+			console.error("Payment Process Error:", error);
+			res.send(renderPage('Error', '⚠️', 'Gateway Error', 'An error occurred connecting to Netcash.', true));
+		}
+	});
 
 	// ==========================================
     // 💳 BROWSER SUCCESS REDIRECT (Netcash Return URL)
