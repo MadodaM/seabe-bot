@@ -61,6 +61,7 @@ const syncToHubSpot = async (data) => {
     if(process.env.NODE_ENV === 'development') console.log("📝 HubSpot Sync:", data);
 };
 
+
 // ==========================================
 // 3. MOUNT ROUTES
 // ==========================================
@@ -71,6 +72,9 @@ app.use('/meta-webhook', metaRouter);
 app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacy.html')));
 app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
 app.get('/passport-test', (req, res) => res.sendFile(path.join(__dirname, 'views', 'credit-passport.html')));
+app.get('/lwazi', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'lwazi.html'));
+});
 
 // B. Core System Modules
 app.use('/', require('./routes/checkout'));
