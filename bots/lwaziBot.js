@@ -3,16 +3,14 @@ const prisma = new PrismaClient();
 const { calculateTransaction } = require('../services/pricingEngine');
 const { processLmsMessage } = require('./LMSlogicBot'); 
 
-// 🚀 Explicitly define the Lwazi Sender ID
 const LWAZI_NUMBER = 'whatsapp:+27875511057';
 
-async function processLwaziMessage(phone, msg, mediaUrl, sendWhatsApp) {
-    // Helper function to force all Lwazi messages through the correct number
+async function processLwaziMessage(phone, msg, session, mediaUrl, sendWhatsApp) {
     const sendLwazi = async (to, body, media = null) => {
         return await sendWhatsApp(to, body, media, LWAZI_NUMBER);
     };
 
-    // 1. Fetch or Create the Lwazi User
+    // 1. Fetch or Create the Payer User
     let member = await prisma.member.findFirst({
         where: { phone: phone, churchCode: 'LWAZI_HQ' }
     });
@@ -24,47 +22,173 @@ async function processLwaziMessage(phone, msg, mediaUrl, sendWhatsApp) {
                 data: { name: 'Lwazi Caps Tutor', code: 'LWAZI_HQ', type: 'ACADEMY', accountStatus: 'ACTIVE' }
             });
         }
-
         member = await prisma.member.create({
             data: { phone: phone, firstName: 'Student', lastName: '.', churchId: lwaziOrg.id, status: 'PENDING_SUBSCRIPTION' }
         });
-        
-        await sendLwazi(phone, "🦉 *Welcome to Lwazi Caps Micro-Tutor!*\n\nYour pocket-sized, CAPS-aligned AI tutor for Grades 4-12.\n\nTo unlock daily quizzes, step-by-step math breakdowns, and past papers, subscribe for just *R69/month*.\n\nReply *Subscribe* to get your secure payment link.");
+        await sendLwazi(phone, "🦉 *Welcome to Lwazi Caps Micro-Tutor!*\n\nYour pocket-sized, CAPS-aligned AI tutor for Grades 4-12.\n\nTo unlock daily quizzes and step-by-step math breakdowns, subscribe for just *R69/month*.\n\nReply *Subscribe* to get started.");
         return;
     }
 
-    // 2. Handle Subscription & Pricing Engine
-    if (msg === 'subscribe' || member.status === 'PENDING_SUBSCRIPTION') {
-        const pricing = await calculateTransaction(69.00, 'LWAZI_SUB', 'CARD', false);
-        const host = process.env.HOST_URL || 'https://seabe.tech';
-        
-        const payLink = `${host}/pay?memberId=${member.id}&amount=${pricing.totalChargedToUser}&type=LWAZI&setupToken=true`;
-
-        await sendLwazi(phone, `📚 *Lwazi Premium Subscription*\n\nMonthly Fee: R${pricing.totalChargedToUser.toFixed(2)}\n\n💳 *Tap to securely link your card:*\n👉 ${payLink}\n\nYour card will be charged R69 today, and automatically every 30 days. You can cancel at any time.`);
+    // ================================================
+    // 🛒 NOMINATION & CHECKOUT FLOW
+    // ================================================
+    if (msg === 'subscribe' || msg === 'buy') {
+        session.step = 'LWAZI_CHOOSE_PLAN';
+        session.nominatedNumbers = [];
+        await sendLwazi(phone, "📚 *Lwazi Premium Subscription*\n\nWho will be using this subscription?\n\n1️⃣ *Myself*\n2️⃣ *Nominate Students* (Add up to 5 numbers. The 4th and 5th students get a 5% discount!)\n\n_Reply 1 or 2_");
         return;
     }
 
-    // 3. Subscription Gatekeeper
+    if (session.step === 'LWAZI_CHOOSE_PLAN') {
+        if (msg === '1') {
+            session.nominatedNumbers = [phone];
+            return await generateLwaziCheckout(phone, member, session, sendLwazi);
+        } else if (msg === '2') {
+            session.step = 'LWAZI_COLLECT_NUMBERS';
+            await sendLwazi(phone, "📱 Please reply with the *WhatsApp number* of the first student (e.g., 0821234567):");
+            return;
+        } else {
+            await sendLwazi(phone, "⚠️ Please reply with 1 or 2.");
+            return;
+        }
+    }
+
+    if (session.step === 'LWAZI_COLLECT_NUMBERS') {
+        let targetPhone = msg.replace(/\D/g, ''); // Remove non-numbers
+        if (targetPhone.startsWith('0')) targetPhone = '27' + targetPhone.substring(1);
+        
+        if (targetPhone.length < 10) {
+             await sendLwazi(phone, "⚠️ Invalid number. Please enter a valid South African mobile number (e.g., 0821234567).");
+             return;
+        }
+
+        if (!session.nominatedNumbers) session.nominatedNumbers = [];
+        if (!session.nominatedNumbers.includes(targetPhone)) {
+             session.nominatedNumbers.push(targetPhone);
+        }
+
+        if (session.nominatedNumbers.length >= 5) {
+             await sendLwazi(phone, "✅ Maximum of 5 students reached! Generating your checkout link...");
+             return await generateLwaziCheckout(phone, member, session, sendLwazi);
+        } else {
+             session.step = 'LWAZI_MORE_NUMBERS';
+             await sendLwazi(phone, `✅ Added +${targetPhone}.\n\nYou have added ${session.nominatedNumbers.length}/5 students.\n\nReply *1* to add another student.\nReply *2* to proceed to checkout.`);
+             return;
+        }
+    }
+
+    if (session.step === 'LWAZI_MORE_NUMBERS') {
+        if (msg === '1') {
+             session.step = 'LWAZI_COLLECT_NUMBERS';
+             await sendLwazi(phone, "📱 Please reply with the *WhatsApp number* of the next student:");
+        } else if (msg === '2') {
+             return await generateLwaziCheckout(phone, member, session, sendLwazi);
+        } else {
+             await sendLwazi(phone, "⚠️ Please reply with 1 or 2.");
+        }
+        return;
+    }
+
+    // ================================================
+    // 🛡️ GATEKEEPER & LMS ROUTING
+    // ================================================
     if (member.status !== 'ACTIVE') {
         await sendLwazi(phone, "⚠️ Your Lwazi subscription is inactive. Reply *Subscribe* to restore access.");
         return;
     }
+	
+	// ================================================
+    // 🛑 THE UNSUBSCRIBE TRAPDOOR
+    // ================================================
+    if (msg === 'cancel' || msg === 'unsubscribe' || msg === 'stop billing') {
+        session.step = 'CONFIRM_CANCEL';
+        await sendLwazi(phone, "⚠️ *Cancel Subscription*\n\nAre you sure you want to cancel your Lwazi Premium subscription? You will lose access to the AI Tutor and daily quizzes immediately.\n\nReply *YES* to confirm cancellation, or *NO* to keep learning.");
+        return;
+    }
 
-    // 4. Lwazi Main Menu
+    if (session.step === 'CONFIRM_CANCEL') {
+        if (msg === 'yes') {
+            // 1. Cancel their membership
+            await prisma.member.update({
+                where: { id: member.id },
+                data: { status: 'CANCELED' }
+            });
+
+            // 2. Disable their vaulted cards so the CRON job ignores them
+            await prisma.paymentMethod.updateMany({
+                where: { memberId: member.id },
+                data: { isDefault: false }
+            });
+
+            session.step = null;
+            await sendLwazi(phone, "🛑 *Subscription Canceled*\n\nYour automatic billing has been securely stopped, and your card has been unlinked. We are sorry to see you go!\n\nIf you ever want to return, just reply *Subscribe*.");
+            return;
+        } else if (msg === 'no') {
+            session.step = null;
+            await sendLwazi(phone, "✅ Cancellation aborted. We are glad you're staying! Reply *Menu* to continue learning.");
+            return;
+        }
+    }
+
     if (msg === 'menu' || msg === 'hi') {
         await sendLwazi(phone, "🦉 *Lwazi Main Menu*\n\n1️⃣ *Courses* - Browse CAPS subjects by Grade\n2️⃣ *Tutor* - Send a photo of a math problem for AI help\n3️⃣ *Profile* - View your progress\n\n_Reply with a word above._");
         return;
     }
 
-    // 5. 🚀 THE MAGIC: Pass everything else into the existing AI Tutor!
-    const dummySession = { step: null }; 
-    
-    // We override the sendWhatsApp function inside processLmsMessage by wrapping it
-    const lmsResult = await processLmsMessage(phone, msg, dummySession, member, mediaUrl, sendLwazi);
-
+    // Pass everything else to the AI Tutor
+    const lmsResult = await processLmsMessage(phone, msg, session, member, mediaUrl, sendLwazi);
     if (!lmsResult.handled) {
         await sendLwazi(phone, "I didn't quite catch that. Reply *Menu*, *Courses*, or *Tutor*.");
     }
+}
+
+/**
+ * 🧮 Dynamic Checkout Generator
+ */
+async function generateLwaziCheckout(payerPhone, payerMember, session, sendLwazi) {
+    let totalBaseCost = 0;
+    let breakdownMsg = "🛒 *Subscription Summary*\n\n";
+    let targetIds = [];
+
+    for (let i = 0; i < session.nominatedNumbers.length; i++) {
+        const num = session.nominatedNumbers[i];
+        
+        // Math Logic: 4th and 5th sub (index 3 and 4) get 5% discount
+        let cost = 69.00;
+        let note = "";
+        if (i === 3 || i === 4) { 
+            cost = 69.00 * 0.95; 
+            note = " *(5% OFF)*";
+        }
+        totalBaseCost += cost;
+        breakdownMsg += `👤 Student ${i + 1} (+${num}): R${cost.toFixed(2)}${note}\n`;
+
+        // Create 'Shadow' profiles for the students so the webhook can activate them
+        let student = await prisma.member.findFirst({ where: { phone: num, churchCode: 'LWAZI_HQ' } });
+        if (!student) {
+            let lwaziOrg = await prisma.church.findUnique({ where: { code: 'LWAZI_HQ' } });
+            student = await prisma.member.create({
+                 data: { phone: num, firstName: 'Lwazi', lastName: 'Student', churchId: lwaziOrg.id, status: 'PENDING_SUBSCRIPTION' }
+            });
+        }
+        targetIds.push(student.id);
+    }
+
+    const pricing = await calculateTransaction(totalBaseCost, 'LWAZI_SUB', 'CARD', true);
+    const host = process.env.HOST_URL || 'https://seabe.tech';
+    
+    // We pass the IDs in the URL so your web form can save them to the Transaction record
+    const idsParam = targetIds.join(',');
+    const payLink = `${host}/pay?targetIds=${idsParam}&payerId=${payerMember.id}&amount=${pricing.totalChargedToUser}&type=LWAZI_MULTI&setupToken=true`;
+
+    breakdownMsg += `\n*Total Due:* R${pricing.totalChargedToUser.toFixed(2)} / month\n\n`;
+    breakdownMsg += `💳 *Tap to securely activate all subscriptions:*\n👉 ${payLink}\n\n`;
+    breakdownMsg += `_Students will receive a welcome message instantly upon payment._`;
+
+    await sendLwazi(payerPhone, breakdownMsg);
+    
+    session.step = null; 
+    session.nominatedNumbers = [];
 }
 
 module.exports = { processLwaziMessage };

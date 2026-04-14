@@ -49,6 +49,18 @@ router.post('/', (req, res) => {
     res.type('text/xml').send('<Response></Response>');
 
     (async () => {
+		
+		if (dbSession) {
+                const lastUpdate = new Date(dbSession.updatedAt).getTime();
+                const now = Date.now();
+                if (now - lastUpdate > SESSION_TTL) {
+                    console.log(`🧹 [SESSION] Expired session wiped for ${cleanPhone}.`);
+                    session = {}; 
+                    clearSessionFlag = true; 
+                } else {
+                    session = { step: dbSession.step, mode: dbSession.mode, ...(dbSession.data || {}) };
+                }
+            }
         
         // ================================================
         // 🚀 LWAZI INTERCEPTOR (B2C EdTech)
