@@ -12,7 +12,7 @@ if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
     twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 }
 
-// Background Sender with Smart Chunking to bypass Twilio's 1600 char limit
+// Background Sender with Smart Chunking to bypass Twilio's 1600 char limit (Used for Seabe Pay default)
 const sendWhatsApp = async (to, body) => {
     if (!twilioClient) return console.log("⚠️ Twilio Keys Missing! Could not send message.");
     const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
@@ -66,10 +66,13 @@ const sendWhatsApp = async (to, body) => {
 
 /**
  * Handles all LMS / Academy logic. 
- * 🚀 FIXED: Added `mediaUrl` to the signature to handle WhatsApp images!
+ * 🚀 FIXED: Added `customSender` to the signature to support Lwazi Multi-tenancy!
  */
-async function processLmsMessage(cleanPhone, incomingMsg, session, member, mediaUrl = null) {
+async function processLmsMessage(cleanPhone, incomingMsg, session, member, mediaUrl = null, customSender = null) {
     
+    // 🧠 THE ROUTER: If a custom sender (Lwazi) is passed, use it. Otherwise, use the default chunker above.
+    const reply = customSender ? customSender : sendWhatsApp;
+
     // 1. Normalize the message to be 100% safe
     const rawMsg = incomingMsg; 
     const cleanMsg = (incomingMsg || '').toLowerCase().trim();
@@ -89,7 +92,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
         'COURSE_ACTIONS', 
         'UPDATE_NAME_FIRST', 
         'UPDATE_NAME_LAST',
-        'AWAITING_TUTOR_QUESTION' // 👈 Added new state here
+        'AWAITING_TUTOR_QUESTION' 
     ];
 
     const isSystemCommand = systemCommands.includes(cleanMsg);
@@ -102,28 +105,28 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
     
     if (tutorTriggers.includes(cleanMsg)) {
         session.step = 'AWAITING_TUTOR_QUESTION';
-        await sendWhatsApp(cleanPhone, "🧠 *AI Tutor Mode*\n\nSend me your question, or upload a clear photo of a math/logic problem. I'll break it down and show you how to solve it step-by-step!\n\n_Reply *Cancel* to exit._");
+        await reply(cleanPhone, "🧠 *AI Tutor Mode*\n\nSend me your question, or upload a clear photo of a math/logic problem. I'll break it down and show you how to solve it step-by-step!\n\n_Reply *Cancel* to exit._");
         return { handled: true, clearSessionFlag: false };
     }
 
     if (session.step === 'AWAITING_TUTOR_QUESTION') {
         if (cleanMsg === 'cancel' || cleanMsg === 'exit') {
             session.step = null;
-            await sendWhatsApp(cleanPhone, "🔙 Exited Tutor Mode. Reply *Menu* to see your options.");
+            await reply(cleanPhone, "🔙 Exited Tutor Mode. Reply *Menu* to see your options.");
             return { handled: true, clearSessionFlag: false };
         }
 
         if (!rawMsg && !mediaUrl) {
-            await sendWhatsApp(cleanPhone, "⚠️ Please type a question or send a photo of a problem.");
+            await reply(cleanPhone, "⚠️ Please type a question or send a photo of a problem.");
             return { handled: true, clearSessionFlag: false };
         }
 
-        await sendWhatsApp(cleanPhone, "⏳ *Analyzing your problem...*");
+        await reply(cleanPhone, "⏳ *Analyzing your problem...*");
 
         try {
             const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
             const aiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
+    
             // Structure the prompt to force logical, step-by-step breakdowns
             const promptParts = [
                 "You are an expert, highly patient AI tutor helping a student on WhatsApp.",
@@ -136,7 +139,6 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
 
             // 📸 Securely fetch the Twilio Image if one was sent
             if (mediaUrl) {
-                // Using Basic Auth in case your Twilio account strictly protects media URLs
                 const authHeader = 'Basic ' + Buffer.from(`${process.env.TWILIO_SID}:${process.env.TWILIO_AUTH}`).toString('base64');
                 const response = await fetch(mediaUrl, { headers: { 'Authorization': authHeader } });
                 
@@ -156,14 +158,13 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
             const result = await aiModel.generateContent(promptParts);
             const aiResponse = result.response.text();
 
-            await sendWhatsApp(cleanPhone, `🎓 *Tutor Solution:*\n\n${aiResponse.trim()}\n\n_Send another question or reply *Cancel* to exit._`);
+            await reply(cleanPhone, `🎓 *Tutor Solution:*\n\n${aiResponse.trim()}\n\n_Send another question or reply *Cancel* to exit._`);
             
-            // Keep them in the loop so they can ask follow-up questions
             return { handled: true, clearSessionFlag: false };
 
         } catch (error) {
             console.error("Tutor AI Error:", error);
-            await sendWhatsApp(cleanPhone, "⚠️ I had trouble analyzing that. Please ensure the photo is clear, or try typing the question out.");
+            await reply(cleanPhone, "⚠️ I had trouble analyzing that. Please ensure the photo is clear, or try typing the question out.");
             return { handled: true, clearSessionFlag: false };
         }
     }
@@ -171,9 +172,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
     // ================================================
     // 🛑 0. LMS INTERCEPTOR: AI Quiz Evaluator
     // ================================================
-    // ONLY grade if they are NOT typing a system command, and NOT currently in a menu!
     if (member && !isSystemCommand && !isInMenu) {
-        // Find enrollment securely locked in a quiz
         const activeEnrollment = await prisma.enrollment.findFirst({
             where: { member: { phone: cleanPhone }, status: 'ACTIVE', quizState: 'AWAITING_ANSWER' },
             include: { course: true, member: true }
@@ -199,7 +198,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                 return { handled: false, clearSessionFlag: false };
             }
 
-            await sendWhatsApp(cleanPhone, "⏳ *Grading your answer...*");
+            await reply(cleanPhone, "⏳ *Grading your answer...*");
 
             try {
                 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -217,7 +216,6 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                 Return ONLY a raw JSON object (no markdown, no backticks) in this exact format:
                 {"isCorrect": true/false, "feedback": "A short, encouraging explanation of why they are right or wrong."}`;
 
-                // 🔄 AUTO-RETRY LOGIC FOR 503 ERRORS
                 let result;
                 let retries = 3;
                 
@@ -258,14 +256,14 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                     });
 
                     const replyMsg = `✅ *Correct!*\n\n${aiResponse.feedback}\n\n_Your next lesson will arrive automatically tomorrow, or reply *Next* to continue right now!_ 🚀🎓`;
-                    await sendWhatsApp(cleanPhone, replyMsg);
+                    await reply(cleanPhone, replyMsg);
                 } else {
                     const replyMsg = `❌ *Not quite!*\n\n${aiResponse.feedback}\n\n_Please try again. Reply with your new answer!_ 💡`;
-                    await sendWhatsApp(cleanPhone, replyMsg);
+                    await reply(cleanPhone, replyMsg);
                 }
             } catch (error) {
                 console.error("AI Evaluation Error:", error);
-                await sendWhatsApp(cleanPhone, "⚠️ I had a little trouble grading that just now. Please try sending your answer again.");
+                await reply(cleanPhone, "⚠️ I had a little trouble grading that just now. Please try sending your answer again.");
             }
             return { handled: true, clearSessionFlag: false };
         }
@@ -278,7 +276,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
     
     if (lmsTriggers.includes(incomingMsg)) {
         if (!member || !member.church) {
-            await sendWhatsApp(cleanPhone, "⚠️ You must be linked to an organization to view courses. Reply *Join* first.");
+            await reply(cleanPhone, "⚠️ You must be linked to an organization to view courses. Reply *Join* first.");
             return { handled: true, clearSessionFlag: false };
         }
         const courses = await prisma.course.findMany({
@@ -287,7 +285,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
         });
 
         if (courses.length === 0) {
-            await sendWhatsApp(cleanPhone, "📚 *Learning Centre*\n\nThere are currently no active courses available. Check back later!");
+            await reply(cleanPhone, "📚 *Learning Centre*\n\nThere are currently no active courses available. Check back later!");
             return { handled: true, clearSessionFlag: false };
         }
 
@@ -299,7 +297,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
 
         session.step = 'AWAITING_COURSE_SELECTION';
         session.availableCourses = courses; 
-        await sendWhatsApp(cleanPhone, msg);
+        await reply(cleanPhone, msg);
         return { handled: true, clearSessionFlag: false };
     }
 
@@ -324,12 +322,12 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
 
             if (existingEnrollment) {
                 if (existingEnrollment.status === 'COMPLETED') {
-                    await sendWhatsApp(cleanPhone, `🎓 You have already completed *${selectedCourse.title}*!\n\nCheck your dashboard to download your certificate, or type *Courses* to learn something new.`);
+                    await reply(cleanPhone, `🎓 You have already completed *${selectedCourse.title}*!\n\nCheck your dashboard to download your certificate, or type *Courses* to learn something new.`);
                     return { handled: true, clearSessionFlag: true };
                 }
 
                 if (existingEnrollment.status === 'ACTIVE') {
-                    await sendWhatsApp(cleanPhone, `✅ You are already actively enrolled in *${selectedCourse.title}*.\n\n_Check the messages above for your latest lesson, or wait for your next daily drop!_`);
+                    await reply(cleanPhone, `✅ You are already actively enrolled in *${selectedCourse.title}*.\n\n_Check the messages above for your latest lesson, or wait for your next daily drop!_`);
                     return { handled: true, clearSessionFlag: true };
                 }
 
@@ -338,7 +336,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                     const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
                     const paymentLink = `${host}/pay?enrollmentId=${existingEnrollment.id}&amount=${pricing.totalChargedToUser}`;
                     
-                    await sendWhatsApp(cleanPhone, `⏳ You have an unpaid enrollment for *${selectedCourse.title}*.\n\n*Total Due: R${pricing.totalChargedToUser.toFixed(2)}*\n\n💳 *Resume your checkout securely here:*\n👉 ${paymentLink}\n\nOnce paid, your modules will unlock automatically!`);
+                    await reply(cleanPhone, `⏳ You have an unpaid enrollment for *${selectedCourse.title}*.\n\n*Total Due: R${pricing.totalChargedToUser.toFixed(2)}*\n\n💳 *Resume your checkout securely here:*\n👉 ${paymentLink}\n\nOnce paid, your modules will unlock automatically!`);
                     return { handled: true, clearSessionFlag: true };
                 }
 
@@ -362,9 +360,9 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                         if (resumedModule.quizQuestion || resumedModule.quiz) {
                             resumeMsg += `🧠 *Your Pending Quiz:*\n${resumedModule.quizQuestion || resumedModule.quiz}\n\n_Reply with your answer to continue!_`;
                         }
-                        await sendWhatsApp(cleanPhone, resumeMsg); 
+                        await reply(cleanPhone, resumeMsg); 
                     } else {
-                        await sendWhatsApp(cleanPhone, resumeMsg);
+                        await reply(cleanPhone, resumeMsg);
                     }
                     return { handled: true, clearSessionFlag: true };
                 }
@@ -381,17 +379,17 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
             });
 
             if (selectedCourse.price == 0) {
-                await sendWhatsApp(cleanPhone, `🎉 You are now enrolled in *${selectedCourse.title}*!\n\nLook out for your first module arriving shortly.`);
+                await reply(cleanPhone, `🎉 You are now enrolled in *${selectedCourse.title}*!\n\nLook out for your first module arriving shortly.`);
             } else {
                 const pricing = calculateTransaction(selectedCourse.price, 'LMS_COURSE', 'DEFAULT', true);
                 const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
                 const paymentLink = `${host}/pay?enrollmentId=${enrollment.id}&amount=${pricing.totalChargedToUser}`;
                 
-                await sendWhatsApp(cleanPhone, `🎓 *${selectedCourse.title}*\n\nCourse Fee: *R${pricing.baseAmount.toFixed(2)}*\nService Fee: *R${pricing.totalFees.toFixed(2)}*\n*Total Due: R${pricing.totalChargedToUser.toFixed(2)}*\n\nTo unlock your modules, please complete your payment.\n\n💳 *Pay securely here:*\n👉 ${paymentLink}\n\nOnce paid, your modules will unlock automatically!`);
+                await reply(cleanPhone, `🎓 *${selectedCourse.title}*\n\nCourse Fee: *R${pricing.baseAmount.toFixed(2)}*\nService Fee: *R${pricing.totalFees.toFixed(2)}*\n*Total Due: R${pricing.totalChargedToUser.toFixed(2)}*\n\nTo unlock your modules, please complete your payment.\n\n💳 *Pay securely here:*\n👉 ${paymentLink}\n\nOnce paid, your modules will unlock automatically!`);
             }
             return { handled: true, clearSessionFlag: true }; 
         } else {
-            await sendWhatsApp(cleanPhone, "Invalid selection. Please reply with a valid course number.");
+            await reply(cleanPhone, "Invalid selection. Please reply with a valid course number.");
             return { handled: true, clearSessionFlag: false };
         }
     }
@@ -407,12 +405,12 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
         });
 
         if (!enrollment) {
-            await sendWhatsApp(cleanPhone, "❌ You are not enrolled in any active courses.\n\nReply *Courses* to browse our catalogue.");
+            await reply(cleanPhone, "❌ You are not enrolled in any active courses.\n\nReply *Courses* to browse our catalogue.");
             return { handled: true, clearSessionFlag: false };
         }
 
         if (enrollment.quizState === 'AWAITING_ANSWER') {
-            await sendWhatsApp(cleanPhone, "⚠️ Hold up! You need to answer and pass your current quiz before I can give you the next lesson! 🧠");
+            await reply(cleanPhone, "⚠️ Hold up! You need to answer and pass your current quiz before I can give you the next lesson! 🧠");
             return { handled: true, clearSessionFlag: false };
         }
 
@@ -431,7 +429,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                 lessonMessage += `_Reply *Next* when you are ready to continue!_`; 
             }
 
-            await sendWhatsApp(cleanPhone, lessonMessage); 
+            await reply(cleanPhone, lessonMessage); 
 
             await prisma.enrollment.update({
                 where: { id: enrollment.id },
@@ -443,7 +441,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                 }
             });
         } else {
-            await sendWhatsApp(cleanPhone, `🎉 *CONGRATULATIONS, ${member.firstName}!* 🎉\n\nYou have officially passed all modules and completed *${enrollment.course.title}*!\n\nWe hope you enjoyed the journey. Reply *Menu* to explore more resources or check your dashboard for your certificate.`);
+            await reply(cleanPhone, `🎉 *CONGRATULATIONS, ${member.firstName}!* 🎉\n\nYou have officially passed all modules and completed *${enrollment.course.title}*!\n\nWe hope you enjoyed the journey. Reply *Menu* to explore more resources or check your dashboard for your certificate.`);
             
             await prisma.enrollment.update({
                 where: { id: enrollment.id },
@@ -464,7 +462,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
         });
 
         if (!enrollment) {
-            await sendWhatsApp(cleanPhone, "❌ You are not enrolled in any active courses.\n\nReply *Courses* to browse our catalogue.");
+            await reply(cleanPhone, "❌ You are not enrolled in any active courses.\n\nReply *Courses* to browse our catalogue.");
             return { handled: true, clearSessionFlag: false };
         }
 
@@ -490,9 +488,9 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                     data: { quizState: 'AWAITING_ANSWER' } 
                 });
             }
-            await sendWhatsApp(cleanPhone, msg); 
+            await reply(cleanPhone, msg); 
         } else {
-            await sendWhatsApp(cleanPhone, `✅ You are all caught up! The next lesson will arrive tomorrow.`);
+            await reply(cleanPhone, `✅ You are all caught up! The next lesson will arrive tomorrow.`);
         }
         return { handled: true, clearSessionFlag: false };
     }
@@ -503,7 +501,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
     const profileKeywords = ['my profile', 'profile', 'my courses', 'settings'];
     if (profileKeywords.includes(incomingMsg)) {
         if (!member) {
-            await sendWhatsApp(cleanPhone, "⚠️ You are not registered yet. Reply *Join* to start.");
+            await reply(cleanPhone, "⚠️ You are not registered yet. Reply *Join* to start.");
             return { handled: true, clearSessionFlag: false };
         }
 
@@ -528,7 +526,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
 
         session.step = 'PROFILE_MENU';
         session.myCourses = enrollments.map(e => ({ id: e.id, title: e.course.title, progress: e.progress || 0 }));
-        await sendWhatsApp(cleanPhone, menuMsg);
+        await reply(cleanPhone, menuMsg);
         return { handled: true, clearSessionFlag: false };
     }
 
@@ -546,16 +544,16 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                 msg += `You are currently on Day ${selectedCourse.progress}.\n\n👇 *What would you like to do?*\n`;
                 msg += `1. *Resume* (Get today's lesson)\n2. *Previous* (Go back to yesterday's lesson)\n3. *Back* (Return to profile)`;
                 
-                await sendWhatsApp(cleanPhone, msg);
+                await reply(cleanPhone, msg);
             } else {
-                await sendWhatsApp(cleanPhone, "⚠️ Invalid course number. Please reply with 'View 1', 'View 2', etc.");
+                await reply(cleanPhone, "⚠️ Invalid course number. Please reply with 'View 1', 'View 2', etc.");
             }
             return { handled: true, clearSessionFlag: false };
         }
 
         if (incomingMsg === 'update name') {
             session.step = 'UPDATE_NAME_FIRST';
-            await sendWhatsApp(cleanPhone, "📝 Please reply with your *First Name*:");
+            await reply(cleanPhone, "📝 Please reply with your *First Name*:");
             return { handled: true, clearSessionFlag: false };
         }
     }
@@ -568,7 +566,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
         });
 
         if (!enrollment) {
-            await sendWhatsApp(cleanPhone, "⚠️ Error loading course. Type *Profile* to restart.");
+            await reply(cleanPhone, "⚠️ Error loading course. Type *Profile* to restart.");
             return { handled: true, clearSessionFlag: false };
         }
 
@@ -592,10 +590,10 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                     await prisma.enrollment.update({ where: { id: enrollment.id }, data: { quizState: 'AWAITING_ANSWER' }});
                 }
                 
-                await sendWhatsApp(cleanPhone, msg); 
+                await reply(cleanPhone, msg); 
                 session.step = null; 
             } else {
-                await sendWhatsApp(cleanPhone, "✅ You are up to date!");
+                await reply(cleanPhone, "✅ You are up to date!");
             }
             return { handled: true, clearSessionFlag: false };
         }
@@ -604,7 +602,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
             const currentDay = enrollment.progress || 1;
             
             if (currentDay <= 1) {
-                await sendWhatsApp(cleanPhone, "⚠️ You are on Day 1. There is no previous lesson.");
+                await reply(cleanPhone, "⚠️ You are on Day 1. There is no previous lesson.");
                 return { handled: true, clearSessionFlag: false };
             }
 
@@ -614,16 +612,16 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
 
             if (module) {
                 let msg = `⏮️ *PREVIOUS LESSON: ${enrollment.course.title}* (Day ${currentDay - 1})\n\n*${module.title}*\n\n${module.content || module.dailyLessonText}`;
-                await sendWhatsApp(cleanPhone, msg); 
+                await reply(cleanPhone, msg); 
             } else {
-                await sendWhatsApp(cleanPhone, `⚠️ Could not find content for Day ${currentDay - 1}.`);
+                await reply(cleanPhone, `⚠️ Could not find content for Day ${currentDay - 1}.`);
             }
             return { handled: true, clearSessionFlag: false };
         }
 
         if (incomingMsg === '3' || incomingMsg === 'back') {
             session.step = null;
-            await sendWhatsApp(cleanPhone, "🔙 Returned to main menu. Reply *Profile* to see your list again.");
+            await reply(cleanPhone, "🔙 Returned to main menu. Reply *Profile* to see your list again.");
             return { handled: true, clearSessionFlag: false };
         }
     }
@@ -631,7 +629,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
     if (session.step === 'UPDATE_NAME_FIRST') {
         session.newFirstName = rawMsg.trim(); 
         session.step = 'UPDATE_NAME_LAST';
-        await sendWhatsApp(cleanPhone, `Thanks ${session.newFirstName}. Now, please reply with your *Surname*:`);
+        await reply(cleanPhone, `Thanks ${session.newFirstName}. Now, please reply with your *Surname*:`);
         return { handled: true, clearSessionFlag: false };
     }
 
@@ -643,7 +641,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
             data: { firstName: session.newFirstName, lastName: newLastName }
         });
         
-        await sendWhatsApp(cleanPhone, `✅ Profile Updated!\n\nNice to meet you, *${session.newFirstName} ${newLastName}*.\n\nReply *Menu* to continue.`);
+        await reply(cleanPhone, `✅ Profile Updated!\n\nNice to meet you, *${session.newFirstName} ${newLastName}*.\n\nReply *Menu* to continue.`);
         return { handled: true, clearSessionFlag: true }; 
     }
 
