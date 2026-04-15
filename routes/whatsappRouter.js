@@ -49,33 +49,6 @@ router.post('/', (req, res) => {
     res.type('text/xml').send('<Response></Response>');
 
     (async () => {
-		
-		if (dbSession) {
-                const lastUpdate = new Date(dbSession.updatedAt).getTime();
-                const now = Date.now();
-                if (now - lastUpdate > SESSION_TTL) {
-                    console.log(`🧹 [SESSION] Expired session wiped for ${cleanPhone}.`);
-                    session = {}; 
-                    clearSessionFlag = true; 
-                } else {
-                    session = { step: dbSession.step, mode: dbSession.mode, ...(dbSession.data || {}) };
-                }
-            }
-        
-        // ================================================
-        // 🚀 LWAZI INTERCEPTOR (B2C EdTech)
-        // ================================================
-        const toPhone = req.body.To || '';
-        // If they messaged the Lwazi Number, send it to the Lwazi Bot and stop.
-        if (toPhone.includes('27875511057')) { 
-            try {
-                await processLwaziMessage(cleanPhone, incomingMsg, mediaUrl, sendWhatsApp);
-            } catch (e) {
-                console.error("❌ Lwazi Router Error:", e);
-            }
-            return; // 🛑 HALT: Do not run any Seabe Pay / Church logic
-        }
-
         let session = {};
         let clearSessionFlag = false; 
 
@@ -95,8 +68,8 @@ router.post('/', (req, res) => {
                 // 2. Check if the session has expired (older than 24h)
                 if (now - lastUpdate > SESSION_TTL) {
                     console.log(`🧹 [SESSION] Expired session wiped for ${cleanPhone}.`);
-                    session = {}; // Start fresh
-                    clearSessionFlag = true; // Tell the DB to wipe it at the end of the route
+                    session = {}; 
+                    clearSessionFlag = true; 
                 } else {
                     // Session is valid, load it
                     session = { step: dbSession.step, mode: dbSession.mode, ...(dbSession.data || {}) };
@@ -105,6 +78,20 @@ router.post('/', (req, res) => {
 
             const numMedia = parseInt(req.body.NumMedia || '0'); 
             
+            // ================================================
+            // 🚀 LWAZI INTERCEPTOR (B2C EdTech)
+            // ================================================
+            const toPhone = req.body.To || '';
+            // If they messaged the Lwazi Number, send it to the Lwazi Bot and stop.
+            if (toPhone.includes('27875511057')) { 
+                try {
+                    await processLwaziMessage(cleanPhone, incomingMsg, session, mediaUrl, sendWhatsApp);
+                } catch (e) {
+                    console.error("❌ Lwazi Router Error:", e);
+                }
+                return; // 🛑 HALT: Do not run any Seabe Pay / Church logic
+            }
+
             // ================================================
             // 🔄 MULTI-TENANT CONTEXT SWITCHER
             // ================================================
