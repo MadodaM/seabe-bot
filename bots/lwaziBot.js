@@ -143,7 +143,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     }
     
     // ================================================
-    // 🛑 THE UNSUBSCRIBE TRAPDOOR
+    // 🛑 THE UNSUBSCRIBE TRAPDOOR (Must be ABOVE the Paywall!)
     // ================================================
     if (msg === 'cancel' || msg === 'unsubscribe' || msg === 'stop billing') {
         session.step = 'CONFIRM_CANCEL';
@@ -153,17 +153,8 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
 
     if (session.step === 'CONFIRM_CANCEL') {
         if (msg === 'yes') {
-            // 1. Cancel their membership
-            await prisma.member.update({
-                where: { id: member.id },
-                data: { status: 'CANCELED' }
-            });
-
-            // 2. Disable their vaulted cards so the CRON job ignores them
-            await prisma.paymentMethod.updateMany({
-                where: { memberId: member.id },
-                data: { isDefault: false }
-            });
+            await prisma.member.update({ where: { id: member.id }, data: { status: 'CANCELED' } });
+            await prisma.paymentMethod.updateMany({ where: { memberId: member.id }, data: { isDefault: false } });
 
             session.step = null;
             await sendLwazi(phone, "🛑 *Subscription Canceled*\n\nYour automatic billing has been securely stopped, and your card has been unlinked. We are sorry to see you go!\n\nIf you ever want to return, just reply *Subscribe*.");
@@ -175,6 +166,25 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
         }
     }
 
+    // ================================================
+    // 🛡️ THE PREMIUM PAYWALL GATEKEEPER
+    // ================================================
+    if (member.status !== 'ACTIVE') {
+        const paywallMsg = `🔒 *Lwazi Premium Locked*\n\n` +
+                           `Unlock your full academic potential with Lwazi Premium! For just *R69/month*, you get:\n\n` +
+                           `🧠 *Unlimited AI Tutor:* 24/7 help with Math, Science, and more.\n` +
+                           `📚 *CAPS-Aligned Courses:* Step-by-step daily lessons.\n` +
+                           `📝 *Smart Quizzes:* Instant grading and feedback.\n` +
+                           `👨‍👩‍👧‍👦 *Family Plan:* Discounts when adding multiple students.\n\n` +
+                           `_Reply *Subscribe* to activate your account and start learning today!_`;
+        
+        await sendLwazi(phone, paywallMsg);
+        return;
+    }
+
+    // ================================================
+    // 🎓 MAIN MENU & LMS ROUTING (Active Members Only)
+    // ================================================
     if (msg === 'menu' || msg === 'hi') {
         await sendLwazi(phone, "🦉 *Lwazi Main Menu*\n\n1️⃣ *Courses* - Browse CAPS subjects by Grade\n2️⃣ *Tutor* - Send a photo of a math problem for AI help\n3️⃣ *Profile* - View your progress\n\n_Reply with a word above._");
         return;
