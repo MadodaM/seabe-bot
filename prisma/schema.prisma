@@ -219,6 +219,8 @@ model Transaction {
   deletedAt       DateTime?
   archived        Boolean   @default(false)
   retentionExpiry DateTime?
+  // 📦 THE FIX: Add the notes column to store our targetIds!
+  notes           String?
 }
 
 model Event {
