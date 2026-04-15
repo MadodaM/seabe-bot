@@ -63,11 +63,21 @@ const sendWhatsApp = async (to, body) => {
         }
     }
 };
+ 
+// 📈 NEW: Activity Logger for Parent Report Cards
+async function logStudentActivity(studentId, actionType, subject, score = null) {
+    try {
+        await prisma.studyLog.create({
+            data: { memberId: studentId, actionType, subject, score }
+        });
+    } catch (e) { console.error("Failed to log study activity:", e); }
+}
 
 /**
  * Handles all LMS / Academy logic. 
  * 🚀 FIXED: Added `customSender` to the signature to support Lwazi Multi-tenancy!
  */
+ 
 async function processLmsMessage(cleanPhone, incomingMsg, session, member, mediaUrl = null, customSender = null) {
     
     // 🧠 THE ROUTER: If a custom sender (Lwazi) is passed, use it. Otherwise, use the default chunker above.
@@ -108,6 +118,25 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
         await reply(cleanPhone, "🧠 *AI Tutor Mode*\n\nSend me your question, or upload a clear photo of a math/logic problem. I'll break it down and show you how to solve it step-by-step!\n\n_Reply *Cancel* to exit._");
         return { handled: true, clearSessionFlag: false };
     }
+	
+	// Add this helper to your AI Tutor file
+async function logStudentActivity(studentId, actionType, subject, score = null) {
+    try {
+        await prisma.studyLog.create({
+            data: {
+                memberId: studentId,
+                actionType: actionType, // 'QUIZ_TAKEN' or 'QUESTION_ASKED'
+                subject: subject,
+                score: score
+            }
+        });
+    } catch (e) {
+        console.error("Failed to log study activity:", e);
+    }
+}
+
+// Example usage inside your bot:
+// await logStudentActivity(student.id, 'QUIZ_TAKEN', 'Math', 85);
 
     if (session.step === 'AWAITING_TUTOR_QUESTION') {
         if (cleanMsg === 'cancel' || cleanMsg === 'exit') {
@@ -157,7 +186,11 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
 
             const result = await aiModel.generateContent(promptParts);
             const aiResponse = result.response.text();
-
+			
+			if (member && member.id) {
+				await logStudentActivity(member.id, 'QUESTION_ASKED', 'AI Tutor');
+			}
+			
             await reply(cleanPhone, `🎓 *Tutor Solution:*\n\n${aiResponse.trim()}\n\n_Send another question or reply *Cancel* to exit._`);
             
             return { handled: true, clearSessionFlag: false };
@@ -243,6 +276,15 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                         isCorrect: aiResponse.isCorrect 
                     }
                 });
+				
+				if (member && member.id) {
+					await logStudentActivity(
+						member.id, 
+						'QUIZ_TAKEN', 
+						activeEnrollment.course.title || 'General Subject', 
+						aiResponse.isCorrect ? 100 : 0
+					);
+				}
 
                 if (aiResponse.isCorrect) {
                     await prisma.enrollment.update({

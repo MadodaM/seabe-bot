@@ -550,4 +550,86 @@ router.get('/cron/auto-bill', async (req, res) => {
     }
 });
 
-	module.exports = router;
+router.get('/cron/weekly-reports', async (req, res) => {
+    // 1. Security Check
+    const cronKey = req.headers['x-cron-key'] || req.query.key;
+    if (cronKey !== process.env.SECRET_CRON_KEY) return res.status(401).send("Unauthorized");
+
+    console.log("📊 [CRON] Generating Weekly Parent Report Cards...");
+
+    try {
+        // Calculate the date exactly 7 days ago
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        // 2. Find all Parents who have active children
+        const parents = await prisma.member.findMany({
+            where: {
+                children: { some: { status: 'ACTIVE' } }
+            },
+            include: {
+                children: {
+                    where: { status: 'ACTIVE' },
+                    include: {
+                        // Fetch only the logs from the last 7 days
+                        studyLogs: { where: { createdAt: { gte: sevenDaysAgo } } }
+                    }
+                }
+            }
+        });
+
+        let reportsSent = 0;
+
+        // 3. Generate and Send Reports
+        for (const parent of parents) {
+            let reportMsg = `📊 *Lwazi Weekly Report Card*\n\nHere is how your family performed this week:\n\n`;
+            let hasActivity = false;
+
+            for (const child of parent.children) {
+                const logs = child.studyLogs;
+                if (logs.length === 0) continue; // Skip if they didn't use it this week
+                
+                hasActivity = true;
+                
+                // Tally up the stats
+                const quizzes = logs.filter(l => l.actionType === 'QUIZ_TAKEN');
+                const questions = logs.filter(l => l.actionType === 'QUESTION_ASKED');
+                
+                let avgScore = 0;
+                if (quizzes.length > 0) {
+                    const totalScore = quizzes.reduce((sum, q) => sum + (q.score || 0), 0);
+                    avgScore = Math.round(totalScore / quizzes.length);
+                }
+
+                // Format the child's section
+                reportMsg += `👤 *Student (+${child.phone.slice(-4)})*\n`;
+                reportMsg += `📝 Quizzes Completed: ${quizzes.length}\n`;
+                if (quizzes.length > 0) reportMsg += `🎯 Average Score: ${avgScore}%\n`;
+                reportMsg += `🧠 Questions Asked: ${questions.length}\n\n`;
+            }
+
+            // 4. Send via Twilio (ONLY if they actually used it)
+            if (hasActivity) {
+                reportMsg += `_Keep encouraging them! To manage your subscription, reply Menu._`;
+                
+                // ⚠️ CRITICAL: Because this is outside the 24-hour window, you MUST use a pre-approved Twilio Template in production.
+                // Ensure 'reportMsg' matches your Meta-approved template structure exactly.
+                await client.messages.create({ 
+                    from: 'whatsapp:+27875511057', 
+                    to: `whatsapp:+${parent.phone.replace('+', '')}`, 
+                    body: reportMsg 
+                }).catch(e => console.error(`Failed to send report to ${parent.phone}`));
+                
+                reportsSent++;
+            }
+        }
+
+        res.status(200).json({ status: "success", parentsProcessed: parents.length, reportsSent: reportsSent });
+
+    } catch (error) {
+        console.error("❌ CRON Report Error:", error);
+        res.status(500).send("Internal Server Error");
+    }
+});
+
+module.exports = router;

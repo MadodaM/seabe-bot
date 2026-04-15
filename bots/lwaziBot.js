@@ -168,7 +168,15 @@ async function generateLwaziCheckout(payerPhone, payerMember, session, sendLwazi
         if (!student) {
             let lwaziOrg = await prisma.church.findUnique({ where: { code: 'LWAZI_HQ' } });
             student = await prisma.member.create({
-                 data: { phone: num, firstName: 'Lwazi', lastName: 'Student', churchId: lwaziOrg.id, status: 'PENDING_SUBSCRIPTION' }
+                 data: { 
+                     phone: num, 
+                     firstName: 'Lwazi', 
+                     lastName: 'Student', 
+                     churchId: lwaziOrg.id, 
+                     status: 'PENDING_SUBSCRIPTION',
+                     // 🚀 THE LINK: Tie the student to the paying parent!
+                     parentId: payerMember.id 
+                 }
             });
         }
         targetIds.push(student.id);

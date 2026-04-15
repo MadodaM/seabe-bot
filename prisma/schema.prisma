@@ -31,6 +31,11 @@ model Member {
   mandateStatus     String?
   lastInteractionAt DateTime  @default(now())
   engagementScore   Int       @default(100) // 100 = Perfect, drops over time
+  
+  // 👨‍👩‍👧‍👦 Family Plan Link
+  parentId            Int?      // Links a student to the paying parent
+  parent              Member?   @relation("FamilyLink", fields: [parentId], references: [id])
+  children            Member[]  @relation("FamilyLink")
 
   // 🛡️ KYC Pipeline Tracker
   kycStatus           String    @default("UNVERIFIED") // UNVERIFIED, PENDING, APPROVED, REJECTED
@@ -70,6 +75,7 @@ model Member {
   appointments   Appointment[]
   paymentMethods PaymentMethod[]
   bookings       Booking[]
+  studyLogs           StudyLog[]
 }
 
 model Dependent {
@@ -756,3 +762,13 @@ model WebhookLog {
   processedAt DateTime?
 }
 
+model StudyLog {
+  id          Int      @id @default(autoincrement())
+  memberId    Int
+  member      Member   @relation(fields: [memberId], references: [id])
+  
+  actionType  String   // 'QUIZ_TAKEN' or 'QUESTION_ASKED'
+  subject     String   // e.g., 'Math', 'Science'
+  score       Int?     // e.g., 85 (Percentage, if it was a quiz)
+  createdAt   DateTime @default(now())
+}
