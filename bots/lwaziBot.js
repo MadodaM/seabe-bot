@@ -210,7 +210,6 @@ async function generateLwaziCheckout(payerPhone, payerMember, session, sendLwazi
         if (i === 3 || i === 4) cost = 69.00 * 0.95; // 5% discount
         totalBaseCost += cost;
 
-        let student = await prisma.member.findFirst({ where: { phone: num, churchCode: 'LWAZI_HQ' } });
         // Create 'Shadow' profiles for the students so the webhook can activate them
         let student = await prisma.member.findFirst({ where: { phone: num, churchCode: 'LWAZI_HQ' } });
         if (!student) {
