@@ -297,9 +297,18 @@
 			} else {
 				return res.send(renderPage('Error', '⚠️', 'Invalid Request', 'Missing payment parameters.', true));
 			}
-
+			
 			// 1. Calculate precise fees
-			const fees = await calculateTransaction(payAmount, 'STANDARD', 'PAYMENT_LINK', true);
+            // 🛑 STOP DOUBLE CHARGING: The Lwazi bot already pre-calculated the fully-loaded price.
+            // If it is Lwazi, we set addFees to FALSE so it works backwards from the total.
+            const isLwazi = type && type.startsWith('LWAZI');
+            
+            const fees = await calculateTransaction(
+                payAmount, 
+                txType || 'STANDARD', 
+                'PAYMENT_LINK', 
+                !isLwazi // Add fees for Stokvels, but DO NOT add fees for Lwazi
+            );
 
 			// 2. Safely log the PENDING transaction
 			await prisma.transaction.create({
