@@ -1,20 +1,60 @@
+// bots/lwaziBot.js
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { calculateTransaction } = require('../services/pricingEngine');
 const { processLmsMessage } = require('./LMSlogicBot'); 
 
-const LWAZI_NUMBER = 'whatsapp:+27875511057';
+// 🚀 THE SLEDGEHAMMER FIX: Isolate Lwazi's Twilio Connection!
+const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+const LWAZI_NUMBER = 'whatsapp:+27875511057'; // Force the Lwazi number
 
-async function processLwaziMessage(phone, msg, session, mediaUrl, sendWhatsApp) {
-    // Define your Lwazi dedicated number
-    const LWAZI_NUMBER = '+27875511057'; // Must match your Twilio Lwazi number
+// 📬 Dedicated Lwazi Sender (Includes smart chunking)
+const sendLwazi = async (to, body, mediaUrl = null) => {
+    if (!process.env.TWILIO_SID) return console.log("⚠️ Twilio Keys Missing!");
+    
+    const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:+${to.replace('+', '')}`;
+    const MAX_LENGTH = 1500;
+    const messageChunks = [];
 
-    // 🧠 THE FIX: Force the 4th parameter (fromOverride) on every single message
-    const sendLwazi = async (to, text, media = null) => {
-        // We simply call the sendWhatsApp function that was passed in from the router
-        await sendWhatsApp(to, text, media, LWAZI_NUMBER);
-    };
+    if (body.length > MAX_LENGTH) {
+        let remainingText = body;
+        while (remainingText.length > 0) {
+            if (remainingText.length <= MAX_LENGTH) {
+                messageChunks.push(remainingText);
+                break;
+            }
+            let splitIndex = MAX_LENGTH;
+            let chunk = remainingText.substring(0, MAX_LENGTH);
+            let lastDoubleNewline = chunk.lastIndexOf('\n\n');
+            let lastNewline = chunk.lastIndexOf('\n');
+            let lastSpace = chunk.lastIndexOf(' ');
 
+            if (lastDoubleNewline > MAX_LENGTH - 300) splitIndex = lastDoubleNewline; 
+            else if (lastNewline > MAX_LENGTH - 200) splitIndex = lastNewline;       
+            else if (lastSpace > MAX_LENGTH - 100) splitIndex = lastSpace;         
+
+            messageChunks.push(remainingText.substring(0, splitIndex).trim());
+            remainingText = remainingText.substring(splitIndex).trim();
+        }
+    } else {
+        messageChunks.push(body);
+    }
+
+    for (const chunk of messageChunks) {
+        try {
+            const options = { from: LWAZI_NUMBER, to: formattedTo, body: chunk };
+            if (mediaUrl) options.mediaUrl = [mediaUrl];
+            await twilioClient.messages.create(options);
+            await new Promise(res => setTimeout(res, 500));
+        } catch (e) { 
+            console.error("❌ Lwazi Send Error:", e.message); 
+        }
+    }
+};
+
+// Notice we just ignore the global sendWhatsApp parameter now!
+async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobalSender) {
+    
     // 1. Fetch or Create the Payer User
     let member = await prisma.member.findFirst({
         where: { phone: phone, churchCode: 'LWAZI_HQ' }
@@ -101,8 +141,8 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, sendWhatsApp) 
         await sendLwazi(phone, "⚠️ Your Lwazi subscription is inactive. Reply *Subscribe* to restore access.");
         return;
     }
-	
-	// ================================================
+    
+    // ================================================
     // 🛑 THE UNSUBSCRIBE TRAPDOOR
     // ================================================
     if (msg === 'cancel' || msg === 'unsubscribe' || msg === 'stop billing') {
