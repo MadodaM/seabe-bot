@@ -3,6 +3,9 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { calculateTransaction } = require('../services/pricingEngine');
 const { processLmsMessage } = require('./LMSlogicBot'); 
+const crypto = require('crypto');
+// Generates a consistent 32-byte locking key using your Twilio Auth token
+const SECRET_KEY = crypto.scryptSync(process.env.TWILIO_AUTH || 'seabe-fallback-key', 'seabe-salt', 32);
 
 // 🚀 THE SLEDGEHAMMER FIX: Isolate Lwazi's Twilio Connection!
 const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
@@ -241,8 +244,24 @@ async function generateLwaziCheckout(payerPhone, payerMember, session, sendLwazi
     breakdownMsg += `_(Includes secure Netcash gateway & network fees)_\n\n`;
 
     const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
-    const idsParam = targetIds.join(',');
-    const payLink = `${host}/pay?targetIds=${idsParam}&payerId=${payerMember.id}&amount=${pricing.totalChargedToUser}&type=LWAZI_MULTI&setupToken=true`;
+    
+    // 🔒 1. Bundle the data into a tiny object
+    const payload = { 
+        t: targetIds.join(','), 
+        p: payerMember.id, 
+        a: pricing.totalChargedToUser, 
+        y: 'LWAZI_MULTI' 
+    };
+
+    // 🔒 2. Encrypt the payload using AES-256-CBC
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-cbc', SECRET_KEY, iv);
+    let encrypted = cipher.update(JSON.stringify(payload), 'utf8', 'base64url');
+    encrypted += cipher.final('base64url');
+    
+    // 🔒 3. Generate the shortened, secure token
+    const token = `${iv.toString('base64url')}.${encrypted}`;
+    const payLink = `${host}/pay?token=${token}`;
 
     breakdownMsg += `💳 *Tap to securely activate subscriptions:*\n👉 ${payLink}\n\n`;
     breakdownMsg += `_Students will receive a welcome message instantly upon payment._`;

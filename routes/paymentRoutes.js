@@ -4,9 +4,22 @@
 	const { PrismaClient } = require('@prisma/client');
 	const prisma = new PrismaClient();
 	const { recordSplit } = require('../services/ledgerEngine');
-
-	// 🚀 PRICING ENGINE IMPORT
 	const { calculateTransaction } = require('../services/pricingEngine');
+		const crypto = require('crypto');
+	const SECRET_KEY = crypto.scryptSync(process.env.TWILIO_AUTH || 'seabe-fallback-key', 'seabe-salt', 32);
+
+	// Decryption Helper
+	function decryptToken(token) {
+		try {
+			const [iv64, enc64] = token.split('.');
+			const iv = Buffer.from(iv64, 'base64url');
+			const decipher = crypto.createDecipheriv('aes-256-cbc', SECRET_KEY, iv);
+			let decrypted = decipher.update(enc64, 'base64url', 'utf8');
+			decrypted += decipher.final('utf8');
+			return JSON.parse(decrypted);
+		} catch (e) { return null; }
+	}
+	
 
 	// Twilio Setup
 	let client;
@@ -131,51 +144,49 @@
 			}
 
 			// ----------------------------------------------------
-			// 🚀 NEW SCENARIO B: LWAZI MULTI-SUBSCRIPTION
-			// ----------------------------------------------------
-			if (type && type.startsWith('LWAZI')) {
-				const payer = await prisma.member.findUnique({
-					where: { id: parseInt(req.query.payerId || memberId) }
-				});
+            // 🚀 NEW SCENARIO B: LWAZI MULTI-SUBSCRIPTION (ENCRYPTED)
+            // ----------------------------------------------------
+            if (req.query.token) {
+                const data = decryptToken(req.query.token);
+                if (!data) return res.send(renderPage('Error', '⚠️', 'Invalid Link', 'This secure payment link is corrupted or invalid.', true));
 
-				if (!payer) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Payer profile not found.', true));
+                const payer = await prisma.member.findUnique({ where: { id: data.p } });
+                if (!payer) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Payer profile not found.', true));
 
-				return res.send(`
-					<!DOCTYPE html>
-					<html>
-					<head>
-						<meta name="viewport" content="width=device-width, initial-scale=1">
-						<title>Lwazi Premium Setup</title>
-						<style>${seabeStyles}</style>
-					</head>
-					<body>
-						<div class="card">
-							<div class="tag">EDUCATION</div>
-							<h2>Lwazi Premium</h2>
-							<p style="margin-bottom: 20px;">Monthly Auto-Renewing Subscription</p>
-							
-							<form action="/pay/process" method="POST">
-								<input type="hidden" name="memberId" value="${payer.id}">
-								<input type="hidden" name="type" value="${type}">
-								<input type="hidden" name="targetIds" value="${targetIds || ''}"> 
-								
-								<div class="input-group">
-									<label>Total Monthly Amount</label>
-									<div class="currency-wrapper">
-										<span>ZAR</span>
-										<input type="number" name="amount" step="0.01" value="${amount}" readonly style="background:#f8f9fa; color:#7f8c8d;">
-									</div>
-								</div>
-								
-								<button type="submit" class="btn">Start Subscription</button>
-							</form>
-							<div style="margin-top: 15px; font-size: 11px; color: #95a5a6;">🔒 Secured by Netcash & Capitec Pay</div>
-						</div>
-						<div class="seabe-brand">Secured by Seabe <span>Pay</span></div>
-					</body>
-					</html>
-				`);
-			}
+                return res.send(`
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta name="viewport" content="width=device-width, initial-scale=1">
+                        <title>Lwazi Premium Setup</title>
+                        <style>${seabeStyles}</style>
+                    </head>
+                    <body>
+                        <div class="card">
+                            <div class="tag">EDUCATION</div>
+                            <h2>Lwazi Premium</h2>
+                            <p style="margin-bottom: 20px;">Secure Auto-Renewing Subscription</p>
+                            
+                            <form action="/pay/process" method="POST">
+                                <input type="hidden" name="token" value="${req.query.token}">
+                                
+                                <div class="input-group">
+                                    <label>Total Monthly Amount</label>
+                                    <div class="currency-wrapper">
+                                        <span>ZAR</span>
+                                        <input type="number" value="${data.a}" readonly style="background:#f8f9fa; color:#7f8c8d;">
+                                    </div>
+                                </div>
+                                
+                                <button type="submit" class="btn">Start Subscription</button>
+                            </form>
+                            <div style="margin-top: 15px; font-size: 11px; color: #95a5a6;">🔒 Secured by Netcash & AES-256 Encryption</div>
+                        </div>
+                        <div class="seabe-brand">Secured by Seabe <span>Pay</span></div>
+                    </body>
+                    </html>
+                `);
+            }
 
 			// ----------------------------------------------------
 			// SCENARIO C: STOKVEL / SOCIETY CONTRIBUTION
@@ -261,23 +272,29 @@
 				dbMemberId = appointment.memberId;
 			} 
 			// ----------------------------------------------------
-			// 🚀 NEW SCENARIO B: LWAZI MULTI-SUBSCRIPTION
-			// ----------------------------------------------------
-			else if (type && type.startsWith('LWAZI')) {
-				const member = await prisma.member.findUnique({ 
-					where: { id: parseInt(memberId) },
-					include: { church: true }
-				});
-				if (!member) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Member not found.', true));
+            // 🚀 NEW SCENARIO B: LWAZI MULTI-SUBSCRIPTION (ENCRYPTED)
+            // ----------------------------------------------------
+            else if (req.body.token) {
+                const data = decryptToken(req.body.token);
+                if (!data) return res.send(renderPage('Error', '⚠️', 'Invalid Request', 'Corrupted secure token.', true));
 
-				org = member.church || { code: 'LWAZI_HQ', name: 'Lwazi Caps Tutor' };
-				reference = `LWAZI-${member.id}-${Date.now().toString().slice(-6)}`;
-				txType = type; // LWAZI_MULTI or LWAZI_SUB
-				description = `Lwazi Premium Subscription`;
-				phone = member.phone; 
-				dbMemberId = parseInt(memberId);
-				notes = targetIds || null; // 📦 THE HANDOFF: Save the target IDs for the Webhook Worker!
-			}
+                const member = await prisma.member.findUnique({ 
+                    where: { id: data.p },
+                    include: { church: true }
+                });
+                if (!member) return res.send(renderPage('Error', '⚠️', 'Not Found', 'Member not found.', true));
+
+                org = member.church || { code: 'LWAZI_HQ', name: 'Lwazi Caps Tutor' };
+                reference = `LWAZI-${member.id}-${Date.now().toString().slice(-6)}`;
+                txType = data.y; // 'LWAZI_MULTI'
+                description = `Lwazi Premium Subscription`;
+                phone = member.phone; 
+                dbMemberId = member.id;
+                notes = data.t; // The target IDs
+                
+                // 🔒 The server forcefully uses the encrypted amount. Tamper-proof!
+                payAmount = parseFloat(data.a); 
+            }
 			// ----------------------------------------------------
 			// SCENARIO C: STOKVEL / SOCIETY CONTRIBUTION
 			// ----------------------------------------------------
