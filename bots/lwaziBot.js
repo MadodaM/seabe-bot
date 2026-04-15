@@ -69,8 +69,14 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
             });
         }
         member = await prisma.member.create({
-            data: { phone: phone, firstName: 'Student', lastName: '.', churchId: lwaziOrg.id, status: 'PENDING_SUBSCRIPTION' },
-            include: { church: true } // 🧠 THE FIX: Attach the Org data here too!
+            data: { 
+                phone: phone, 
+                firstName: 'Student', 
+                lastName: '.', 
+                church: { connect: { id: lwaziOrg.id } }, // 🧠 THE FIX: Use Prisma's 'connect' object
+                status: 'PENDING_SUBSCRIPTION' 
+            },
+            include: { church: true }
         });
     }
 
@@ -205,10 +211,19 @@ async function generateLwaziCheckout(payerPhone, payerMember, session, sendLwazi
         totalBaseCost += cost;
 
         let student = await prisma.member.findFirst({ where: { phone: num, churchCode: 'LWAZI_HQ' } });
+        // Create 'Shadow' profiles for the students so the webhook can activate them
+        let student = await prisma.member.findFirst({ where: { phone: num, churchCode: 'LWAZI_HQ' } });
         if (!student) {
             let lwaziOrg = await prisma.church.findUnique({ where: { code: 'LWAZI_HQ' } });
             student = await prisma.member.create({
-                 data: { phone: num, firstName: 'Lwazi', lastName: 'Student', churchId: lwaziOrg.id, status: 'PENDING_SUBSCRIPTION', parentId: payerMember.id }
+                 data: { 
+                     phone: num, 
+                     firstName: 'Lwazi', 
+                     lastName: 'Student', 
+                     church: { connect: { id: lwaziOrg.id } }, // 🧠 THE FIX: Use Prisma's 'connect' object
+                     status: 'PENDING_SUBSCRIPTION',
+                     parentId: payerMember.id 
+                 }
             });
         }
         targetIds.push(student.id);
