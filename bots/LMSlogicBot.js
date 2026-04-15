@@ -12,10 +12,16 @@ if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
     twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 }
 
-// Background Sender with Smart Chunking to bypass Twilio's 1600 char limit (Used for Seabe Pay default)
-const sendWhatsApp = async (to, body) => {
+// Background Sender with Multi-Tenant Support & Smart Chunking
+const sendWhatsApp = async (to, body, mediaUrl = null, fromOverride = null) => {
     if (!twilioClient) return console.log("⚠️ Twilio Keys Missing! Could not send message.");
-    const cleanTwilioNumber = process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+    
+    // 🧠 THE FIX: Use the override number (Lwazi) if provided, otherwise fallback to the default Seabe number
+    let sender = fromOverride || process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
+    if (!sender.startsWith('whatsapp:')) sender = `whatsapp:${sender.startsWith('+') ? sender : '+' + sender}`;
+
+    const cleanTo = to.replace('whatsapp:', '').replace('+', '').trim();
+    const formattedTo = `whatsapp:+${cleanTo}`;
 
     const MAX_LENGTH = 1500;
     const messageChunks = [];
@@ -35,13 +41,9 @@ const sendWhatsApp = async (to, body) => {
             let lastNewline = chunk.lastIndexOf('\n');
             let lastSpace = chunk.lastIndexOf(' ');
 
-            if (lastDoubleNewline > MAX_LENGTH - 300) { 
-                splitIndex = lastDoubleNewline; 
-            } else if (lastNewline > MAX_LENGTH - 200) { 
-                splitIndex = lastNewline;       
-            } else if (lastSpace > MAX_LENGTH - 100) { 
-                splitIndex = lastSpace;         
-            }
+            if (lastDoubleNewline > MAX_LENGTH - 300) splitIndex = lastDoubleNewline; 
+            else if (lastNewline > MAX_LENGTH - 200) splitIndex = lastNewline;       
+            else if (lastSpace > MAX_LENGTH - 100) splitIndex = lastSpace;         
 
             messageChunks.push(remainingText.substring(0, splitIndex).trim());
             remainingText = remainingText.substring(splitIndex).trim();
@@ -52,11 +54,14 @@ const sendWhatsApp = async (to, body) => {
 
     for (const chunk of messageChunks) {
         try {
-            await twilioClient.messages.create({
-                from: `whatsapp:${cleanTwilioNumber}`, 
-                to: `whatsapp:${to}`,
+            const messageOptions = {
+                from: sender, // 👈 Now correctly routes from Lwazi!
+                to: formattedTo,
                 body: chunk
-            });
+            };
+            if (mediaUrl) messageOptions.mediaUrl = [mediaUrl];
+
+            await twilioClient.messages.create(messageOptions);
             await new Promise(resolve => setTimeout(resolve, 500)); 
         } catch (err) {
             console.error("❌ Twilio Send Error:", err.message);
