@@ -6,8 +6,18 @@ const { processLmsMessage } = require('./LMSlogicBot');
 const LWAZI_NUMBER = 'whatsapp:+27875511057';
 
 async function processLwaziMessage(phone, msg, session, mediaUrl, sendWhatsApp) {
-    const sendLwazi = async (to, body, media = null) => {
-        return await sendWhatsApp(to, body, media, LWAZI_NUMBER);
+    // Define your Lwazi dedicated number
+    const LWAZI_NUMBER = '+27875511057'; // Must match your Twilio Lwazi number
+
+    // 🧠 THE FIX: Force the 4th parameter (fromOverride) on every single message
+    const sendLwazi = async (to, text, media = null) => {
+        if (customSender) {
+            // customSender(to, body, mediaUrl, fromOverride)
+            await customSender(to, text, media, LWAZI_NUMBER);
+        } else {
+            // Fallback if customSender isn't passed from the router
+            await sendWhatsApp(to, text, media, LWAZI_NUMBER);
+        }
     };
 
     // 1. Fetch or Create the Payer User
