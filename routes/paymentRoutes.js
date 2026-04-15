@@ -614,11 +614,15 @@ router.get('/cron/weekly-reports', async (req, res) => {
                 
                 // ⚠️ CRITICAL: Because this is outside the 24-hour window, you MUST use a pre-approved Twilio Template in production.
                 // Ensure 'reportMsg' matches your Meta-approved template structure exactly.
-                await client.messages.create({ 
-                    from: 'whatsapp:+27875511057', 
-                    to: `whatsapp:+${parent.phone.replace('+', '')}`, 
-                    body: reportMsg 
-                }).catch(e => console.error(`Failed to send report to ${parent.phone}`));
+                // ✅ NEW WAY (Meta-compliant Template via Content API)
+				await client.messages.create({ 
+					from: 'whatsapp:+27875511057', 
+					to: `whatsapp:+${parent.phone.replace('+', '')}`, 
+					contentSid: 'HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', // 👈 Replace with your actual Twilio Content SID
+					contentVariables: JSON.stringify({
+						"1": reportMsg // 👈 Maps your generated report to the {{1}} variable in your template
+					})
+				}).catch(e => console.error(`Failed to send report to ${parent.phone}:`, e));
                 
                 reportsSent++;
             }
