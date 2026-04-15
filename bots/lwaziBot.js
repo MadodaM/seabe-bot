@@ -221,7 +221,7 @@ async function generateLwaziCheckout(payerPhone, payerMember, session, sendLwazi
                      lastName: 'Student', 
                      church: { connect: { id: lwaziOrg.id } }, // 🧠 THE FIX: Use Prisma's 'connect' object
                      status: 'PENDING_SUBSCRIPTION',
-                     parentId: payerMember.id 
+                     parent: { connect: { id: payerMember.id } } // 🧠 THE FIX: Use Prisma's connect object!
                  }
             });
         }
