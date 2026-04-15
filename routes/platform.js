@@ -101,6 +101,7 @@ function renderAdminPage(title, content, error = null) {
                 <a href="/admin/global-collections">💰 Global Collections</a>
                 <a href="/admin/payouts">💸 Church Payouts</a>
                 <a href="/admin/course-builder">🤖 AI Course Builder</a>
+				<a href="/admin/programs">🎓 Program Management</a>
                 <a href="/admin/events">🎟️ Events & Projects</a>
                 <a href="/admin/ads">📢 Broadcasts</a>
                 <a href="/admin/news">📰 News Feed</a>
@@ -1157,6 +1158,280 @@ module.exports = function(app, { prisma }) {
             }
         } catch (err) {
             res.status(500).json({ success: false, error: "Failed to read file on server." });
+        }
+    });
+	
+	// ============================================================
+    // 🎓 PROGRAM MANAGEMENT (Super Admin Only)
+    // ============================================================
+    
+    // 1. Program Dashboard
+    app.get('/admin/programs', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+
+        try {
+            const programs = await prisma.program.findMany({
+                include: { 
+                    church: true, 
+                    _count: { select: { courses: true } } 
+                },
+                orderBy: { id: 'desc' }
+            });
+
+            const rows = programs.map(p => `
+                <tr>
+                    <td>
+                        <strong>${p.title}</strong><br>
+                        <span style="font-size:11px; color:#95a5a6;">${p.description ? p.description.substring(0, 50) + '...' : 'No description'}</span>
+                    </td>
+                    <td><span class="tag tag-church">${p.church ? p.church.name : 'Global'}</span></td>
+                    <td>R${p.price}</td>
+                    <td>${p._count.courses} Courses</td>
+                    <td><span class="tag" style="${p.status === 'LIVE' ? 'background:#e8f5e9; color:green;' : 'background:#fff3e0; color:orange;'}">${p.status}</span></td>
+                    <td style="text-align:right;">
+                        <a href="/admin/programs/edit/${p.id}" class="btn btn-edit">Edit</a>
+                        <form method="POST" action="/admin/programs/delete" style="display:inline; margin-left:5px;" onsubmit="return confirm('Are you sure? Courses inside will not be deleted, but will be unlinked.');">
+                            <input type="hidden" name="id" value="${p.id}">
+                            <button class="btn btn-danger">Del</button>
+                        </form>
+                    </td>
+                </tr>
+            `).join('');
+
+            const content = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                    <h2 style="margin:0; color:#2c3e50;">Program Management</h2>
+                    <a href="/admin/programs/add" class="btn btn-primary" style="background:#00d2d3; color:black;">+ Create Program</a>
+                </div>
+                <div class="card-form" style="max-width:100%;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Program Title</th>
+                                <th>Organization</th>
+                                <th>Price</th>
+                                <th>Linked Courses</th>
+                                <th>Status</th>
+                                <th style="text-align:right;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows.length > 0 ? rows : '<tr><td colspan="6" style="text-align:center; padding:30px; color:#95a5a6;">No programs found. Create one to start grouping courses.</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            res.send(renderAdminPage('Program Management', content));
+        } catch (e) {
+            res.send(renderAdminPage('Error', '', e.message));
+        }
+    });
+
+    // 2. Add Program UI
+    app.get('/admin/programs/add', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        
+        try {
+            const churches = await prisma.church.findMany({ select: { id: true, name: true } });
+            const orgOptions = churches.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+
+            const content = `
+                <form method="POST" action="/admin/programs/add" class="card-form" style="max-width: 600px;">
+                    <div class="form-group">
+                        <label>Program Title</label>
+                        <input type="text" name="title" required placeholder="e.g., Advanced Fintech Masterclass">
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <textarea name="description" rows="3" placeholder="Overview of the program..."></textarea>
+                    </div>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px;">
+                        <div class="form-group">
+                            <label>Price (R)</label>
+                            <input type="number" name="price" value="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Organization</label>
+                            <select name="churchId">
+                                <option value="">-- Global (No Org) --</option>
+                                ${orgOptions}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Status</label>
+                        <select name="status">
+                            <option value="DRAFT">Draft</option>
+                            <option value="LIVE">Live</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" style="width:100%; padding:12px;">Create Program</button>
+                    <p style="font-size:11px; color:#999; text-align:center; margin-top:10px;">You can link courses to this program after creating it.</p>
+                </form>
+            `;
+            res.send(renderAdminPage('Create New Program', content));
+        } catch(e) {
+            res.send(renderAdminPage('Error', '', e.message));
+        }
+    });
+
+    // 3. Handle Add Program
+    app.post('/admin/programs/add', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        try {
+            await prisma.program.create({
+                data: {
+                    title: req.body.title,
+                    description: req.body.description,
+                    price: parseFloat(req.body.price) || 0,
+                    status: req.body.status,
+                    churchId: req.body.churchId ? parseInt(req.body.churchId) : null
+                }
+            });
+            res.redirect('/admin/programs');
+        } catch(e) {
+            res.send(renderAdminPage('Error', '', e.message));
+        }
+    });
+
+    // 4. Edit Program UI (Update details + Link Courses)
+    app.get('/admin/programs/edit/:id', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        try {
+            const program = await prisma.program.findUnique({
+                where: { id: parseInt(req.params.id) },
+                include: { courses: true }
+            });
+            if (!program) throw new Error("Program not found");
+
+            // Get all courses belonging to the same organization to allow linking
+            const availableCourses = await prisma.course.findMany({
+                where: { churchId: program.churchId }
+            });
+
+            const linkedCourseIds = program.courses.map(c => c.id);
+
+            const courseCheckboxes = availableCourses.map(c => `
+                <label style="display:block; padding:10px; border:1px solid #eee; margin-bottom:5px; border-radius:4px; background:${linkedCourseIds.includes(c.id) ? '#f0fdf4' : '#fff'}; cursor:pointer;">
+                    <input type="checkbox" name="courseIds" value="${c.id}" ${linkedCourseIds.includes(c.id) ? 'checked' : ''}>
+                    <strong>${c.title}</strong> (R${c.price})
+                </label>
+            `).join('');
+
+            const content = `
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:30px;">
+                    <div class="card-form" style="max-width:100%;">
+                        <h3>✏️ Edit Program Details</h3>
+                        <form action="/admin/programs/update" method="POST">
+                            <input type="hidden" name="id" value="${program.id}">
+                            
+                            <div class="form-group">
+                                <label>Program Title</label>
+                                <input name="title" value="${program.title}" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Description</label>
+                                <textarea name="description" rows="3">${program.description || ''}</textarea>
+                            </div>
+                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px;">
+                                <div class="form-group">
+                                    <label>Price (R)</label>
+                                    <input type="number" name="price" value="${program.price}" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Status</label>
+                                    <select name="status">
+                                        <option value="DRAFT" ${program.status === 'DRAFT' ? 'selected' : ''}>Draft</option>
+                                        <option value="LIVE" ${program.status === 'LIVE' ? 'selected' : ''}>Live</option>
+                                        <option value="ARCHIVED" ${program.status === 'ARCHIVED' ? 'selected' : ''}>Archived</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <button class="btn btn-save" style="width:100%; padding:12px;">Save Program Details</button>
+                        </form>
+                    </div>
+
+                    <div class="card-form" style="max-width:100%; border-top: 5px solid #8e44ad;">
+                        <h3>🔗 Link Courses to Program</h3>
+                        <p style="font-size:12px; color:#7f8c8d;">Select the courses that belong to this program. Only courses linked to the same organization are shown.</p>
+                        
+                        <form action="/admin/programs/link-courses" method="POST">
+                            <input type="hidden" name="programId" value="${program.id}">
+                            <div style="max-height: 400px; overflow-y: auto; margin-bottom:15px; border:1px solid #ddd; padding:10px; border-radius:4px;">
+                                ${courseCheckboxes || '<p style="font-size:13px; color:#999;">No courses available for this organization.</p>'}
+                            </div>
+                            <button class="btn btn-primary" style="width:100%; background:#8e44ad; padding:12px;">Update Assigned Courses</button>
+                        </form>
+                    </div>
+                </div>
+            `;
+            res.send(renderAdminPage(`Edit Program: ${program.title}`, content));
+        } catch (e) {
+            res.send(renderAdminPage('Error', '', e.message));
+        }
+    });
+
+    // 5. Handle Update Program Details
+    app.post('/admin/programs/update', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        try {
+            await prisma.program.update({
+                where: { id: parseInt(req.body.id) },
+                data: {
+                    title: req.body.title,
+                    description: req.body.description,
+                    price: parseFloat(req.body.price),
+                    status: req.body.status
+                }
+            });
+            res.redirect(`/admin/programs/edit/${req.body.id}`);
+        } catch (e) {
+            res.send(renderAdminPage('Update Error', '', e.message));
+        }
+    });
+
+    // 6. Handle Linking Courses to Program
+    app.post('/admin/programs/link-courses', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        try {
+            const programId = parseInt(req.body.programId);
+            const selectedCourses = req.body.courseIds ? (Array.isArray(req.body.courseIds) ? req.body.courseIds : [req.body.courseIds]) : [];
+            
+            // 1. First, disconnect ALL courses currently linked to this program
+            await prisma.course.updateMany({
+                where: { programId: programId },
+                data: { programId: null }
+            });
+
+            // 2. Connect the newly selected courses
+            if (selectedCourses.length > 0) {
+                await prisma.course.updateMany({
+                    where: { id: { in: selectedCourses.map(id => parseInt(id)) } },
+                    data: { programId: programId }
+                });
+            }
+
+            res.redirect(`/admin/programs/edit/${programId}`);
+        } catch (e) {
+            res.send(renderAdminPage('Course Link Error', '', e.message));
+        }
+    });
+
+    // 7. Handle Delete Program
+    app.post('/admin/programs/delete', async (req, res) => {
+        if (!isAuthenticated(req)) return res.redirect('/login');
+        try {
+            // Unlink courses first to prevent referential integrity errors
+            await prisma.course.updateMany({
+                where: { programId: parseInt(req.body.id) },
+                data: { programId: null }
+            });
+            
+            // Then delete the program
+            await prisma.program.delete({ where: { id: parseInt(req.body.id) } });
+            res.redirect('/admin/programs');
+        } catch (e) {
+            res.send(renderAdminPage('Delete Error', '', e.message));
         }
     });
 
