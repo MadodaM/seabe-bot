@@ -70,7 +70,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
         member = await prisma.member.create({
             data: { phone: phone, firstName: 'Student', lastName: '.', churchId: lwaziOrg.id, status: 'PENDING_SUBSCRIPTION' }
         });
-        await sendLwazi(phone, "🦉 *Welcome to Lwazi Caps Micro-Tutor!*\n\nYour pocket-sized, CAPS-aligned AI tutor for Grades 4-12.\n\nTo unlock daily quizzes and step-by-step math breakdowns, subscribe for just *R69/month*.\n\nReply *Subscribe* to get started.");
+        await sendLwazi(phone, "🦉 *Welcome to Lwazi Caps Micro-Tutor!*\n\nYour pocket-sized, CAPS-aligned AI tutor for Grades 4-12.\n\nTo unlock daily quizzes and step-by-step math breakdowns, subscribe from *R69/month* (plus secure gateway fees).\n\nReply *Subscribe* to get started.");
         return;
     }
 
@@ -99,7 +99,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     }
 
     if (session.step === 'LWAZI_COLLECT_NUMBERS') {
-        let targetPhone = msg.replace(/\D/g, ''); // Remove non-numbers
+        let targetPhone = msg.replace(/\D/g, ''); 
         if (targetPhone.startsWith('0')) targetPhone = '27' + targetPhone.substring(1);
         
         if (targetPhone.length < 10) {
@@ -135,14 +135,6 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     }
 
     // ================================================
-    // 🛡️ GATEKEEPER & LMS ROUTING
-    // ================================================
-    if (member.status !== 'ACTIVE') {
-        await sendLwazi(phone, "⚠️ Your Lwazi subscription is inactive. Reply *Subscribe* to restore access.");
-        return;
-    }
-    
-    // ================================================
     // 🛑 THE UNSUBSCRIBE TRAPDOOR (Must be ABOVE the Paywall!)
     // ================================================
     if (msg === 'cancel' || msg === 'unsubscribe' || msg === 'stop billing') {
@@ -171,7 +163,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     // ================================================
     if (member.status !== 'ACTIVE') {
         const paywallMsg = `🔒 *Lwazi Premium Locked*\n\n` +
-                           `Unlock your full academic potential with Lwazi Premium! For just *R69/month*, you get:\n\n` +
+                           `Unlock your full academic potential with Lwazi Premium! From *R69/month* (plus secure gateway fees), you get:\n\n` +
                            `🧠 *Unlimited AI Tutor:* 24/7 help with Math, Science, and more.\n` +
                            `📚 *CAPS-Aligned Courses:* Step-by-step daily lessons.\n` +
                            `📝 *Smart Quizzes:* Instant grading and feedback.\n` +
@@ -186,7 +178,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     // 🎓 MAIN MENU & LMS ROUTING (Active Members Only)
     // ================================================
     if (msg === 'menu' || msg === 'hi') {
-        await sendLwazi(phone, "🦉 *Lwazi Main Menu*\n\n1️⃣ *Courses* - Browse CAPS subjects by Grade\n2️⃣ *Tutor* - Send a photo of a math problem for AI help\n3️⃣ *Profile* - View your progress\n\n_Reply with a word above._");
+        await sendLwazi(phone, "🦉 *Lwazi Main Menu*\n\n1️⃣ *Courses* - Browse CAPS subjects by Grade\n2️⃣ *Tutor* - Send a photo of a math problem for AI help\n3️⃣ *Profile* - View your progress\n4️⃣ *Subscribe* - Manage Family Plan\n\n_Reply with a word above._");
         return;
     }
 
@@ -198,54 +190,46 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
 }
 
 /**
- * 🧮 Dynamic Checkout Generator
+ * 🧮 Dynamic Checkout Generator (Option 2: Fully-Loaded Price Display)
  */
 async function generateLwaziCheckout(payerPhone, payerMember, session, sendLwazi) {
     let totalBaseCost = 0;
-    let breakdownMsg = "🛒 *Subscription Summary*\n\n";
     let targetIds = [];
 
+    // 1. Do the math silently in the background first
     for (let i = 0; i < session.nominatedNumbers.length; i++) {
         const num = session.nominatedNumbers[i];
-        
-        // Math Logic: 4th and 5th sub (index 3 and 4) get 5% discount
         let cost = 69.00;
-        let note = "";
-        if (i === 3 || i === 4) { 
-            cost = 69.00 * 0.95; 
-            note = " *(5% OFF)*";
-        }
+        if (i === 3 || i === 4) cost = 69.00 * 0.95; // 5% discount
         totalBaseCost += cost;
-        breakdownMsg += `👤 Student ${i + 1} (+${num}): R${cost.toFixed(2)}${note}\n`;
 
-        // Create 'Shadow' profiles for the students so the webhook can activate them
         let student = await prisma.member.findFirst({ where: { phone: num, churchCode: 'LWAZI_HQ' } });
         if (!student) {
             let lwaziOrg = await prisma.church.findUnique({ where: { code: 'LWAZI_HQ' } });
             student = await prisma.member.create({
-                 data: { 
-                     phone: num, 
-                     firstName: 'Lwazi', 
-                     lastName: 'Student', 
-                     churchId: lwaziOrg.id, 
-                     status: 'PENDING_SUBSCRIPTION',
-                     // 🚀 THE LINK: Tie the student to the paying parent!
-                     parentId: payerMember.id 
-                 }
+                 data: { phone: num, firstName: 'Lwazi', lastName: 'Student', churchId: lwaziOrg.id, status: 'PENDING_SUBSCRIPTION', parentId: payerMember.id }
             });
         }
         targetIds.push(student.id);
     }
 
+    // 2. Calculate the FINAL price including the gateway service fees
     const pricing = await calculateTransaction(totalBaseCost, 'LWAZI_SUB', 'CARD', true);
-    const host = process.env.HOST_URL || 'https://seabe.tech';
     
-    // We pass the IDs in the URL so your web form can save them to the Transaction record
+    // 3. Build a clean, single-price message for the user
+    let breakdownMsg = "🛒 *Subscription Summary*\n\n";
+    breakdownMsg += `👨‍👩‍👧‍👦 Total Students: ${session.nominatedNumbers.length}\n`;
+    if (session.nominatedNumbers.length >= 4) breakdownMsg += `_Includes Family Discount for students 4 & 5!_\n`;
+    
+    // Only show them the fully loaded final cost
+    breakdownMsg += `\n*Total Monthly Subscription: R${pricing.totalChargedToUser.toFixed(2)}*\n`;
+    breakdownMsg += `_(Includes secure Netcash gateway & network fees)_\n\n`;
+
+    const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
     const idsParam = targetIds.join(',');
     const payLink = `${host}/pay?targetIds=${idsParam}&payerId=${payerMember.id}&amount=${pricing.totalChargedToUser}&type=LWAZI_MULTI&setupToken=true`;
 
-    breakdownMsg += `\n*Total Due:* R${pricing.totalChargedToUser.toFixed(2)} / month\n\n`;
-    breakdownMsg += `💳 *Tap to securely activate all subscriptions:*\n👉 ${payLink}\n\n`;
+    breakdownMsg += `💳 *Tap to securely activate subscriptions:*\n👉 ${payLink}\n\n`;
     breakdownMsg += `_Students will receive a welcome message instantly upon payment._`;
 
     await sendLwazi(payerPhone, breakdownMsg);
