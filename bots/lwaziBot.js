@@ -70,8 +70,8 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
         member = await prisma.member.create({
             data: { phone: phone, firstName: 'Student', lastName: '.', churchId: lwaziOrg.id, status: 'PENDING_SUBSCRIPTION' }
         });
-        await sendLwazi(phone, "🦉 *Welcome to Lwazi Caps Micro-Tutor!*\n\nYour pocket-sized, CAPS-aligned AI tutor for Grades 4-12.\n\nTo unlock daily quizzes and step-by-step math breakdowns, subscribe from *R69/month* (plus secure gateway fees).\n\nReply *Subscribe* to get started.");
-        return;
+        // 🧠 FIX: We removed the hardcoded generic welcome return here.
+        // Now, brand new users flow directly down into the Premium Paywall gatekeeper!
     }
 
     // ================================================
@@ -161,8 +161,9 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     // ================================================
     // 🛡️ THE PREMIUM PAYWALL GATEKEEPER
     // ================================================
+    // 🧠 FIX: ANY user who is not active gets stopped here, even if they just said "Hi" for the first time!
     if (member.status !== 'ACTIVE') {
-        const paywallMsg = `🔒 *Lwazi Premium Locked*\n\n` +
+        const paywallMsg = `🦉 *Welcome to Lwazi Caps Micro-Tutor!*\n\n` +
                            `Unlock your full academic potential with Lwazi Premium! From *R69/month* (plus secure gateway fees), you get:\n\n` +
                            `🧠 *Unlimited AI Tutor:* 24/7 help with Math, Science, and more.\n` +
                            `📚 *CAPS-Aligned Courses:* Step-by-step daily lessons.\n` +
