@@ -145,7 +145,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     }
 
     // ================================================
-    // 🛑 THE UNSUBSCRIBE TRAPDOOR (Must be ABOVE the Paywall!)
+    // 🛑 THE UNSUBSCRIBE TRAPDOOR
     // ================================================
     if (msg === 'cancel' || msg === 'unsubscribe' || msg === 'stop billing') {
         session.step = 'CONFIRM_CANCEL';
@@ -185,9 +185,8 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     }
 
     // ================================================
-    // 🚀 NEW: 1-TIME ONBOARDING FLOW (GRADE & PROGRAM)
+    // 🚀 1-TIME ONBOARDING FLOW
     // ================================================
-    // We use idType to permanently mark them as onboarded so they don't loop on session expiry
     if (member.idType !== 'ONBOARDED' && !session.step && (msg === 'hi' || msg === 'menu' || msg === 'start')) {
         session.step = 'ONB_GRADE';
         await sendLwazi(phone, "🎉 *Welcome to Lwazi Premium!*\n\nLet's customize your learning experience.\n\nWhat grade are you in?\n_Reply with a number between 4 and 12 (e.g., 10)_");
@@ -200,7 +199,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
             await sendLwazi(phone, "⚠️ Please reply with a valid grade number between 4 and 12.");
             return;
         }
-        session.grade = grade; // Save to session momentarily
+        session.grade = grade; 
         session.step = 'ONB_LANG';
         await sendLwazi(phone, `Great! Grade ${grade}.\n\nWhat language do you prefer for your explanations?\n\n1️⃣ English\n2️⃣ Afrikaans\n3️⃣ Zulu\n4️⃣ Sotho\n\n_Reply with a number 1-4_`);
         return;
@@ -215,19 +214,16 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
             return;
         }
         
-        // Save the chosen language to the database
         await prisma.member.update({
             where: { id: member.id },
             data: { language: langs[msg] }
         });
 
-        // Fetch LIVE programs from the database
         const programs = await prisma.program.findMany({
             where: { churchId: member.churchId, status: 'LIVE' }
         });
         
         if (programs.length === 0) {
-            // No programs exist yet, mark as onboarded and skip to menu
             await prisma.member.update({ where: { id: member.id }, data: { idType: 'ONBOARDED' } });
             session.step = null;
             await sendLwazi(phone, `✅ Language set to ${langNames[msg]}!\n\nThere are no programs currently available. Reply *Menu* to open your dashboard.`);
@@ -255,7 +251,6 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
         
         const selectedProgramId = session.availablePrograms[selection];
         
-        // Enroll user in all LIVE courses linked to this program
         const programCourses = await prisma.course.findMany({
             where: { programId: selectedProgramId, status: 'LIVE' }
         });
@@ -269,7 +264,6 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
             await prisma.enrollment.createMany({ data: enrollmentsData });
         }
         
-        // 🔒 Mark as permanently onboarded in the DB so they never see this again
         await prisma.member.update({
             where: { id: member.id },
             data: { idType: 'ONBOARDED' }
@@ -283,17 +277,125 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     }
 
     // ================================================
-    // 🎓 MAIN MENU & LMS ROUTING (Active Members Only)
+    // 🎓 MAIN MENU (Active & Onboarded Members)
     // ================================================
     if (msg === 'menu' || msg === 'hi') {
-        await sendLwazi(phone, "🦉 *Lwazi Main Menu*\n\n1️⃣ *Courses* - Browse CAPS subjects by Grade\n2️⃣ *Tutor* - Send a photo of a math problem for AI help\n3️⃣ *Profile* - View your progress\n4️⃣ *Subscribe* - Manage Family Plan\n\n_Reply with a word above._");
+        session.step = null; // Always clear state when they hit the menu
+        await sendLwazi(phone, "🦉 *Lwazi Main Menu*\n\n1️⃣ *Request a Lesson* - Search your enrolled topics\n2️⃣ *Tutor* - Send a photo of a math problem for AI help\n3️⃣ *Profile* - View your progress\n4️⃣ *Subscribe* - Manage Family Plan\n\n_Reply with a word or number above._");
         return;
     }
 
-    // Pass everything else to the AI Tutor
+    // ================================================
+    // 🔍 NEW: REQUEST A LESSON (SEARCH ENGINE)
+    // ================================================
+    if (!session.step && (msg === '1' || msg === 'request a lesson' || msg === 'request' || msg === 'lesson')) {
+        session.step = 'LWAZI_SEARCH_LESSON';
+        await sendLwazi(phone, "🔍 *Request a Lesson*\n\nWhat topic would you like to learn about today? (e.g., 'Fractions', 'Photosynthesis', 'History')\n\n_Type your search term below, or reply *Menu* to cancel._");
+        return;
+    }
+
+    if (session.step === 'LWAZI_SEARCH_LESSON') {
+        // 1. Find the exact courses this specific student is enrolled in
+        const enrollments = await prisma.enrollment.findMany({
+            where: { memberId: member.id, status: 'ACTIVE' },
+            select: { courseId: true }
+        });
+        const courseIds = enrollments.map(e => e.courseId);
+
+        if (courseIds.length === 0) {
+            session.step = null;
+            await sendLwazi(phone, "⚠️ You are not enrolled in any active courses. Reply *Menu* to go back.");
+            return;
+        }
+
+        // 2. Search the modules within those courses for the keyword
+        const modules = await prisma.module.findMany({
+            where: {
+                courseId: { in: courseIds },
+                title: { contains: msg, mode: 'insensitive' }
+            },
+            take: 5,
+            include: { course: true }
+        });
+
+        if (modules.length === 0) {
+            await sendLwazi(phone, `No lessons found for "${msg}". Try a different keyword, or reply *Menu* to cancel.`);
+            return;
+        }
+
+        // 3. Display the results
+        session.step = 'LWAZI_SELECT_LESSON';
+        session.searchResults = modules.map(m => m.id);
+
+        let resultMsg = `📚 *Search Results for "${msg}"*\n\n`;
+        modules.forEach((m, idx) => {
+            resultMsg += `${idx + 1}️⃣ *${m.title}* _(${m.course.title})_\n`;
+        });
+        resultMsg += `\n_Reply with a number (1-${modules.length}) to receive the lesson, or *Menu* to cancel._`;
+        
+        await sendLwazi(phone, resultMsg);
+        return;
+    }
+
+    if (session.step === 'LWAZI_SELECT_LESSON') {
+        const selection = parseInt(msg) - 1;
+        
+        if (isNaN(selection) || selection < 0 || !session.searchResults || selection >= session.searchResults.length) {
+            await sendLwazi(phone, "⚠️ Invalid selection. Please reply with the number of the lesson you want, or *Menu* to cancel.");
+            return;
+        }
+
+        // 1. Fetch the exact module they selected
+        const moduleId = session.searchResults[selection];
+        const moduleData = await prisma.module.findUnique({ where: { id: moduleId } });
+
+        if (!moduleData) {
+            session.step = null;
+            await sendLwazi(phone, "⚠️ Error loading lesson. Reply *Menu* to go back.");
+            return;
+        }
+
+        // 2. Format and Send the Lesson Content
+        let lessonText = `📖 *${moduleData.title}*\n\n${moduleData.dailyLessonText || moduleData.content || "Content not available."}`;
+        
+        let mUrl = null;
+        if (moduleData.contentUrl && moduleData.contentUrl.startsWith('http')) {
+            mUrl = moduleData.contentUrl;
+        }
+
+        await sendLwazi(phone, lessonText, mUrl);
+
+        // 3. Follow up with the Quiz (if one exists for this module)
+        if (moduleData.quizQuestion) {
+            // Pause slightly for pacing so the messages don't arrive in the wrong order
+            await new Promise(res => setTimeout(res, 1500));
+            
+            session.currentQuizAnswer = moduleData.quizAnswer; 
+            session.step = 'LWAZI_AWAITING_QUIZ';
+
+            await sendLwazi(phone, `🧠 *Quick Quiz!*\n\n${moduleData.quizQuestion}\n\n_Reply with your answer._`);
+        } else {
+            session.step = null;
+            await sendLwazi(phone, "_Reply *Menu* to request another lesson._");
+        }
+        return;
+    }
+
+    if (session.step === 'LWAZI_AWAITING_QUIZ') {
+        session.step = null; // Clear the state so they can use the menu again
+        const correctAnswer = session.currentQuizAnswer || "Not provided";
+        
+        // Give them immediate feedback on the correct answer
+        await sendLwazi(phone, `✅ *Feedback*\n\nHere is the correct answer:\n${correctAnswer}\n\n_Reply *Menu* to request another lesson, or continue chatting with the AI Tutor!_`);
+        return;
+    }
+
+    // ================================================
+    // 🧠 AI TUTOR FALLBACK
+    // ================================================
     const lmsResult = await processLmsMessage(phone, msg, session, member, mediaUrl, sendLwazi);
     if (!lmsResult.handled) {
-        await sendLwazi(phone, "I didn't quite catch that. Reply *Menu*, *Courses*, or *Tutor*.");
+        await sendLwazi(phone, "I didn't quite catch that. Reply *Menu* to return to the main dashboard.");
     }
 }
 
