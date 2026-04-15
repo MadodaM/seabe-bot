@@ -31,20 +31,20 @@ model Member {
   mandateStatus     String?
   lastInteractionAt DateTime  @default(now())
   engagementScore   Int       @default(100) // 100 = Perfect, drops over time
-  
+
   // 👨‍👩‍👧‍👦 Family Plan Link
-  parentId            Int?      // Links a student to the paying parent
-  parent              Member?   @relation("FamilyLink", fields: [parentId], references: [id])
-  children            Member[]  @relation("FamilyLink")
+  parentId Int? // Links a student to the paying parent
+  parent   Member?  @relation("FamilyLink", fields: [parentId], references: [id])
+  children Member[] @relation("FamilyLink")
 
   // 🛡️ KYC Pipeline Tracker
   kycStatus           String    @default("UNVERIFIED") // UNVERIFIED, PENDING, APPROVED, REJECTED
   rejectionReason     String?
   verifiedAt          DateTime?
   consecutiveFailures Int       @default(0) // 🛡️ Tracks Clause 8.2 (2 Strikes)
-  
+
   // 🌐 NEW: Language Preference (en = English, zu = Zulu, st = Sotho)
-  language          String    @default("en")
+  language String @default("en")
 
   // 🚀 NEW: The specific day of the month they want to be billed (1-31)
   collectionDay Int @default(1)
@@ -75,7 +75,7 @@ model Member {
   appointments   Appointment[]
   paymentMethods PaymentMethod[]
   bookings       Booking[]
-  studyLogs           StudyLog[]
+  studyLogs      StudyLog[]
 }
 
 model Dependent {
@@ -155,6 +155,7 @@ model Church {
   appointments Appointment[]
   facilities   Facility[]
   bookings     Booking[]
+  programs     Program[]
 
   // Member Relations
   churchMembers  Member[] @relation("ChurchMembers")
@@ -433,12 +434,14 @@ model PolicyAddon {
 // ==========================================
 
 model Course {
-  id          Int     @id @default(autoincrement())
+  id          Int      @id @default(autoincrement())
   title       String
   description String?
-  price       Decimal @default(0.0)
-  status      String  @default("DRAFT") // DRAFT, LIVE, ARCHIVED
+  price       Decimal  @default(0.0)
+  status      String   @default("DRAFT") // DRAFT, LIVE, ARCHIVED
   code        String?
+  programId   Int?
+  program     Program? @relation(fields: [programId], references: [id])
 
   // Relations
   churchId Int?
@@ -655,25 +658,25 @@ model BankDetail {
 // ==========================================
 
 model Product {
-  id           Int           @id @default(autoincrement())
-  churchId     Int 
-  church       Church        @relation(fields: [churchId], references: [id])
+  id       Int    @id @default(autoincrement())
+  churchId Int
+  church   Church @relation(fields: [churchId], references: [id])
 
   name         String
   description  String?
   price        Float
-  durationMins Int?          
-  isActive     Boolean       @default(true)
+  durationMins Int?
+  isActive     Boolean @default(true)
 
   // 📦 Ensure these three lines are here and saved!
-  type         String        @default("SERVICE") 
-  barcode      String?       
-  stockLevel   Int           @default(0)
+  type       String  @default("SERVICE")
+  barcode    String?
+  stockLevel Int     @default(0)
 
   appointments Appointment[]
 
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // 2. Manage Bookings
@@ -753,24 +756,37 @@ model Booking {
 }
 
 model WebhookLog {
-  id          Int      @id @default(autoincrement())
-  provider    String   @default("NETCASH")
-  reference   String?  // The transaction reference
-  payload     Json     // Store the exact raw data Netcash sent
-  status      String   @default("PENDING") // PENDING, SUCCESS, FAILED
-  errorReason String?  @db.Text
-  
-  createdAt   DateTime @default(now())
+  id          Int     @id @default(autoincrement())
+  provider    String  @default("NETCASH")
+  reference   String? // The transaction reference
+  payload     Json // Store the exact raw data Netcash sent
+  status      String  @default("PENDING") // PENDING, SUCCESS, FAILED
+  errorReason String? @db.Text
+
+  createdAt   DateTime  @default(now())
   processedAt DateTime?
 }
 
 model StudyLog {
+  id       Int    @id @default(autoincrement())
+  memberId Int
+  member   Member @relation(fields: [memberId], references: [id])
+
+  actionType String // 'QUIZ_TAKEN' or 'QUESTION_ASKED'
+  subject    String // e.g., 'Math', 'Science'
+  score      Int? // e.g., 85 (Percentage, if it was a quiz)
+  createdAt  DateTime @default(now())
+}
+
+model Program {
   id          Int      @id @default(autoincrement())
-  memberId    Int
-  member      Member   @relation(fields: [memberId], references: [id])
-  
-  actionType  String   // 'QUIZ_TAKEN' or 'QUESTION_ASKED'
-  subject     String   // e.g., 'Math', 'Science'
-  score       Int?     // e.g., 85 (Percentage, if it was a quiz)
+  title       String
+  description String?
+  price       Float    @default(0)
+  status      String   @default("DRAFT") // DRAFT, LIVE, ARCHIVED
+  churchId    Int?
+  church      Church?  @relation(fields: [churchId], references: [id])
+  courses     Course[] // One-to-many relationship with courses
   createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
