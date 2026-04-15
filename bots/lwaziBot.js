@@ -4,6 +4,7 @@ const prisma = new PrismaClient();
 const { calculateTransaction } = require('../services/pricingEngine');
 const { processLmsMessage } = require('./LMSlogicBot'); 
 const crypto = require('crypto');
+
 // Generates a consistent 32-byte locking key using your Twilio Auth token
 const SECRET_KEY = crypto.scryptSync(process.env.TWILIO_AUTH || 'seabe-fallback-key', 'seabe-salt', 32);
 
@@ -61,7 +62,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     // 1. Fetch or Create the Payer User
     let member = await prisma.member.findFirst({
         where: { phone: phone, churchCode: 'LWAZI_HQ' },
-        include: { church: true } // 🧠 THE FIX: Attach the Org data so the LMS bot can see it!
+        include: { church: true } 
     });
 
     if (!member) {
@@ -76,7 +77,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
                 phone: phone, 
                 firstName: 'Student', 
                 lastName: '.', 
-                church: { connect: { id: lwaziOrg.id } }, // 🧠 THE FIX: Use Prisma's 'connect' object
+                church: { connect: { id: lwaziOrg.id } }, 
                 status: 'PENDING_SUBSCRIPTION' 
             },
             include: { church: true }
@@ -170,7 +171,6 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     // ================================================
     // 🛡️ THE PREMIUM PAYWALL GATEKEEPER
     // ================================================
-    // 🧠 FIX: ANY user who is not active gets stopped here, even if they just said "Hi" for the first time!
     if (member.status !== 'ACTIVE') {
         const paywallMsg = `🦉 *Welcome to Lwazi Caps Micro-Tutor!*\n\n` +
                            `Unlock your full academic potential with Lwazi Premium! From *R69/month* (plus secure gateway fees), you get:\n\n` +
@@ -181,6 +181,104 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
                            `_Reply *Subscribe* to activate your account and start learning today!_`;
         
         await sendLwazi(phone, paywallMsg);
+        return;
+    }
+
+    // ================================================
+    // 🚀 NEW: 1-TIME ONBOARDING FLOW (GRADE & PROGRAM)
+    // ================================================
+    // We use idType to permanently mark them as onboarded so they don't loop on session expiry
+    if (member.idType !== 'ONBOARDED' && !session.step && (msg === 'hi' || msg === 'menu' || msg === 'start')) {
+        session.step = 'ONB_GRADE';
+        await sendLwazi(phone, "🎉 *Welcome to Lwazi Premium!*\n\nLet's customize your learning experience.\n\nWhat grade are you in?\n_Reply with a number between 4 and 12 (e.g., 10)_");
+        return;
+    }
+
+    if (session.step === 'ONB_GRADE') {
+        const grade = parseInt(msg);
+        if (isNaN(grade) || grade < 4 || grade > 12) {
+            await sendLwazi(phone, "⚠️ Please reply with a valid grade number between 4 and 12.");
+            return;
+        }
+        session.grade = grade; // Save to session momentarily
+        session.step = 'ONB_LANG';
+        await sendLwazi(phone, `Great! Grade ${grade}.\n\nWhat language do you prefer for your explanations?\n\n1️⃣ English\n2️⃣ Afrikaans\n3️⃣ Zulu\n4️⃣ Sotho\n\n_Reply with a number 1-4_`);
+        return;
+    }
+
+    if (session.step === 'ONB_LANG') {
+        const langs = { '1': 'en', '2': 'af', '3': 'zu', '4': 'st' };
+        const langNames = { '1': 'English', '2': 'Afrikaans', '3': 'Zulu', '4': 'Sotho' };
+        
+        if (!langs[msg]) {
+            await sendLwazi(phone, "⚠️ Please reply with 1, 2, 3, or 4.");
+            return;
+        }
+        
+        // Save the chosen language to the database
+        await prisma.member.update({
+            where: { id: member.id },
+            data: { language: langs[msg] }
+        });
+
+        // Fetch LIVE programs from the database
+        const programs = await prisma.program.findMany({
+            where: { churchId: member.churchId, status: 'LIVE' }
+        });
+        
+        if (programs.length === 0) {
+            // No programs exist yet, mark as onboarded and skip to menu
+            await prisma.member.update({ where: { id: member.id }, data: { idType: 'ONBOARDED' } });
+            session.step = null;
+            await sendLwazi(phone, `✅ Language set to ${langNames[msg]}!\n\nThere are no programs currently available. Reply *Menu* to open your dashboard.`);
+            return;
+        }
+        
+        session.step = 'ONB_PROGRAM';
+        let progMsg = `✅ Language set to ${langNames[msg]}!\n\nPlease select a Program to enroll in:\n\n`;
+        programs.forEach((p, idx) => {
+            progMsg += `${idx + 1}️⃣ *${p.title}*\n`;
+        });
+        progMsg += `\n_Reply with the number of the program._`;
+        
+        session.availablePrograms = programs.map(p => p.id);
+        await sendLwazi(phone, progMsg);
+        return;
+    }
+
+    if (session.step === 'ONB_PROGRAM') {
+        const selection = parseInt(msg) - 1;
+        if (isNaN(selection) || selection < 0 || !session.availablePrograms || selection >= session.availablePrograms.length) {
+            await sendLwazi(phone, "⚠️ Invalid selection. Please reply with the number of the program.");
+            return;
+        }
+        
+        const selectedProgramId = session.availablePrograms[selection];
+        
+        // Enroll user in all LIVE courses linked to this program
+        const programCourses = await prisma.course.findMany({
+            where: { programId: selectedProgramId, status: 'LIVE' }
+        });
+
+        if (programCourses.length > 0) {
+            const enrollmentsData = programCourses.map(c => ({
+                memberId: member.id,
+                courseId: c.id,
+                status: 'ACTIVE'
+            }));
+            await prisma.enrollment.createMany({ data: enrollmentsData });
+        }
+        
+        // 🔒 Mark as permanently onboarded in the DB so they never see this again
+        await prisma.member.update({
+            where: { id: member.id },
+            data: { idType: 'ONBOARDED' }
+        });
+
+        session.step = null;
+        delete session.availablePrograms;
+        
+        await sendLwazi(phone, "🎉 *Setup Complete!*\n\nYou are fully enrolled in your selected program.\n\nReply *Menu* to open your learning dashboard.");
         return;
     }
 
@@ -222,9 +320,9 @@ async function generateLwaziCheckout(payerPhone, payerMember, session, sendLwazi
                      phone: num, 
                      firstName: 'Lwazi', 
                      lastName: 'Student', 
-                     church: { connect: { id: lwaziOrg.id } }, // 🧠 THE FIX: Use Prisma's 'connect' object
+                     church: { connect: { id: lwaziOrg.id } }, 
                      status: 'PENDING_SUBSCRIPTION',
-                     parent: { connect: { id: payerMember.id } } // 🧠 THE FIX: Use Prisma's connect object!
+                     parent: { connect: { id: payerMember.id } } 
                  }
             });
         }
