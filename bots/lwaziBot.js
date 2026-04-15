@@ -57,7 +57,8 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     
     // 1. Fetch or Create the Payer User
     let member = await prisma.member.findFirst({
-        where: { phone: phone, churchCode: 'LWAZI_HQ' }
+        where: { phone: phone, churchCode: 'LWAZI_HQ' },
+        include: { church: true } // 🧠 THE FIX: Attach the Org data so the LMS bot can see it!
     });
 
     if (!member) {
@@ -68,10 +69,9 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
             });
         }
         member = await prisma.member.create({
-            data: { phone: phone, firstName: 'Student', lastName: '.', churchId: lwaziOrg.id, status: 'PENDING_SUBSCRIPTION' }
+            data: { phone: phone, firstName: 'Student', lastName: '.', churchId: lwaziOrg.id, status: 'PENDING_SUBSCRIPTION' },
+            include: { church: true } // 🧠 THE FIX: Attach the Org data here too!
         });
-        // 🧠 FIX: We removed the hardcoded generic welcome return here.
-        // Now, brand new users flow directly down into the Premium Paywall gatekeeper!
     }
 
     // ================================================
