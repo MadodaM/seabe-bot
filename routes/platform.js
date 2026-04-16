@@ -19,6 +19,10 @@ const { sendRemittanceAdvice } = require('../services/remittance');
 
 const upload = multer({ dest: 'uploads/' });
 
+// 🧠 IN-MEMORY JOB TRACKER
+// This stores the status of background AI uploads during the current server session.
+let activeJobs = [];
+
 // --- CONFIGURATION ---
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'seabe123';
@@ -775,11 +779,22 @@ module.exports = function(app, { prisma }) {
             const churches = await prisma.church.findMany({ select: { id: true, name: true } });
             let options = churches.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
 
+            // 🕒 NEW: Generate Status Table Rows from the background tracker
+            const statusRows = activeJobs.slice().reverse().map(j => `
+                <tr>
+                    <td><code>${j.id}</code></td>
+                    <td><strong>${j.filename}</strong></td>
+                    <td>
+                        ${j.status === 'PROCESSING' ? '⏳ <span style="color:#3498db; font-weight:bold;">Processing...</span>' : ''}
+                        ${j.status === 'COMPLETED' ? '✅ <span style="color:#27ae60; font-weight:bold;">Success</span>' : ''}
+                        ${j.status === 'FAILED' ? '❌ <span style="color:#e74c3c; font-weight:bold;">Failed</span>' : ''}
+                    </td>
+                    <td style="font-size:11px; color:#95a5a6;">${j.timestamp}</td>
+                </tr>
+            `).join('');
+
             const courses = await prisma.course.findMany({
-                include: { 
-                    church: true, 
-                    _count: { select: { modules: true } } 
-                },
+                include: { church: true, _count: { select: { modules: true } } },
                 orderBy: { id: 'desc' }
             });
 
@@ -806,30 +821,45 @@ module.exports = function(app, { prisma }) {
             const content = `
                 <div style="display:grid; grid-template-columns: 1fr 1.5fr; gap:30px; align-items:start;">
                     
-                    <div class="card-form" style="max-width: 100%;">
-                        <h3 style="margin-top:0;">🤖 Bulk AI Course Generator</h3>
-                        <p style="color:#7f8c8d; margin-top:-10px; margin-bottom:20px; font-size:13px;">Upload multiple PDFs. Gemini AI will run in the background to convert them into drip-feed WhatsApp courses.</p>
-                        
-                        <form id="courseUploadForm">
-                            <div class="form-group">
-                                <label>Organization</label>
-                                <select id="orgId" required>${options}</select>
-                            </div>
-                            <div class="form-group">
-                                <label>Course Price (R)</label>
-                                <input type="number" id="price" value="0" required>
-                            </div>
-                            <div class="form-group">
-                                <label>Curriculum PDFs (Bulk Upload)</label>
-                                <input type="file" id="pdfFile" accept=".pdf" multiple required style="padding: 10px; border: 2px dashed #00d2d3; background: #fdfdfd; cursor: pointer; width: 100%; box-sizing: border-box;">
-                            </div>
+                    <div>
+                        <div class="card-form" style="max-width: 100%; margin-bottom: 20px;">
+                            <h3 style="margin-top:0;">🤖 Bulk AI Course Generator</h3>
+                            <p style="color:#7f8c8d; margin-top:-10px; margin-bottom:20px; font-size:13px;">Upload multiple PDFs. Gemini AI will convert them in the background.</p>
                             
-                            <div id="statusBox" style="display:none; padding: 15px; border-radius: 5px; margin-top: 15px; font-weight: bold; text-align: center;"></div>
+                            <form id="courseUploadForm">
+                                <div class="form-group">
+                                    <label>Organization</label>
+                                    <select id="orgId" required>${options}</select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Course Price (R)</label>
+                                    <input type="number" id="price" value="0" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Curriculum PDFs (Bulk Upload)</label>
+                                    <input type="file" id="pdfFile" accept=".pdf" multiple required style="padding: 10px; border: 2px dashed #00d2d3; background: #fdfdfd; cursor: pointer; width: 100%; box-sizing: border-box;">
+                                </div>
+                                
+                                <div id="statusBox" style="display:none; padding: 15px; border-radius: 5px; margin-top: 15px; font-weight: bold; text-align: center;"></div>
 
-                            <button type="submit" id="submitBtn" class="btn btn-primary" style="width:100%; margin-top: 10px; padding: 15px; font-size: 14px;">
-                                Queue for Background Processing
-                            </button>
-                        </form>
+                                <button type="submit" id="submitBtn" class="btn btn-primary" style="width:100%; margin-top: 10px; padding: 15px; font-size: 14px;">
+                                    Queue for Background Processing
+                                </button>
+                            </form>
+                        </div>
+
+                        <div class="card-form" style="max-width: 100%; border-top: 4px solid #3498db;">
+                            <h3 style="margin-top:0;">⏳ Recent Processing Tasks</h3>
+                            <table style="box-shadow:none; margin-top:10px;">
+                                <thead>
+                                    <tr><th>Task ID</th><th>Filename</th><th>Status</th><th>Time</th></tr>
+                                </thead>
+                                <tbody>
+                                    ${statusRows || '<tr><td colspan="4" style="text-align:center; color:#999; padding:20px;">No recent tasks.</td></tr>'}
+                                </tbody>
+                            </table>
+                            <p style="font-size:10px; color:#999; margin-top:10px;">Refresh the page to update statuses.</p>
+                        </div>
                     </div>
 
                     <div>
@@ -879,11 +909,13 @@ module.exports = function(app, { prisma }) {
                             const data = await res.json();
                             
                             if (data.success) {
+                                status.style.display = 'block';
                                 status.style.background = "#e8f5e9";
                                 status.style.color = "#27ae60";
                                 status.style.border = "1px solid #27ae60";
                                 status.innerHTML = "✅ <strong>Success!</strong><br>" + data.message;
                                 document.getElementById('courseUploadForm').reset();
+                                setTimeout(() => window.location.reload(), 2000);
                             } else {
                                 throw new Error(data.error);
                             }
@@ -1141,7 +1173,7 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-    // 🚀 NEW: BULK BACKGROUND PROCESSOR API
+// 🚀 NEW: BULK BACKGROUND PROCESSOR API
     app.post('/api/admin/parse-course', upload.array('coursePdfs', 50), async (req, res) => {
         const cookies = parseCookies(req);
         if (cookies[COOKIE_NAME] !== ADMIN_SECRET) return res.status(401).json({ success: false, error: "Unauthorized" });
@@ -1153,23 +1185,40 @@ module.exports = function(app, { prisma }) {
         // Background Processing Logic (Runs independently of the HTTP response)
         const processBulk = async (files, orgId, price) => {
             console.log(`[BACKGROUND] Starting bulk processing for ${files.length} courses...`);
+            
             for (const file of files) {
+                // 1. Add to tracker immediately
+                const jobId = Math.random().toString(36).substring(7).toUpperCase();
+                const jobEntry = { 
+                    id: jobId, 
+                    filename: file.originalname, 
+                    status: 'PROCESSING', 
+                    timestamp: new Date().toLocaleTimeString() 
+                };
+                activeJobs.push(jobEntry);
+
                 try {
                     const pdfBuffer = fs.readFileSync(file.path);
                     const result = await processAndImportCoursePDF(pdfBuffer, file.mimetype, orgId, price);
                     
+                    // 2. Update tracker
                     if (result.success) {
+                        jobEntry.status = 'COMPLETED';
                         console.log(`[BACKGROUND] ✅ Successfully built: ${file.originalname}`);
                     } else {
+                        jobEntry.status = 'FAILED';
                         console.error(`[BACKGROUND] ❌ Failed on ${file.originalname}:`, result.error);
                     }
                 } catch (err) {
+                    jobEntry.status = 'FAILED';
                     console.error(`[BACKGROUND] ❌ Critical Error on ${file.originalname}:`, err.message);
                 } finally {
                     try { fs.unlinkSync(file.path); } catch (e) {} // Always clean up server memory
+                    // Keep only the last 20 jobs in memory to prevent memory leaks
+                    if (activeJobs.length > 20) activeJobs.shift();
                 }
             }
-            console.log(`[BACKGROUND] Bulk processing complete! Check dashboard for updates.`);
+            console.log(`[BACKGROUND] Bulk processing complete!`);
         };
 
         // Fire and forget (Notice there is no 'await' here)
