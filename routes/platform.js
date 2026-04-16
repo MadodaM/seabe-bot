@@ -779,7 +779,7 @@ module.exports = function(app, { prisma }) {
             const churches = await prisma.church.findMany({ select: { id: true, name: true } });
             let options = churches.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
 
-            // 🕒 NEW: Generate Status Table Rows from the background tracker
+            // 🕒 1. Generate Status Table Rows (NOW WITH RETRY BUTTON)
             const statusRows = activeJobs.slice().reverse().map(j => `
                 <tr>
                     <td><code>${j.id}</code></td>
@@ -787,7 +787,7 @@ module.exports = function(app, { prisma }) {
                     <td>
                         ${j.status === 'PROCESSING' ? '⏳ <span style="color:#3498db; font-weight:bold;">Processing...</span>' : ''}
                         ${j.status === 'COMPLETED' ? '✅ <span style="color:#27ae60; font-weight:bold;">Success</span>' : ''}
-                        ${j.status === 'FAILED' ? '❌ <span style="color:#e74c3c; font-weight:bold;">Failed</span>' : ''}
+                        ${j.status === 'FAILED' ? `❌ <span style="color:#e74c3c; font-weight:bold;">Failed</span> <button onclick="retryJob('${j.id}')" class="btn" style="background:#e74c3c; color:white; padding:2px 8px; font-size:10px; margin-left:10px;">🔄 Retry</button>` : ''}
                     </td>
                     <td style="font-size:11px; color:#95a5a6;">${j.timestamp}</td>
                 </tr>
@@ -820,12 +820,10 @@ module.exports = function(app, { prisma }) {
 
             const content = `
                 <div style="display:grid; grid-template-columns: 1fr 1.5fr; gap:30px; align-items:start;">
-                    
                     <div>
-                        <div class="card-form" style="max-width: 100%; margin-bottom: 20px;">
+                        <div class="card-form" style="max-width: 100%;">
                             <h3 style="margin-top:0;">🤖 Bulk AI Course Generator</h3>
-                            <p style="color:#7f8c8d; margin-top:-10px; margin-bottom:20px; font-size:13px;">Upload multiple PDFs. Gemini AI will convert them in the background.</p>
-                            
+                            <p style="color:#7f8c8d; font-size:13px;">Upload PDFs to generate courses in the background.</p>
                             <form id="courseUploadForm">
                                 <div class="form-group">
                                     <label>Organization</label>
@@ -836,15 +834,11 @@ module.exports = function(app, { prisma }) {
                                     <input type="number" id="price" value="0" required>
                                 </div>
                                 <div class="form-group">
-                                    <label>Curriculum PDFs (Bulk Upload)</label>
+                                    <label>Curriculum PDFs</label>
                                     <input type="file" id="pdfFile" accept=".pdf" multiple required style="padding: 10px; border: 2px dashed #00d2d3; background: #fdfdfd; cursor: pointer; width: 100%; box-sizing: border-box;">
                                 </div>
-                                
                                 <div id="statusBox" style="display:none; padding: 15px; border-radius: 5px; margin-top: 15px; font-weight: bold; text-align: center;"></div>
-
-                                <button type="submit" id="submitBtn" class="btn btn-primary" style="width:100%; margin-top: 10px; padding: 15px; font-size: 14px;">
-                                    Queue for Background Processing
-                                </button>
+                                <button type="submit" id="submitBtn" class="btn btn-primary" style="width:100%; padding: 15px;">Queue for Background Processing</button>
                             </form>
                         </div>
 
@@ -852,32 +846,25 @@ module.exports = function(app, { prisma }) {
                             <h3 style="margin-top:0;">⏳ Recent Processing Tasks</h3>
                             <table style="box-shadow:none; margin-top:10px;">
                                 <thead>
-                                    <tr><th>Task ID</th><th>Filename</th><th>Status</th><th>Time</th></tr>
+                                    <tr><th>ID</th><th>File</th><th>Status</th><th>Time</th></tr>
                                 </thead>
-                                <tbody>
+                                <tbody id="bgTasksBody">
                                     ${statusRows || '<tr><td colspan="4" style="text-align:center; color:#999; padding:20px;">No recent tasks.</td></tr>'}
                                 </tbody>
                             </table>
-                            <p style="font-size:10px; color:#999; margin-top:10px;">Refresh the page to update statuses.</p>
+                            <p style="font-size:10px; color:#999; margin-top:10px;">Refresh page to update statuses.</p>
                         </div>
                     </div>
 
                     <div>
                         <div class="card-form" style="max-width: 100%;">
-                            <h3 style="margin-top:0;">📚 Active Courses</h3>
+                            <h3 style="margin-top:0;">📚 Active Course Library</h3>
                             <table>
                                 <thead>
-                                    <tr>
-                                        <th>Course</th>
-                                        <th>Org</th>
-                                        <th>Price</th>
-                                        <th>Content</th>
-                                        <th>Status</th>
-                                        <th style="text-align:right;">Action</th>
-                                    </tr>
+                                    <tr><th>Course</th><th>Org</th><th>Price</th><th>Content</th><th>Status</th><th style="text-align:right;">Action</th></tr>
                                 </thead>
                                 <tbody>
-                                    ${courseRows.length > 0 ? courseRows : '<tr><td colspan="6" style="text-align:center; padding:30px; color:#95a5a6;">No courses found. Generate one to get started.</td></tr>'}
+                                    ${courseRows || '<tr><td colspan="6" style="text-align:center;">No courses found.</td></tr>'}
                                 </tbody>
                             </table>
                         </div>
@@ -889,55 +876,63 @@ module.exports = function(app, { prisma }) {
                         e.preventDefault();
                         const btn = document.getElementById('submitBtn');
                         const status = document.getElementById('statusBox');
-                        
-                        btn.innerText = "⏳ Queuing Courses...";
+                        btn.innerText = "⏳ Queuing...";
                         btn.disabled = true;
-                        btn.style.opacity = "0.7";
                         status.style.display = 'none';
 
                         const formData = new FormData();
                         formData.append('orgId', document.getElementById('orgId').value);
                         formData.append('price', document.getElementById('price').value);
-                        
                         const files = document.getElementById('pdfFile').files;
-                        for (let i = 0; i < files.length; i++) {
-                            formData.append('coursePdfs', files[i]);
-                        }
+                        for (let i = 0; i < files.length; i++) { formData.append('coursePdfs', files[i]); }
 
                         try {
                             const res = await fetch('/api/admin/parse-course', { method: 'POST', body: formData });
                             const data = await res.json();
-                            
                             if (data.success) {
                                 status.style.display = 'block';
                                 status.style.background = "#e8f5e9";
                                 status.style.color = "#27ae60";
-                                status.style.border = "1px solid #27ae60";
-                                status.innerHTML = "✅ <strong>Success!</strong><br>" + data.message;
-                                document.getElementById('courseUploadForm').reset();
+                                status.innerHTML = "✅ " + data.message;
                                 setTimeout(() => window.location.reload(), 2000);
                             } else {
-                                throw new Error(data.error);
+                                throw new Error(data.error || "Upload failed");
                             }
                         } catch (err) {
+                            status.style.display = 'block';
                             status.style.background = "#ffebee";
                             status.style.color = "#c0392b";
-                            status.style.border = "1px solid #c0392b";
                             status.innerText = "❌ Error: " + err.message;
-                        } finally {
                             btn.innerText = "Queue for Background Processing";
                             btn.disabled = false;
-                            btn.style.opacity = "1";
-                            status.style.display = 'block';
                         }
                     });
+
+                    // 🔄 NEW: Retry Function
+                    async function retryJob(id) {
+                        if(!confirm("Retry AI processing for this file?")) return;
+                        try {
+                            const res = await fetch('/api/admin/retry-course', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({ jobId: id })
+                            });
+                            const data = await res.json();
+                            if(data.success) {
+                                alert("✅ Task re-queued for processing!");
+                                window.location.reload();
+                            } else {
+                                alert("❌ " + data.error);
+                            }
+                        } catch(e) {
+                            alert("Error: " + e.message);
+                        }
+                    }
                 </script>
             `;
 
             res.send(renderAdminPage('AI Course Builder', content));
-        } catch (e) {
-            res.send(renderAdminPage('AI Course Builder', '', e.message));
-        }
+        } catch (e) { res.send(renderAdminPage('Error', '', e.message)); }
     });
 
     app.get('/admin/course-builder/edit/:id', async (req, res) => {
@@ -1173,27 +1168,28 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-// 🚀 NEW: BULK BACKGROUND PROCESSOR API
+// 🚀 UPDATED API: BACKGROUND PROCESSOR WITH FILE RETENTION ON FAILURE
     app.post('/api/admin/parse-course', upload.array('coursePdfs', 50), async (req, res) => {
         const cookies = parseCookies(req);
-        if (cookies[COOKIE_NAME] !== ADMIN_SECRET) return res.status(401).json({ success: false, error: "Unauthorized" });
-        if (!req.files || req.files.length === 0) return res.status(400).json({ success: false, error: "No PDFs uploaded." });
+        if (cookies[COOKIE_NAME] !== ADMIN_SECRET) return res.status(401).json({ success: false });
+        if (!req.files || req.files.length === 0) return res.status(400).json({ success: false, error: "No PDFs uploaded" });
         
         const orgId = req.body.orgId;
         const price = req.body.price;
 
-        // Background Processing Logic (Runs independently of the HTTP response)
         const processBulk = async (files, orgId, price) => {
-            console.log(`[BACKGROUND] Starting bulk processing for ${files.length} courses...`);
-            
             for (const file of files) {
-                // 1. Add to tracker immediately
+                // 1. Add to tracker with file payload saved
                 const jobId = Math.random().toString(36).substring(7).toUpperCase();
                 const jobEntry = { 
                     id: jobId, 
                     filename: file.originalname, 
                     status: 'PROCESSING', 
-                    timestamp: new Date().toLocaleTimeString() 
+                    timestamp: new Date().toLocaleTimeString(),
+                    filepath: file.path,      // 💾 Saved for Retry
+                    mimetype: file.mimetype,  // 💾 Saved for Retry
+                    orgId: orgId,             // 💾 Saved for Retry
+                    price: price              // 💾 Saved for Retry
                 };
                 activeJobs.push(jobEntry);
 
@@ -1204,30 +1200,64 @@ module.exports = function(app, { prisma }) {
                     // 2. Update tracker
                     if (result.success) {
                         jobEntry.status = 'COMPLETED';
-                        console.log(`[BACKGROUND] ✅ Successfully built: ${file.originalname}`);
+                        try { fs.unlinkSync(file.path); } catch (e) {} // ONLY delete on success
                     } else {
                         jobEntry.status = 'FAILED';
-                        console.error(`[BACKGROUND] ❌ Failed on ${file.originalname}:`, result.error);
                     }
                 } catch (err) {
                     jobEntry.status = 'FAILED';
-                    console.error(`[BACKGROUND] ❌ Critical Error on ${file.originalname}:`, err.message);
                 } finally {
-                    try { fs.unlinkSync(file.path); } catch (e) {} // Always clean up server memory
-                    // Keep only the last 20 jobs in memory to prevent memory leaks
-                    if (activeJobs.length > 20) activeJobs.shift();
+                    if (activeJobs.length > 20) activeJobs.shift(); // Keep UI clean
                 }
             }
-            console.log(`[BACKGROUND] Bulk processing complete!`);
         };
 
-        // Fire and forget (Notice there is no 'await' here)
-        processBulk(req.files, orgId, price);
+        processBulk(req.files, orgId, price); // Fire and forget
         
         res.json({ 
             success: true, 
-            message: `Successfully queued ${req.files.length} PDF(s) for background processing! You can safely leave this page. Refresh the dashboard later to see your generated courses.` 
+            message: `Successfully queued ${req.files.length} PDFs. AI is starting now!` 
         });
+    });
+	
+	// 🔄 NEW API: RETRY FAILED COURSE JOB
+    app.post('/api/admin/retry-course', express.json(), async (req, res) => {
+        const cookies = parseCookies(req);
+        if (cookies[COOKIE_NAME] !== ADMIN_SECRET) return res.status(401).json({ success: false, error: "Unauthorized" });
+        
+        const { jobId } = req.body;
+        const job = activeJobs.find(j => j.id === jobId);
+        
+        if (!job) return res.status(404).json({ success: false, error: "Task not found." });
+        if (job.status !== 'FAILED') return res.status(400).json({ success: false, error: "Only failed tasks can be retried." });
+        
+        if (!fs.existsSync(job.filepath)) {
+            return res.status(400).json({ success: false, error: "The source file was deleted from the server. Please re-upload it." });
+        }
+
+        // 1. Reset the UI status
+        job.status = 'PROCESSING';
+        job.timestamp = new Date().toLocaleTimeString();
+
+        // 2. Fire and forget the retry process
+        (async () => {
+            try {
+                console.log(`[BACKGROUND] Retrying job ${job.id} for ${job.filename}...`);
+                const pdfBuffer = fs.readFileSync(job.filepath);
+                const result = await processAndImportCoursePDF(pdfBuffer, job.mimetype, job.orgId, job.price);
+                
+                if (result.success) {
+                    job.status = 'COMPLETED';
+                    try { fs.unlinkSync(job.filepath); } catch (e) {} // Delete on success
+                } else {
+                    job.status = 'FAILED';
+                }
+            } catch (err) {
+                job.status = 'FAILED';
+            }
+        })();
+
+        res.json({ success: true });
     });
     
     // ============================================================
