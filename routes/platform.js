@@ -17,34 +17,12 @@ const { logAction } = require('../services/audit');
 const { sendRemittanceAdvice } = require('../services/remittance');
 
 const upload = multer({ dest: 'uploads/' });
-const delay = ms => new Promise(res => setTimeout(res, ms));
 
 // 🧠 IN-MEMORY JOB TRACKER
 let activeJobs = [];
 
 // 🛡️ EXPONENTIAL BACKOFF HELPER (Protects against Gemini API Rate Limits)
 const delay = ms => new Promise(res => setTimeout(res, ms));
-
-async function retryWithBackoff(fn, retries = 3, delayMs = 15000) {
-    try {
-        const result = await fn();
-        if (!result.success && result.error && (result.error.includes('429') || result.error.includes('quota'))) {
-            if (retries > 0) {
-                console.log(`[BACKGROUND] ⚠️ Gemini Rate Limit Hit. Sleeping for ${delayMs/1000}s...`);
-                await delay(delayMs);
-                return retryWithBackoff(fn, retries - 1, delayMs * 2);
-            }
-        }
-        return result; 
-    } catch (error) {
-        if ((error.status === 429 || (error.message && error.message.includes('429'))) && retries > 0) {
-            console.log(`[BACKGROUND] ⚠️ Gemini Rate Limit Hit. Sleeping for ${delayMs/1000}s...`);
-            await delay(delayMs);
-            return retryWithBackoff(fn, retries - 1, delayMs * 2);
-        }
-        throw error;
-    }
-}
 
 // --- CONFIGURATION ---
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
@@ -71,14 +49,6 @@ function safeDate(d) {
     if (!d) return new Date();
     return new Date(d);
 }
-
-function safeDate(d) {
-    if (!d) return new Date();
-    return new Date(d);
-}
-
-// 🧠 NEW: Exponential Backoff Helper for Gemini API Rate Limits
-const delay = ms => new Promise(res => setTimeout(res, ms));
 
 async function retryWithBackoff(fn, retries = 3, delayMs = 15000) {
     try {
