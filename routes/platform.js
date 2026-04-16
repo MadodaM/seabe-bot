@@ -1,5 +1,5 @@
 // routes/platform.js
-// VERSION: 13.0 (Compliance Resolution UI + Payouts + AI Manual Override + TOTP MFA)
+// VERSION: 13.0 (Compliance Resolution UI + Payouts + AI Manual Override + TOTP MFA + Bulk Course Upload)
 require('dotenv').config();
 
 const fs = require('fs');
@@ -71,7 +71,7 @@ function renderAdminPage(title, content, error = null) {
                 .tag-church { background:#eefdf5; color:green; border:1px solid green; }
                 .tag-society { background:#eefafc; color:#0984e3; border:1px solid #0984e3; }
                 .tag-npo { background:#fff8e1; color:#f39c12; border:1px solid #f39c12; }
-				.tag-stokvel { background:#fce4ec; color:#e91e63; border:1px solid #e91e63; }
+                .tag-stokvel { background:#fce4ec; color:#e91e63; border:1px solid #e91e63; }
                 .tag-provider { background:#f5eef8; color:#8e44ad; border:1px solid #8e44ad; }
                 .btn { padding: 8px 15px; border-radius: 4px; text-decoration: none; font-size: 13px; font-weight: bold; cursor: pointer; border: none; display: inline-block; transition: 0.2s; }
                 .btn-primary { background: #1e272e; color: white; }
@@ -101,7 +101,7 @@ function renderAdminPage(title, content, error = null) {
                 <a href="/admin/global-collections">💰 Global Collections</a>
                 <a href="/admin/payouts">💸 Church Payouts</a>
                 <a href="/admin/course-builder">🤖 AI Course Builder</a>
-				<a href="/admin/programs">🎓 Program Management</a>
+                <a href="/admin/programs">🎓 Program Management</a>
                 <a href="/admin/events">🎟️ Events & Projects</a>
                 <a href="/admin/ads">📢 Broadcasts</a>
                 <a href="/admin/news">📰 News Feed</a>
@@ -120,8 +120,8 @@ function renderAdminPage(title, content, error = null) {
 }
 
 module.exports = function(app, { prisma }) {
-	
-	// ============================================================
+    
+    // ============================================================
     // 🛠️ TEMP: SUPER ADMIN MFA SETUP (DELETE AFTER USING!)
     // ============================================================
     app.get('/admin-mfa-setup', async (req, res) => {
@@ -806,10 +806,9 @@ module.exports = function(app, { prisma }) {
             const content = `
                 <div style="display:grid; grid-template-columns: 1fr 1.5fr; gap:30px; align-items:start;">
                     
-                    <!-- UPLOAD FORM -->
                     <div class="card-form" style="max-width: 100%;">
-                        <h3 style="margin-top:0;">🤖 AI Course Generator</h3>
-                        <p style="color:#7f8c8d; margin-top:-10px; margin-bottom:20px; font-size:13px;">Upload a PDF curriculum. Gemini AI will convert it into a drip-feed WhatsApp course.</p>
+                        <h3 style="margin-top:0;">🤖 Bulk AI Course Generator</h3>
+                        <p style="color:#7f8c8d; margin-top:-10px; margin-bottom:20px; font-size:13px;">Upload multiple PDFs. Gemini AI will run in the background to convert them into drip-feed WhatsApp courses.</p>
                         
                         <form id="courseUploadForm">
                             <div class="form-group">
@@ -821,19 +820,18 @@ module.exports = function(app, { prisma }) {
                                 <input type="number" id="price" value="0" required>
                             </div>
                             <div class="form-group">
-                                <label>Curriculum PDF</label>
-                                <input type="file" id="pdfFile" accept=".pdf" required style="padding: 10px; border: 2px dashed #00d2d3; background: #fdfdfd; cursor: pointer;">
+                                <label>Curriculum PDFs (Bulk Upload)</label>
+                                <input type="file" id="pdfFile" accept=".pdf" multiple required style="padding: 10px; border: 2px dashed #00d2d3; background: #fdfdfd; cursor: pointer; width: 100%; box-sizing: border-box;">
                             </div>
                             
                             <div id="statusBox" style="display:none; padding: 15px; border-radius: 5px; margin-top: 15px; font-weight: bold; text-align: center;"></div>
 
                             <button type="submit" id="submitBtn" class="btn btn-primary" style="width:100%; margin-top: 10px; padding: 15px; font-size: 14px;">
-                                Parse & Generate Course
+                                Queue for Background Processing
                             </button>
                         </form>
                     </div>
 
-                    <!-- COURSE LIST -->
                     <div>
                         <div class="card-form" style="max-width: 100%;">
                             <h3 style="margin-top:0;">📚 Active Courses</h3>
@@ -862,7 +860,7 @@ module.exports = function(app, { prisma }) {
                         const btn = document.getElementById('submitBtn');
                         const status = document.getElementById('statusBox');
                         
-                        btn.innerText = "⏳ AI is reading the PDF (10-20s)...";
+                        btn.innerText = "⏳ Queuing Courses...";
                         btn.disabled = true;
                         btn.style.opacity = "0.7";
                         status.style.display = 'none';
@@ -870,7 +868,11 @@ module.exports = function(app, { prisma }) {
                         const formData = new FormData();
                         formData.append('orgId', document.getElementById('orgId').value);
                         formData.append('price', document.getElementById('price').value);
-                        formData.append('coursePdf', document.getElementById('pdfFile').files[0]);
+                        
+                        const files = document.getElementById('pdfFile').files;
+                        for (let i = 0; i < files.length; i++) {
+                            formData.append('coursePdfs', files[i]);
+                        }
 
                         try {
                             const res = await fetch('/api/admin/parse-course', { method: 'POST', body: formData });
@@ -880,9 +882,8 @@ module.exports = function(app, { prisma }) {
                                 status.style.background = "#e8f5e9";
                                 status.style.color = "#27ae60";
                                 status.style.border = "1px solid #27ae60";
-                                status.innerHTML = "✅ <strong>Success!</strong><br>Course generated.";
+                                status.innerHTML = "✅ <strong>Success!</strong><br>" + data.message;
                                 document.getElementById('courseUploadForm').reset();
-                                setTimeout(() => window.location.reload(), 2000);
                             } else {
                                 throw new Error(data.error);
                             }
@@ -892,7 +893,7 @@ module.exports = function(app, { prisma }) {
                             status.style.border = "1px solid #c0392b";
                             status.innerText = "❌ Error: " + err.message;
                         } finally {
-                            btn.innerText = "Parse & Generate Course";
+                            btn.innerText = "Queue for Background Processing";
                             btn.disabled = false;
                             btn.style.opacity = "1";
                             status.style.display = 'block';
@@ -1140,28 +1141,47 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-    app.post('/api/admin/parse-course', upload.single('coursePdf'), async (req, res) => {
+    // 🚀 NEW: BULK BACKGROUND PROCESSOR API
+    app.post('/api/admin/parse-course', upload.array('coursePdfs', 50), async (req, res) => {
         const cookies = parseCookies(req);
         if (cookies[COOKIE_NAME] !== ADMIN_SECRET) return res.status(401).json({ success: false, error: "Unauthorized" });
-        if (!req.file) return res.status(400).json({ success: false, error: "No PDF uploaded." });
+        if (!req.files || req.files.length === 0) return res.status(400).json({ success: false, error: "No PDFs uploaded." });
         
-        try {
-            const pdfBuffer = fs.readFileSync(req.file.path);
-            const result = await processAndImportCoursePDF(pdfBuffer, req.file.mimetype, req.body.orgId, req.body.price);
-            
-            try { fs.unlinkSync(req.file.path); } catch (e) {}
-            
-            if (result.success) {
-                res.json(result);
-            } else {
-                res.status(500).json(result);
+        const orgId = req.body.orgId;
+        const price = req.body.price;
+
+        // Background Processing Logic (Runs independently of the HTTP response)
+        const processBulk = async (files, orgId, price) => {
+            console.log(`[BACKGROUND] Starting bulk processing for ${files.length} courses...`);
+            for (const file of files) {
+                try {
+                    const pdfBuffer = fs.readFileSync(file.path);
+                    const result = await processAndImportCoursePDF(pdfBuffer, file.mimetype, orgId, price);
+                    
+                    if (result.success) {
+                        console.log(`[BACKGROUND] ✅ Successfully built: ${file.originalname}`);
+                    } else {
+                        console.error(`[BACKGROUND] ❌ Failed on ${file.originalname}:`, result.error);
+                    }
+                } catch (err) {
+                    console.error(`[BACKGROUND] ❌ Critical Error on ${file.originalname}:`, err.message);
+                } finally {
+                    try { fs.unlinkSync(file.path); } catch (e) {} // Always clean up server memory
+                }
             }
-        } catch (err) {
-            res.status(500).json({ success: false, error: "Failed to read file on server." });
-        }
+            console.log(`[BACKGROUND] Bulk processing complete! Check dashboard for updates.`);
+        };
+
+        // Fire and forget (Notice there is no 'await' here)
+        processBulk(req.files, orgId, price);
+        
+        res.json({ 
+            success: true, 
+            message: `Successfully queued ${req.files.length} PDF(s) for background processing! You can safely leave this page. Refresh the dashboard later to see your generated courses.` 
+        });
     });
-	
-	// ============================================================
+    
+    // ============================================================
     // 🎓 PROGRAM MANAGEMENT (Super Admin Only)
     // ============================================================
     
@@ -1551,7 +1571,7 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-	app.post('/api/prospect/admin/approve-level-1', async (req, res) => {
+    app.post('/api/prospect/admin/approve-level-1', async (req, res) => {
         if (!isAuthenticated(req)) return res.status(401).json({ error: "Unauthorized" });
         
         try {
@@ -1743,7 +1763,7 @@ module.exports = function(app, { prisma }) {
                 by: ['churchCode'],
                 where: { 
                     status: 'SUCCESS', 
-                    payoutId: null     
+                    payoutId: null      
                 },
                 _sum: {
                     amount: true,        
@@ -1858,7 +1878,7 @@ module.exports = function(app, { prisma }) {
         }
     });
 
-	app.post('/admin/payouts/process', async (req, res) => {
+    app.post('/admin/payouts/process', async (req, res) => {
         if (!isAuthenticated(req)) return res.redirect('/login');
         
         try {
@@ -2574,8 +2594,8 @@ module.exports = function(app, { prisma }) {
             res.status(500).json({ success: false, error: error.message });
         }
     });
-	
-	// ==========================================
+    
+    // ==========================================
     // 🏦 ADMIN: VERIFY BANK ACCOUNT
     // ==========================================
     app.post('/admin/bank/verify', async (req, res) => {
@@ -2604,8 +2624,8 @@ module.exports = function(app, { prisma }) {
             res.send(renderAdminPage('Verification Error', '', e.message));
         }
     });
-	
-	// ============================================================
+    
+    // ============================================================
     // 🔒 API: RESET CLIENT PASSWORD & MFA
     // ============================================================
     app.post('/api/admin/churches/reset-access', express.json(), async (req, res) => {
