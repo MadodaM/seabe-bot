@@ -180,23 +180,6 @@ module.exports = function(app, { prisma }) {
     });
 
     // ============================================================
-    // 🔐 AUTHENTICATION (NOW WITH TOTP MFA!)
-    // ============================================================
-    app.get('/login', (req, res) => {
-        res.send(`
-            <div style="font-family:sans-serif; display:flex; justify-content:center; align-items:center; height:100vh; background:#2d3436;">
-                <form action="/login" method="POST" style="background:white; padding:40px; border-radius:10px; text-align:center; width: 300px; box-shadow:0 10px 30px rgba(0,0,0,0.2);">
-                    <h2 style="color:#1e272e;">Vault Login</h2>
-                    <input name="username" placeholder="Username" required style="padding:15px; width:100%; margin-bottom:10px; box-sizing:border-box; border:1px solid #ddd; border-radius:5px;">
-                    <input type="password" name="password" placeholder="Password" required style="padding:15px; width:100%; margin-bottom:10px; box-sizing:border-box; border:1px solid #ddd; border-radius:5px;">
-                    <input type="text" name="totp" placeholder="6-Digit Authenticator Code" required autocomplete="off" style="padding:15px; width:100%; margin-bottom:20px; box-sizing:border-box; border:1px solid #ddd; border-radius:5px; font-weight:bold; letter-spacing:2px; text-align:center;">
-                    <button style="padding:15px; width:100%; background:#00d2d3; color:#1e272e; font-weight:bold; border:none; border-radius:5px; cursor:pointer;">SECURE LOGIN</button>
-                </form>
-            </div>
-        `);
-    });
-
-    // ============================================================
     // 🔐 SUPER ADMIN AUTHENTICATION (TOTP MFA)
     // ============================================================
     app.get('/admin/login', (req, res) => {
@@ -1284,7 +1267,6 @@ module.exports = function(app, { prisma }) {
         })();
 
         res.json({ success: true });
-    });  res.json({ success: true });
     });
     
     // ============================================================
