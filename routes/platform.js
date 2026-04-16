@@ -164,7 +164,7 @@ function renderAdminPage(title, content, error = null) {
                 <a href="/admin/news">📰 News Feed</a>
                 <a href="/admin/users">👥 Member Search</a>
                 <br><br>
-                <a href="/logout" style="color:#ff7675;">🚪 Sign Out</a>
+                <a href="/admin/logout" style="color:#ff7675;">🚪 Sign Out</a>
             </div>
             <div class="main">
                 <h1>${title}</h1>
@@ -226,30 +226,47 @@ module.exports = function(app, { prisma }) {
         `);
     });
 
-    app.post('/login', (req, res) => {
-        const { username, password, totp } = req.body;
+    // ============================================================
+    // 🔐 SUPER ADMIN AUTHENTICATION (Password + TOTP MFA)
+    // ============================================================
+    app.get('/admin/login', (req, res) => {
+        res.send(`
+            <div style="font-family:sans-serif; display:flex; justify-content:center; align-items:center; height:100vh; background:#2d3436;">
+                <form action="/admin/login" method="POST" style="background:white; padding:40px; border-radius:10px; text-align:center; width: 300px; box-shadow:0 10px 30px rgba(0,0,0,0.2);">
+                    <h2 style="color:#1e272e;">Vault Login</h2>
+                    <input name="username" placeholder="Username" required style="padding:15px; width:100%; margin-bottom:10px; box-sizing:border-box; border:1px solid #ddd; border-radius:5px;">
+                    <input type="password" name="password" placeholder="Password" required style="padding:15px; width:100%; margin-bottom:10px; box-sizing:border-box; border:1px solid #ddd; border-radius:5px;">
+                    <input type="text" name="totp" placeholder="6-Digit Authenticator Code" required autocomplete="off" style="padding:15px; width:100%; margin-bottom:20px; box-sizing:border-box; border:1px solid #ddd; border-radius:5px; font-weight:bold; letter-spacing:2px; text-align:center;">
+                    <button style="padding:15px; width:100%; background:#00d2d3; color:#1e272e; font-weight:bold; border:none; border-radius:5px; cursor:pointer;">SECURE LOGIN</button>
+                </form>
+            </div>
+        `);
+    });
 
+    app.post('/admin/login', (req, res) => {
+        const { username, password, totp } = req.body;
+        
         // 1. Verify Username and Password
         if (username !== ADMIN_USER || password !== ADMIN_PASS) {
-            return res.send("<script>alert('Invalid Credentials'); window.location.href='/login';</script>");
+            return res.send("<script>alert('Invalid Credentials'); window.location.href='/admin/login';</script>");
         }
 
-        // 2. Fail Fast: Ensure MFA is configured in Environment Variables
+        // 2. Ensure MFA is configured
         const ADMIN_TOTP_SECRET = process.env.ADMIN_TOTP_SECRET;
         if (!ADMIN_TOTP_SECRET) {
             return res.send("⚠️ CRITICAL SECURITY ERROR: ADMIN_TOTP_SECRET is not set in Environment Variables.");
         }
 
-        // 3. Verify the 6-Digit Code mathematically using Speakeasy
+        // 3. Verify the 6-Digit Code
         const isValidMfa = speakeasy.totp.verify({
             secret: ADMIN_TOTP_SECRET,
             encoding: 'base32',
             token: totp,
-            window: 1 // Allows 30 seconds of drift in case they type slowly
+            window: 1 
         });
 
         if (!isValidMfa) {
-            return res.send("<script>alert('Invalid or Expired Authenticator Code'); window.location.href='/login';</script>");
+            return res.send("<script>alert('Invalid or Expired Authenticator Code'); window.location.href='/admin/login';</script>");
         }
 
         // 4. Success! Grant Access
@@ -257,16 +274,16 @@ module.exports = function(app, { prisma }) {
         res.redirect('/admin');
     });
 
-    app.get('/logout', (req, res) => {
+    app.get('/admin/logout', (req, res) => {
         res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Max-Age=0`);
-        res.redirect('/login');
+        res.redirect('/admin/login');
     });
 
     // ============================================================
     // 📊 DASHBOARD
     // ============================================================
     app.get('/admin', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         
         try {
             const counts = {
@@ -304,7 +321,7 @@ module.exports = function(app, { prisma }) {
     // 🏢 ORGANIZATIONS & AI SCANNER
     // ============================================================
     app.get('/admin/churches', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         const q = req.query.q || '';
         
         try {
@@ -372,7 +389,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.get('/admin/churches/add', (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         const content = `
             <form method="POST" class="card-form">
                 <div class="form-group">
@@ -402,7 +419,7 @@ module.exports = function(app, { prisma }) {
 
     app.post('/admin/churches/add', async (req, res) => {
         // 1. Security Check (From Block 2)
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         
         try {
             // 2. Destructure ALL incoming data (Merged from both blocks)
@@ -450,7 +467,7 @@ module.exports = function(app, { prisma }) {
 
     // 🚀 EDIT ORGANIZATION (With QR Code Generator, AI Scanner & KYB Bank Vault)
     app.get('/admin/churches/edit/:code', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         
         try {
             // 👇 1. UPDATE: Tell Prisma to fetch the linked Bank Details too!
@@ -765,7 +782,7 @@ module.exports = function(app, { prisma }) {
     // 🛡️ ADMIN: TOGGLE BANK ACCOUNT STATUS
     // ==========================================
     app.post('/admin/bank/toggle-status', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         
         try {
             // 👇 Expect 'orgCode' instead of 'orgId'
@@ -826,7 +843,7 @@ module.exports = function(app, { prisma }) {
     // 🎓 AI COURSE BUILDER (LMS)
     // ============================================================
     app.get('/admin/course-builder', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
 
         try {
             const churches = await prisma.church.findMany({ select: { id: true, name: true } });
@@ -997,7 +1014,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.get('/admin/course-builder/edit/:id', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         
         try {
             const course = await prisma.course.findUnique({
@@ -1078,7 +1095,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.get('/admin/course-builder/module/edit/:moduleId', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             const m = await prisma.module.findUnique({ where: { id: parseInt(req.params.moduleId) } });
             if (!m) throw new Error("Module not found");
@@ -1170,7 +1187,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/course-builder/update', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             await prisma.course.update({
                 where: { id: parseInt(req.body.id) },
@@ -1188,7 +1205,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/course-builder/delete', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             await prisma.course.delete({ where: { id: parseInt(req.body.id) } });
             res.redirect('/admin/course-builder');
@@ -1198,7 +1215,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/course-builder/module/update', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             await prisma.module.update({
                 where: { id: parseInt(req.body.id) },
@@ -1220,7 +1237,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/course-builder/module/delete', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             await prisma.module.delete({ where: { id: parseInt(req.body.id) } });
             res.redirect(`/admin/course-builder/edit/${req.body.courseId}`);
@@ -1315,7 +1332,7 @@ module.exports = function(app, { prisma }) {
     
     // 1. Program Dashboard
     app.get('/admin/programs', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
 
         try {
             const programs = await prisma.program.findMany({
@@ -1377,7 +1394,7 @@ module.exports = function(app, { prisma }) {
 
     // 2. Add Program UI
     app.get('/admin/programs/add', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         
         try {
             const churches = await prisma.church.findMany({ select: { id: true, name: true } });
@@ -1425,7 +1442,7 @@ module.exports = function(app, { prisma }) {
 
     // 3. Handle Add Program
     app.post('/admin/programs/add', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             await prisma.program.create({
                 data: {
@@ -1444,7 +1461,7 @@ module.exports = function(app, { prisma }) {
 
     // 4. Edit Program UI (Update details + Link Courses)
     app.get('/admin/programs/edit/:id', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             const program = await prisma.program.findUnique({
                 where: { id: parseInt(req.params.id) },
@@ -1521,7 +1538,7 @@ module.exports = function(app, { prisma }) {
 
     // 5. Handle Update Program Details
     app.post('/admin/programs/update', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             await prisma.program.update({
                 where: { id: parseInt(req.body.id) },
@@ -1540,7 +1557,7 @@ module.exports = function(app, { prisma }) {
 
     // 6. Handle Linking Courses to Program
     app.post('/admin/programs/link-courses', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             const programId = parseInt(req.body.programId);
             const selectedCourses = req.body.courseIds ? (Array.isArray(req.body.courseIds) ? req.body.courseIds : [req.body.courseIds]) : [];
@@ -1567,7 +1584,7 @@ module.exports = function(app, { prisma }) {
 
     // 7. Handle Delete Program
     app.post('/admin/programs/delete', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             // Unlink courses first to prevent referential integrity errors
             await prisma.course.updateMany({
@@ -1587,7 +1604,7 @@ module.exports = function(app, { prisma }) {
     // 🛡️ FICA & COMPLIANCE DASHBOARD
     // ============================================================
     app.get('/admin/fica', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
 
         try {
             const allChurches = await prisma.church.findMany({ orderBy: { createdAt: 'desc' } });
@@ -1762,7 +1779,7 @@ module.exports = function(app, { prisma }) {
     // 🏷️ PRICING ENGINE
     // ============================================================
     app.get('/admin/pricing', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
 
         try {
             const { loadPrices } = require('../services/pricing');
@@ -1817,7 +1834,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/pricing/update', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             // 1. Fetch the OLD value first so we can log it!
             const oldPriceRecord = await prisma.servicePrice.findUnique({ where: { code: req.body.code } });
@@ -1851,7 +1868,7 @@ module.exports = function(app, { prisma }) {
     // 6. GLOBAL COLLECTIONS
     // ============================================================
     app.get('/admin/global-collections', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             const groups = await prisma.collection.groupBy({ 
                 by: ['churchCode', 'status'], 
@@ -1884,7 +1901,7 @@ module.exports = function(app, { prisma }) {
     // 💸 PAYOUTS & SETTLEMENTS
     // ============================================================
     app.get('/admin/payouts', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
 
         try {
             const pendingPayoutsRaw = await prisma.transaction.groupBy({
@@ -2007,7 +2024,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/payouts/process', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         
         try {
             const { churchCode, amount, txCount } = req.body;
@@ -2084,7 +2101,7 @@ module.exports = function(app, { prisma }) {
     // 🌍 GLOBAL RADAR
     // ============================================================
     app.get('/admin/global-radar', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         
         const content = `
             <style>
@@ -2103,7 +2120,7 @@ module.exports = function(app, { prisma }) {
     // ⚖️ REGULATORY COMPLIANCE & LSO DASHBOARD
     // ============================================================
     app.get('/admin/compliance', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
 
         try {
             const txStats = await prisma.transaction.aggregate({
@@ -2218,7 +2235,7 @@ module.exports = function(app, { prisma }) {
     // 🔍 COMPLIANCE REVIEW UI
     // ============================================================
     app.get('/admin/compliance/review/:id', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         
         try {
             const tx = await prisma.transaction.findUnique({
@@ -2307,7 +2324,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/compliance/resolve', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         
         try {
             const { logId, transactionId, decision, resolutionNotes } = req.body;
@@ -2357,7 +2374,7 @@ module.exports = function(app, { prisma }) {
     // 2. EVENTS
     // ============================================================
     app.get('/admin/events', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             const events = await prisma.event.findMany({ include: { church: true }, orderBy: { id: 'desc' } });
             const rows = events.map(e => `
@@ -2389,7 +2406,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.get('/admin/events/add', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         const churches = await prisma.church.findMany();
         const opts = churches.map(c => `<option value="${c.code}">${c.name}</option>`).join('');
         
@@ -2407,7 +2424,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/events/add', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         await prisma.event.create({ 
             data: { 
                 name: req.body.name, 
@@ -2422,7 +2439,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/events/delete', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         await prisma.event.delete({ where: { id: parseInt(req.body.id) } });
         res.redirect('/admin/events');
     });
@@ -2431,7 +2448,7 @@ module.exports = function(app, { prisma }) {
     // 3. ADS & BROADCASTS
     // ============================================================
     app.get('/admin/ads', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             const ads = await prisma.ad.findMany({ include: { church: true }, orderBy: { id: 'desc' } });
             const rows = ads.map(a => `
@@ -2463,7 +2480,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.get('/admin/ads/add', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         const churches = await prisma.church.findMany();
         const opts = churches.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
         
@@ -2479,7 +2496,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/ads/add', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         await prisma.ad.create({ 
             data: { 
                 content: req.body.content, 
@@ -2492,7 +2509,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/ads/delete', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         await prisma.ad.delete({ where: { id: parseInt(req.body.id) } });
         res.redirect('/admin/ads');
     });
@@ -2501,7 +2518,7 @@ module.exports = function(app, { prisma }) {
     // 4. NEWS
     // ============================================================
     app.get('/admin/news', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             const news = await prisma.news.findMany({ include: { church: true }, orderBy: { id: 'desc' } });
             const rows = news.map(n => `
@@ -2532,7 +2549,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.get('/admin/news/add', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         const churches = await prisma.church.findMany();
         const opts = churches.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
         
@@ -2549,7 +2566,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/news/add', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         await prisma.news.create({ 
             data: { 
                 headline: req.body.headline, 
@@ -2563,7 +2580,7 @@ module.exports = function(app, { prisma }) {
     });
 
     app.post('/admin/news/delete', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         await prisma.news.delete({ where: { id: parseInt(req.body.id) } });
         res.redirect('/admin/news');
     });
@@ -2572,7 +2589,7 @@ module.exports = function(app, { prisma }) {
     // 👥 MEMBER KYC & IDENTITY PORTAL (Upgraded for Stokvels)
     // ============================================================
     app.get('/admin/users', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         const q = req.query.q || '';
         
         try {
@@ -2647,7 +2664,7 @@ module.exports = function(app, { prisma }) {
 
     // 🛡️ API: APPROVE MEMBER KYC
     app.post('/admin/users/kyc-approve', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         try {
             await prisma.member.update({
                 where: { id: parseInt(req.body.memberId) },
@@ -2727,7 +2744,7 @@ module.exports = function(app, { prisma }) {
     // 🏦 ADMIN: VERIFY BANK ACCOUNT
     // ==========================================
     app.post('/admin/bank/verify', async (req, res) => {
-        if (!isAuthenticated(req)) return res.redirect('/login');
+        if (!isAuthenticated(req)) return res.redirect('/admin/login');
         
         try {
             const { bankDetailId } = req.body;
