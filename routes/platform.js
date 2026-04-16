@@ -18,6 +18,7 @@ const { sendRemittanceAdvice } = require('../services/remittance');
 
 
 const upload = multer({ dest: 'uploads/' });
+const delay = ms => new Promise(res => setTimeout(res, ms));
 
 // 🧠 IN-MEMORY JOB TRACKER
 // This stores the status of background AI uploads during the current server session.
@@ -47,6 +48,36 @@ function isAuthenticated(req) {
 function safeDate(d) {
     if (!d) return new Date();
     return new Date(d);
+}
+
+function safeDate(d) {
+    if (!d) return new Date();
+    return new Date(d);
+}
+
+// 🧠 NEW: Exponential Backoff Helper for Gemini API Rate Limits
+const delay = ms => new Promise(res => setTimeout(res, ms));
+
+async function retryWithBackoff(fn, retries = 3, delayMs = 15000) {
+    try {
+        const result = await fn();
+        // If the importer caught the 429 and returned it as a string instead of throwing
+        if (!result.success && result.error && (result.error.includes('429') || result.error.includes('quota'))) {
+            if (retries > 0) {
+                console.log(`[BACKGROUND] ⚠️ Gemini Rate Limit Hit. Sleeping for ${delayMs/1000}s...`);
+                await delay(delayMs);
+                return retryWithBackoff(fn, retries - 1, delayMs * 2);
+            }
+        }
+        return result; 
+    } catch (error) {
+        if ((error.status === 429 || error.message.includes('429')) && retries > 0) {
+            console.log(`[BACKGROUND] ⚠️ Gemini Rate Limit Hit. Sleeping for ${delayMs/1000}s...`);
+            await delay(delayMs);
+            return retryWithBackoff(fn, retries - 1, delayMs * 2);
+        }
+        throw error;
+    }
 }
 
 // --- UI RENDERER ---
@@ -1195,7 +1226,10 @@ module.exports = function(app, { prisma }) {
 
                 try {
                     const pdfBuffer = fs.readFileSync(file.path);
-                    const result = await processAndImportCoursePDF(pdfBuffer, file.mimetype, orgId, price);
+                    // 🛡️ Wrap the API call in your new backoff armor!
+                    const result = await retryWithBackoff(() => 
+                        processAndImportCoursePDF(pdfBuffer, file.mimetype, orgId, price)
+                    );
                     
                     // 2. Update tracker
                     if (result.success) {
@@ -1244,7 +1278,10 @@ module.exports = function(app, { prisma }) {
             try {
                 console.log(`[BACKGROUND] Retrying job ${job.id} for ${job.filename}...`);
                 const pdfBuffer = fs.readFileSync(job.filepath);
-                const result = await processAndImportCoursePDF(pdfBuffer, job.mimetype, job.orgId, job.price);
+                // 🛡️ Wrap the API call in your new backoff armor!
+                const result = await retryWithBackoff(() => 
+                    processAndImportCoursePDF(pdfBuffer, job.mimetype, job.orgId, job.price)
+                );
                 
                 if (result.success) {
                     job.status = 'COMPLETED';
