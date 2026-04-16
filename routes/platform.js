@@ -227,7 +227,7 @@ module.exports = function(app, { prisma }) {
     });
 
     // ============================================================
-    // 🔐 SUPER ADMIN AUTHENTICATION (Password + TOTP MFA)
+    // 🔐 SUPER ADMIN AUTHENTICATION (TOTP MFA)
     // ============================================================
     app.get('/admin/login', (req, res) => {
         res.send(`
@@ -245,19 +245,13 @@ module.exports = function(app, { prisma }) {
 
     app.post('/admin/login', (req, res) => {
         const { username, password, totp } = req.body;
-        
-        // 1. Verify Username and Password
         if (username !== ADMIN_USER || password !== ADMIN_PASS) {
             return res.send("<script>alert('Invalid Credentials'); window.location.href='/admin/login';</script>");
         }
 
-        // 2. Ensure MFA is configured
         const ADMIN_TOTP_SECRET = process.env.ADMIN_TOTP_SECRET;
-        if (!ADMIN_TOTP_SECRET) {
-            return res.send("⚠️ CRITICAL SECURITY ERROR: ADMIN_TOTP_SECRET is not set in Environment Variables.");
-        }
+        if (!ADMIN_TOTP_SECRET) return res.send("⚠️ CRITICAL SECURITY ERROR: ADMIN_TOTP_SECRET is not set in Environment Variables.");
 
-        // 3. Verify the 6-Digit Code
         const isValidMfa = speakeasy.totp.verify({
             secret: ADMIN_TOTP_SECRET,
             encoding: 'base32',
@@ -265,11 +259,8 @@ module.exports = function(app, { prisma }) {
             window: 1 
         });
 
-        if (!isValidMfa) {
-            return res.send("<script>alert('Invalid or Expired Authenticator Code'); window.location.href='/admin/login';</script>");
-        }
+        if (!isValidMfa) return res.send("<script>alert('Invalid or Expired Authenticator Code'); window.location.href='/admin/login';</script>");
 
-        // 4. Success! Grant Access
         res.setHeader('Set-Cookie', `${COOKIE_NAME}=${ADMIN_SECRET}; HttpOnly; Path=/; Max-Age=3600`);
         res.redirect('/admin');
     });
