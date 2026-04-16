@@ -16,13 +16,35 @@ const { generatePaymentQR } = require('../services/paymentQrgen');
 const { logAction } = require('../services/audit');
 const { sendRemittanceAdvice } = require('../services/remittance');
 
-
 const upload = multer({ dest: 'uploads/' });
 const delay = ms => new Promise(res => setTimeout(res, ms));
 
 // 🧠 IN-MEMORY JOB TRACKER
-// This stores the status of background AI uploads during the current server session.
 let activeJobs = [];
+
+// 🛡️ EXPONENTIAL BACKOFF HELPER (Protects against Gemini API Rate Limits)
+const delay = ms => new Promise(res => setTimeout(res, ms));
+
+async function retryWithBackoff(fn, retries = 3, delayMs = 15000) {
+    try {
+        const result = await fn();
+        if (!result.success && result.error && (result.error.includes('429') || result.error.includes('quota'))) {
+            if (retries > 0) {
+                console.log(`[BACKGROUND] ⚠️ Gemini Rate Limit Hit. Sleeping for ${delayMs/1000}s...`);
+                await delay(delayMs);
+                return retryWithBackoff(fn, retries - 1, delayMs * 2);
+            }
+        }
+        return result; 
+    } catch (error) {
+        if ((error.status === 429 || (error.message && error.message.includes('429'))) && retries > 0) {
+            console.log(`[BACKGROUND] ⚠️ Gemini Rate Limit Hit. Sleeping for ${delayMs/1000}s...`);
+            await delay(delayMs);
+            return retryWithBackoff(fn, retries - 1, delayMs * 2);
+        }
+        throw error;
+    }
+}
 
 // --- CONFIGURATION ---
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
@@ -919,7 +941,15 @@ module.exports = function(app, { prisma }) {
 
                         try {
                             const res = await fetch('/api/admin/parse-course', { method: 'POST', body: formData });
+                            
+                            // 🛡️ PREVENT HTML CRASH: Check if the server actually responded successfully first
+                            if (!res.ok) {
+                                const text = await res.text();
+                                throw new Error(text.includes('<!DOCTYPE') ? 'Server HTML Error (File may be too large or server crashed)' : text);
+                            }
+
                             const data = await res.json();
+                            
                             if (data.success) {
                                 status.style.display = 'block';
                                 status.style.background = "#e8f5e9";
@@ -1210,17 +1240,12 @@ module.exports = function(app, { prisma }) {
 
         const processBulk = async (files, orgId, price) => {
             for (const file of files) {
-                // 1. Add to tracker with file payload saved
+                // 1. Add to tracker immediately
                 const jobId = Math.random().toString(36).substring(7).toUpperCase();
                 const jobEntry = { 
-                    id: jobId, 
-                    filename: file.originalname, 
-                    status: 'PROCESSING', 
-                    timestamp: new Date().toLocaleTimeString(),
-                    filepath: file.path,      // 💾 Saved for Retry
-                    mimetype: file.mimetype,  // 💾 Saved for Retry
-                    orgId: orgId,             // 💾 Saved for Retry
-                    price: price              // 💾 Saved for Retry
+                    id: jobId, filename: file.originalname, status: 'PROCESSING', 
+                    timestamp: new Date().toLocaleTimeString(), filepath: file.path,
+                    mimetype: file.mimetype, orgId: orgId, price: price              
                 };
                 activeJobs.push(jobEntry);
 
@@ -1231,7 +1256,6 @@ module.exports = function(app, { prisma }) {
                         processAndImportCoursePDF(pdfBuffer, file.mimetype, orgId, price)
                     );
                     
-                    // 2. Update tracker
                     if (result.success) {
                         jobEntry.status = 'COMPLETED';
                         try { fs.unlinkSync(file.path); } catch (e) {} // ONLY delete on success
@@ -1241,7 +1265,7 @@ module.exports = function(app, { prisma }) {
                 } catch (err) {
                     jobEntry.status = 'FAILED';
                 } finally {
-                    if (activeJobs.length > 20) activeJobs.shift(); // Keep UI clean
+                    if (activeJobs.length > 20) activeJobs.shift(); // Keep memory clean
                 }
             }
         };
@@ -1250,7 +1274,7 @@ module.exports = function(app, { prisma }) {
         
         res.json({ 
             success: true, 
-            message: `Successfully queued ${req.files.length} PDFs. AI is starting now!` 
+            message: `Successfully queued ${req.files.length} PDF(s) for background processing! You can safely leave this page. Refresh the dashboard later to see your generated courses.` 
         });
     });
 	
@@ -1264,37 +1288,25 @@ module.exports = function(app, { prisma }) {
         
         if (!job) return res.status(404).json({ success: false, error: "Task not found." });
         if (job.status !== 'FAILED') return res.status(400).json({ success: false, error: "Only failed tasks can be retried." });
-        
-        if (!fs.existsSync(job.filepath)) {
-            return res.status(400).json({ success: false, error: "The source file was deleted from the server. Please re-upload it." });
-        }
+        if (!fs.existsSync(job.filepath)) return res.status(400).json({ success: false, error: "Source file deleted. Please re-upload." });
 
-        // 1. Reset the UI status
         job.status = 'PROCESSING';
         job.timestamp = new Date().toLocaleTimeString();
 
-        // 2. Fire and forget the retry process
         (async () => {
             try {
-                console.log(`[BACKGROUND] Retrying job ${job.id} for ${job.filename}...`);
+                console.log(`[BACKGROUND] Retrying job ${job.id}...`);
                 const pdfBuffer = fs.readFileSync(job.filepath);
-                // 🛡️ Wrap the API call in your new backoff armor!
-                const result = await retryWithBackoff(() => 
-                    processAndImportCoursePDF(pdfBuffer, job.mimetype, job.orgId, job.price)
-                );
-                
+                const result = await retryWithBackoff(() => processAndImportCoursePDF(pdfBuffer, job.mimetype, job.orgId, job.price));
                 if (result.success) {
                     job.status = 'COMPLETED';
-                    try { fs.unlinkSync(job.filepath); } catch (e) {} // Delete on success
-                } else {
-                    job.status = 'FAILED';
-                }
-            } catch (err) {
-                job.status = 'FAILED';
-            }
+                    try { fs.unlinkSync(job.filepath); } catch (e) {} 
+                } else job.status = 'FAILED';
+            } catch (err) { job.status = 'FAILED'; }
         })();
 
         res.json({ success: true });
+    });  res.json({ success: true });
     });
     
     // ============================================================
