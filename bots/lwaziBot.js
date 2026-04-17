@@ -90,7 +90,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     if (msg === 'subscribe' || msg === 'buy' || msg === '4') {
         session.step = 'LWAZI_CHOOSE_PLAN';
         session.nominatedNumbers = [];
-        await sendLwazi(phone, "📚 *Lwazi Premium Subscription*\n\n1️⃣ *Subscribe for Myself*\n2️⃣ *Nominate Students* (Add up to 5 numbers. The 4th and 5th students get a 5% discount!)\n3️⃣ *Check Subscription Status*\n\n_Reply 1, 2, or 3_");
+        await sendLwazi(phone, "📚 *Lwazi Premium Subscription*\n\n1️⃣ *Subscribe for Myself*\n2️⃣ *Nominate Students* (Add up to 5 numbers)\n3️⃣ *Check Subscription Status*\n4️⃣ *Change Program*\n5️⃣ *Restore Previous Program*\n\n_Reply 1, 2, 3, 4, or 5_");
         return;
     }
 
@@ -103,7 +103,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
             await sendLwazi(phone, "📱 Please reply with the *WhatsApp number* of the first student (e.g., 0821234567):");
             return;
         } else if (msg === '3') {
-            // 🚀 Verify they actually have a program attached
+            // Option 3: Verify Subscription Status
             session.step = null;
             
             const activeEnrollmentCount = await prisma.enrollment.count({
@@ -115,7 +115,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
                 if (activeEnrollmentCount > 0) {
                     statusText = "🟢 *Active*";
                 } else {
-                    statusText = "⚠️ *Paid, but no Program selected!*"; // Highlight the mismatch
+                    statusText = "⚠️ *Paid, but no Program selected!*";
                 }
             } else if (member.status === 'PENDING_SUBSCRIPTION' || member.status === 'PENDING_PAYMENT') {
                 statusText = "⏳ *Pending Payment*";
@@ -125,7 +125,6 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
             
             let statusMsg = `📊 *Subscription Status*\n\nYour Account: ${statusText}\n`;
             
-            // Fetch any students they are paying for (Family Plan check)
             const dependents = await prisma.member.findMany({
                 where: { parentId: member.id, churchCode: 'LWAZI_HQ' }
             });
@@ -148,10 +147,147 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
             
             await sendLwazi(phone, statusMsg);
             return;
+
+        } else if (msg === '4') {
+            // Option 4: Change Program
+            const programs = await prisma.program.findMany({
+                where: { churchId: member.churchId, status: 'LIVE' }
+            });
+            if (programs.length === 0) {
+                await sendLwazi(phone, "⚠️ There are currently no alternative programs available to switch to.");
+                return;
+            }
+            session.step = 'LWAZI_CHANGE_PROGRAM';
+            session.availablePrograms = programs.map(p => p.id);
+            
+            let progMsg = `🔄 *Change Program*\n\nPlease select a new Program to enroll in. (Note: This will pause your current active program).\n\n`;
+            programs.forEach((p, idx) => {
+                progMsg += `${idx + 1}️⃣ *${p.title}*\n`;
+            });
+            progMsg += `\n_Reply with the number of the new program._`;
+            
+            await sendLwazi(phone, progMsg);
+            return;
+
+        } else if (msg === '5') {
+            // Option 5: Restore Previous Program
+            const inactiveEnrollments = await prisma.enrollment.findMany({
+                where: { memberId: member.id, status: { in: ['DROPPED', 'ARCHIVED', 'CANCELED'] } },
+                select: { course: { select: { programId: true } } }
+            });
+            
+            const pastProgramIds = [...new Set(inactiveEnrollments.map(e => e.course?.programId).filter(Boolean))];
+            
+            if (pastProgramIds.length === 0) {
+                await sendLwazi(phone, "⚠️ You don't have any previously paused or dropped programs to restore.");
+                return;
+            }
+
+            const programs = await prisma.program.findMany({
+                where: { id: { in: pastProgramIds }, status: 'LIVE' }
+            });
+
+            if (programs.length === 0) {
+                await sendLwazi(phone, "⚠️ Your previous programs are no longer active.");
+                return;
+            }
+
+            session.step = 'LWAZI_RESTORE_PROGRAM';
+            session.availablePrograms = programs.map(p => p.id);
+            
+            let progMsg = `⏪ *Restore Program*\n\nWhich program would you like to restore? (Your previous progress will be safely picked back up).\n\n`;
+            programs.forEach((p, idx) => {
+                progMsg += `${idx + 1}️⃣ *${p.title}*\n`;
+            });
+            progMsg += `\n_Reply with the number of the program._`;
+            
+            await sendLwazi(phone, progMsg);
+            return;
+
         } else {
-            await sendLwazi(phone, "⚠️ Please reply with 1, 2, or 3.");
+            await sendLwazi(phone, "⚠️ Please reply with 1, 2, 3, 4, or 5.");
             return;
         }
+    }
+
+    // ================================================
+    // 🔄 PROGRAM MANAGEMENT (CHANGE & RESTORE)
+    // ================================================
+    if (session.step === 'LWAZI_CHANGE_PROGRAM') {
+        const selection = parseInt(msg) - 1;
+        if (isNaN(selection) || selection < 0 || !session.availablePrograms || selection >= session.availablePrograms.length) {
+            await sendLwazi(phone, "⚠️ Invalid selection. Please reply with the number of the program.");
+            return;
+        }
+        const selectedProgramId = session.availablePrograms[selection];
+        
+        // 1. Pause current active enrollments
+        await prisma.enrollment.updateMany({
+            where: { memberId: member.id, status: 'ACTIVE' },
+            data: { status: 'DROPPED' }
+        });
+
+        // 2. Fetch new courses and activate them
+        const programCourses = await prisma.course.findMany({
+            where: { programId: selectedProgramId, status: 'LIVE' }
+        });
+
+        if (programCourses.length > 0) {
+            for(const c of programCourses) {
+                const existing = await prisma.enrollment.findFirst({
+                    where: { memberId: member.id, courseId: c.id }
+                });
+                if (existing) {
+                    await prisma.enrollment.update({
+                        where: { id: existing.id },
+                        data: { status: 'ACTIVE' }
+                    });
+                } else {
+                    await prisma.enrollment.create({
+                        data: { memberId: member.id, courseId: c.id, status: 'ACTIVE' }
+                    });
+                }
+            }
+        }
+        
+        session.step = null;
+        delete session.availablePrograms;
+        await sendLwazi(phone, "✅ *Program Changed Successfully!*\n\nYou are now enrolled in your new program. Reply *Menu* to open your learning dashboard.");
+        return;
+    }
+
+    if (session.step === 'LWAZI_RESTORE_PROGRAM') {
+        const selection = parseInt(msg) - 1;
+        if (isNaN(selection) || selection < 0 || !session.availablePrograms || selection >= session.availablePrograms.length) {
+            await sendLwazi(phone, "⚠️ Invalid selection. Please reply with the number of the program.");
+            return;
+        }
+        const selectedProgramId = session.availablePrograms[selection];
+
+        // 1. Pause current active enrollments to prevent clutter
+        await prisma.enrollment.updateMany({
+            where: { memberId: member.id, status: 'ACTIVE' },
+            data: { status: 'DROPPED' }
+        });
+        
+        // 2. Restore enrollments for the selected program
+        const programCourses = await prisma.course.findMany({
+            where: { programId: selectedProgramId }
+        });
+
+        const courseIds = programCourses.map(c => c.id);
+
+        if (courseIds.length > 0) {
+            await prisma.enrollment.updateMany({
+                where: { memberId: member.id, courseId: { in: courseIds } },
+                data: { status: 'ACTIVE' }
+            });
+        }
+
+        session.step = null;
+        delete session.availablePrograms;
+        await sendLwazi(phone, "⏪ *Program Restored Successfully!*\n\nYour previous progress is ready. Reply *Menu* to open your learning dashboard.");
+        return;
     }
 
     if (session.step === 'LWAZI_COLLECT_NUMBERS') {
