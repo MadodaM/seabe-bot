@@ -315,13 +315,16 @@
 			}
 			
 			// 1. Calculate precise fees
-            // Lwazi bot passes the base amount. We MUST add gateway fees here.
-            const fees = await calculateTransaction(
-                payAmount, 
-                txType || 'STANDARD', 
-                'PAYMENT_LINK', 
-                true // ALWAYS add fees to the checkout total
-            );
+			// Lwazi absorbs the charges! If it is Lwazi, we pass `false` so the gateway 
+            // keeps the user's total flat and calculates your net settlement inclusively.
+			const isLwazi = txType && txType.startsWith('LWAZI');
+			
+			const fees = await calculateTransaction(
+				payAmount, 
+				txType || 'STANDARD', 
+				'PAYMENT_LINK', 
+				!isLwazi // Adds fees for Stokvels (true), but absorbs them for Lwazi (false)
+			);
 
 			// 2. Safely log the PENDING transaction
 			await prisma.transaction.create({

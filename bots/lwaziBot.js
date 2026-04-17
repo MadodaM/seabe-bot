@@ -500,7 +500,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
 } // <--- This bracket was missing!
 
 /**
- * 🧮 Dynamic Checkout Generator (Base Price Only)
+ * 🧮 Dynamic Checkout Generator (Flat Price - Lwazi Absorbs Fees)
  */
 async function generateLwaziCheckout(payerPhone, payerMember, session, sendLwazi) {
     let totalBaseCost = 0;
@@ -531,13 +531,13 @@ async function generateLwaziCheckout(payerPhone, payerMember, session, sendLwazi
         targetIds.push(student.id);
     }
 
-    // 2. Build a clean, single-price message for the user using the BASE cost
+    // 2. Build a clean, single-price message for the user
     let breakdownMsg = "🛒 *Subscription Summary*\n\n";
     breakdownMsg += `👨‍👩‍👧‍👦 Total Students: ${session.nominatedNumbers.length}\n`;
     if (session.nominatedNumbers.length >= 4) breakdownMsg += `_Includes Family Discount for students 4 & 5!_\n`;
     
-    breakdownMsg += `\n*Base Monthly Subscription: R${totalBaseCost.toFixed(2)}*\n`;
-    breakdownMsg += `_(Standard gateway processing fee will be added at checkout)_\n\n`;
+    // Flat rate shown here. No extra fees mentioned!
+    breakdownMsg += `\n*Total Monthly Subscription: R${totalBaseCost.toFixed(2)}*\n\n`;
 
     const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
     
