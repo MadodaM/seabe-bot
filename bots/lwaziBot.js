@@ -513,6 +513,40 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
         await sendLwazi(phone, "🦉 *Lwazi Main Menu*\n\n1️⃣ *Request a Lesson* - Search your enrolled topics\n2️⃣ *Tutor* - Send a photo of a math problem for AI help\n3️⃣ *Profile* - View your progress\n4️⃣ *Subscribe* - Manage Family Plan\n\n_Reply with a word or number above._");
         return;
     }
+	
+	// ================================================
+    // 🎓 MAIN MENU (Active & Onboarded Members)
+    // ================================================
+    if (msg === 'menu' || msg === 'hi') {
+        session.step = null; 
+        await sendLwazi(phone, "🦉 *Lwazi Main Menu*\n\n1️⃣ *Request a Lesson* - Search your enrolled topics\n2️⃣ *Tutor* - Send a photo of a math problem for AI help\n3️⃣ *Profile* - View your progress\n4️⃣ *Subscribe* - Manage Family Plan\n\n_Reply with a word or number above._");
+        return;
+    }
+
+    // 🚀 THE FIX: Catch 'Start' for onboarded users to select a program
+    if (msg === 'start') {
+        const programs = await prisma.program.findMany({
+            where: { churchId: member.churchId, status: 'LIVE' }
+        });
+        
+        if (programs.length === 0) {
+            await sendLwazi(phone, "⚠️ There are currently no learning programs available.");
+            return;
+        }
+
+        // We route them into the CHANGE_PROGRAM step so it safely pauses any old bugs and sets the activeProgramId cleanly
+        session.step = 'LWAZI_CHANGE_PROGRAM';
+        session.availablePrograms = programs.map(p => p.id);
+        
+        let progMsg = `🔄 *Select your Learning Program*\n\nChoose a curriculum to begin:\n\n`;
+        programs.forEach((p, idx) => {
+            progMsg += `${idx + 1}️⃣ *${p.title}*\n`;
+        });
+        progMsg += `\n_Reply with the number of the program._`;
+        
+        await sendLwazi(phone, progMsg);
+        return;
+    }
 
     // ================================================
     // 🔍 REQUEST A LESSON (PROGRAM-SCOPED SEARCH)
