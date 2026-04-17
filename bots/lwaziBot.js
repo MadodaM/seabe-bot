@@ -547,6 +547,30 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
         await sendLwazi(phone, progMsg);
         return;
     }
+	
+	// ================================================
+    // 📖 BUILT-IN USER GUIDE & HELP DESK
+    // ================================================
+    if (msg === 'help' || msg === 'guide' || msg === 'manual' || msg === 'info') {
+        session.step = null; // Always clear state so they don't get trapped
+        
+        const helpMsg = `📖 *Lwazi Premium User Guide*\n\n` +
+                        `Here is how to get the most out of your AI Micro-Tutor:\n\n` +
+                        `*1. Search for Lessons* 📚\n` +
+                        `Reply *Menu*, then choose Option 1. Type a topic (e.g., "Fractions") to receive a step-by-step lesson and a quick quiz.\n\n` +
+                        `*2. Use the AI Tutor* 🧠\n` +
+                        `Stuck on homework? Just type your question directly into this chat at any time, or take a clear photo of your math/science problem and send it!\n\n` +
+                        `*3. Manage Programs* 🎓\n` +
+                        `Need to switch grades or subjects? Reply *Subscribe*, then choose Option 4 (Change Program) or Option 5 (Restore Previous).\n\n` +
+                        `*4. Family Plan & Billing* 💳\n` +
+                        `Reply *Subscribe* to check your active payment status, or to add up to 5 family members to your plan at a discount.\n\n` +
+                        `*5. Stop Billing* 🛑\n` +
+                        `Reply *Cancel* at any time to securely and instantly stop automatic payments.\n\n` +
+                        `_Reply *Menu* to return to the main dashboard, or *Start* to pick a learning curriculum._`;
+        
+        await sendLwazi(phone, helpMsg);
+        return;
+    }
 
     // ================================================
     // 🔍 REQUEST A LESSON (PROGRAM-SCOPED SEARCH)
