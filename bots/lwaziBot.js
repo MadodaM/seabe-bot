@@ -396,25 +396,37 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     // ================================================
     // 🚀 1-TIME ONBOARDING FLOW
     // ================================================
-    if (member.idType !== 'ONBOARDED' && !session.step && (msg === 'hi' || msg === 'menu' || msg === 'start')) {
-        session.step = 'ONB_GRADE';
-        await sendLwazi(phone, "🎉 *Welcome to Lwazi Premium!*\n\nLet's customize your learning experience.\n\nWhat grade are you in?\n_Reply with a number between 4 and 12 (e.g., 10)_");
-        return;
-    }
+    if (member.status === 'ACTIVE' && member.idType !== 'ONBOARDED') {
+        
+        // 1. Instantly capture "start" or "onboard" and reset the flow
+        if ['start', 'onboard', 'menu', 'hi', 'hello'].includes(msg)) {
+            session.step = null;
+        }
 
-    if (session.step === 'ONB_GRADE') {
-        const grade = parseInt(msg);
-        if (isNaN(grade) || grade < 4 || grade > 12) {
-            await sendLwazi(phone, "⚠️ Please reply with a valid grade number between 4 and 12.");
+        // 2. Is this a direct reply to the Webhook's auto-welcome message? (e.g. "10")
+        const isPotentialGrade = !session.step && !isNaN(parseInt(msg)) && parseInt(msg) >= 4 && parseInt(msg) <= 12;
+
+        // 3. Start the flow if they just arrived or typed a keyword
+        if (!session.step && !isPotentialGrade) {
+            session.step = 'ONB_GRADE';
+            await sendLwazi(phone, "🎉 *Welcome to Lwazi Premium!*\n\nLet's customize your learning experience.\n\nWhat grade are you in?\n_Reply with a number between 4 and 12 (e.g., 10)_");
             return;
         }
-        session.grade = grade; 
-        session.step = 'ONB_LANG';
-        await sendLwazi(phone, `Great! Grade ${grade}.\n\nWhat language do you prefer for your explanations?\n\n1️⃣ English\n2️⃣ Afrikaans\n3️⃣ Zulu\n4️⃣ Sotho\n\n_Reply with a number 1-4_`);
-        return;
-    }
 
-    if (session.step === 'ONB_LANG') {
+        // 4. Safely process the Grade, whether from the bot's prompt or the webhook's prompt
+        if (session.step === 'ONB_GRADE' || isPotentialGrade) {
+            const grade = parseInt(msg);
+            if (isNaN(grade) || grade < 4 || grade > 12) {
+                await sendLwazi(phone, "⚠️ Please reply with a valid grade number between 4 and 12.");
+                return;
+            }
+            session.grade = grade; 
+            session.step = 'ONB_LANG';
+            await sendLwazi(phone, `Great! Grade ${grade}.\n\nWhat language do you prefer for your explanations?\n\n1️⃣ English\n2️⃣ Afrikaans\n3️⃣ Zulu\n4️⃣ Sotho\n\n_Reply with a number 1-4_`);
+            return;
+        }
+
+        if (session.step === 'ONB_LANG') {
         const langs = { '1': 'en', '2': 'af', '3': 'zu', '4': 'st' };
         const langNames = { '1': 'English', '2': 'Afrikaans', '3': 'Zulu', '4': 'Sotho' };
         
@@ -731,4 +743,13 @@ async function generateLwaziCheckout(payerPhone, payerMember, session, sendLwazi
     session.nominatedNumbers = [];
 }
 
-module.exports = { processLwaziMessage };
+/**
+ * 🚀 EXPORTED TRIGGER: Call this from your Payment Webhook on SUCCESS
+ */
+async function sendLwaziWelcome(phone) {
+    const welcomeMsg = "🎉 *Payment Successful!*\n\nWelcome to Lwazi Premium! Let's customize your learning experience.\n\nWhat grade are you in?\n_Reply with a number between 4 and 12 (e.g., 10)_";
+    await sendLwazi(phone, welcomeMsg);
+}
+
+// ⚠️ Make sure your exports line at the very bottom looks exactly like this:
+module.exports = { processLwaziMessage, sendLwaziWelcome };

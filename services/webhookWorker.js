@@ -6,6 +6,7 @@ const { screenUserForRisk } = require('./complianceEngine');
 const { sendWhatsApp } = require('./whatsapp'); 
 const { generateReceiptPDF } = require('./receiptGenerator');
 const { recordSplit } = require('./ledgerEngine');
+const { sendLwaziWelcome } = require('../bots/lwaziBot');
 
 const NETCASH_VALIDATE_URL = "https://paynow.netcash.co.za/site/validate.aspx";
 
@@ -196,9 +197,8 @@ async function processNetcashITN(webhookLogId) {
                         for (const studentId of idsToActivate) {
                             const student = await prisma.member.findUnique({ where: { id: studentId } });
                             if (student && student.phone) {
-                                // Important: We use the Lwazi phone number override here!
-                                const welcomeText = `Hi! Welcome to Lwazi CAPS Micro-Tutor. 🧠 Your Premium account has just been activated! Are you ready to start today's quiz? Reply 'Yes' to begin!`;
-                                await sendWhatsApp(student.phone, welcomeText, null, '+27875511057');
+                                // 🚀 THE FIX: Use our new stateless welcome trigger to kick off onboarding!
+                                await sendLwaziWelcome(student.phone);
                             }
                         }
                     }
@@ -208,14 +208,17 @@ async function processNetcashITN(webhookLogId) {
                         where: { id: tx.memberId },
                         data: { status: 'ACTIVE', lastPaymentDate: new Date(), consecutiveFailures: 0 }
                     });
+                    
+                    // 🚀 THE FIX: Fire the welcome message for the single user too
+                    await sendLwaziWelcome(tx.phone);
                 }
-            } else if (reference.includes('-PREM-') || reference.includes('-ONCEOFF-')) {
+				} else if (reference.includes('-PREM-') || reference.includes('-ONCEOFF-')) {
                 if (tx.memberId) {
                     await prisma.member.update({
                         where: { id: tx.memberId },
                         data: { status: 'ACTIVE', lastPaymentDate: new Date(), consecutiveFailures: 0 }
                      });
-                 }
+                }
             } else if (reference.startsWith('APPT-') || reference.includes('-GROOMING-')) {
                 const apptId = parseInt(reference.split('-')[1]);
                 if (!isNaN(apptId)) {
@@ -245,14 +248,16 @@ async function processNetcashITN(webhookLogId) {
                 console.error("⚠️ [WEBHOOK] Failed to generate PDF receipt:", pdfErr.message);
             }
 
-            // 💬 STEP 6: SEND AUTOMATED RECEIPT
-            const orgName = tx.church?.name || "Our Organization";
-            let msg = `✅ *Payment Successful*\n\nThank you! We have received your payment of *R${amountPaid.toFixed(2)}* for ${orgName}.\n\n🧾 Ref: ${reference}\n\n`;
-            if (token && !reference.includes('-MANDATE-')) {
-                msg += `🔒 _Your ${cardType || 'Card'} ending in ${maskedCard ? maskedCard.slice(-4) : '****'} has been securely saved for faster checkout next time._\n\n`;
+            // 💬 STEP 6: SEND AUTOMATED RECEIPT (Skip for Lwazi, they get the interactive onboarding instead)
+            if (correctType !== 'LWAZI_MULTI' && correctType !== 'LWAZI_SUB') {
+                const orgName = tx.church?.name || "Our Organization";
+                let msg = `✅ *Payment Successful*\n\nThank you! We have received your payment of *R${amountPaid.toFixed(2)}* for ${orgName}.\n\n🧾 Ref: ${reference}\n\n`;
+                if (token && !reference.includes('-MANDATE-')) {
+                    msg += `🔒 _Your ${cardType || 'Card'} ending in ${maskedCard ? maskedCard.slice(-4) : '****'} has been securely saved for faster checkout next time._\n\n`;
+                }
+                msg += `_Your official receipt is attached below. Reply Menu for dashboard._`;
+                await sendWhatsApp(tx.phone, msg, pdfUrl);
             }
-            msg += `_Your official receipt is attached below. Reply Menu for dashboard._`;
-            await sendWhatsApp(tx.phone, msg, pdfUrl);
 
         } else {
             // ====================================================
