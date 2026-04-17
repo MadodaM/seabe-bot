@@ -102,14 +102,26 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
             session.step = 'LWAZI_COLLECT_NUMBERS';
             await sendLwazi(phone, "📱 Please reply with the *WhatsApp number* of the first student (e.g., 0821234567):");
             return;
-        } else if (msg === '3') {
-            // 🚀 THE MISSING OPTION 3 FIX: View Subscription Status
+       } else if (msg === '3') {
+            // 🚀 THE FIX: Verify they actually have a program attached
             session.step = null;
             
+            const activeEnrollmentCount = await prisma.enrollment.count({
+                where: { memberId: member.id, status: 'ACTIVE' }
+            });
+            
             let statusText = "🔴 *Inactive*";
-            if (member.status === 'ACTIVE') statusText = "🟢 *Active*";
-            else if (member.status === 'PENDING_SUBSCRIPTION' || member.status === 'PENDING_PAYMENT') statusText = "⏳ *Pending Payment*";
-            else if (member.status === 'CANCELED') statusText = "🛑 *Canceled*";
+            if (member.status === 'ACTIVE') {
+                if (activeEnrollmentCount > 0) {
+                    statusText = "🟢 *Active*";
+                } else {
+                    statusText = "⚠️ *Paid, but no Program selected!*"; // Highlight the mismatch
+                }
+            } else if (member.status === 'PENDING_SUBSCRIPTION' || member.status === 'PENDING_PAYMENT') {
+                statusText = "⏳ *Pending Payment*";
+            } else if (member.status === 'CANCELED') {
+                statusText = "🛑 *Canceled*";
+            }
             
             let statusMsg = `📊 *Subscription Status*\n\nYour Account: ${statusText}\n`;
             
@@ -128,17 +140,15 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
             
             if (member.status !== 'ACTIVE') {
                 statusMsg += `\n_Reply *Subscribe* and choose Option 1 or 2 to activate your account!_`;
+            } else if (activeEnrollmentCount === 0) {
+                statusMsg += `\n_Reply *Start* to select your learning program!_`;
             } else {
                 statusMsg += `\n_Reply *Menu* to return to the learning dashboard._`;
             }
             
             await sendLwazi(phone, statusMsg);
             return;
-        } else {
-            await sendLwazi(phone, "⚠️ Please reply with 1, 2, or 3.");
-            return;
         }
-    }
 
     if (session.step === 'LWAZI_COLLECT_NUMBERS') {
         let targetPhone = msg.replace(/\D/g, ''); 
@@ -337,8 +347,28 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
         const subscribedProgramIds = [...new Set(userEnrollments.map(e => e.course.programId).filter(Boolean))];
 
         if (subscribedProgramIds.length === 0) {
-            session.step = null;
-            await sendLwazi(phone, "⚠️ You don't seem to be linked to an active learning program. Reply *Menu* to go back.");
+            // 🚀 THE FIX: Catch paying users who missed program selection and auto-recover them
+            const programs = await prisma.program.findMany({
+                where: { churchId: member.churchId, status: 'LIVE' }
+            });
+            
+            if (programs.length === 0) {
+                session.step = null;
+                await sendLwazi(phone, "⚠️ You are not enrolled in any programs, and there are none currently active. Please contact support.");
+                return;
+            }
+
+            // Reuse the onboarding logic to let them pick right now
+            session.step = 'ONB_PROGRAM';
+            session.availablePrograms = programs.map(p => p.id);
+            
+            let progMsg = `⚠️ You are an active member, but you haven't selected a learning program yet!\n\nPlease select a Program to enroll in now:\n\n`;
+            programs.forEach((p, idx) => {
+                progMsg += `${idx + 1}️⃣ *${p.title}*\n`;
+            });
+            progMsg += `\n_Reply with the number of the program._`;
+            
+            await sendLwazi(phone, progMsg);
             return;
         }
 
