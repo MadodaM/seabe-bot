@@ -3,6 +3,29 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
+// bots/LMSlogicBot.js
+
+const generateTutorPrompt = (grade, language) => `
+You are Lwazi, an expert, patient, and highly encouraging AI Tutor designed for South African students.
+You strictly adhere to the South African Department of Basic Education CAPS curriculum.
+
+CURRENT STUDENT CONTEXT:
+- Grade Level: Grade ${grade || 'Unknown (Assume High School)'}
+- Preferred Language: ${language === 'af' ? 'Afrikaans' : language === 'zu' ? 'isiZulu' : language === 'st' ? 'Sesotho' : 'English'}
+Respond entirely in the student's preferred language, adapting your vocabulary to match their grade level.
+
+STRICT GUARDRAILS & SOCRATIC METHOD:
+1. NEVER GIVE THE FINAL ANSWER: You are a teacher, not an answer key. If a student asks you to solve a problem or writes "what is the answer to...", you MUST refuse to give the final number.
+2. USE THE SOCRATIC METHOD: Break complex problems into smaller, manageable steps. Ask the student a guiding question to help them figure out the *first step* on their own. 
+3. PRAISE AND PIVOT: If the student makes a mistake, do not just say "Wrong." Gently explain where the logical error occurred, praise their effort, and ask them to try that specific step again.
+4. SOUTH AFRICAN CONTEXT: Use localized examples. Use ZAR (Rands) for money, local cities (Johannesburg, Durban, Cape Town), and the metric system. 
+
+FORMATTING RULES FOR WHATSAPP:
+- Keep responses concise (under 150 words). Students are reading on phones.
+- Use line breaks and emojis to make the text readable and friendly.
+- Use bolding for key terms (e.g., *Denominator*, *Photosynthesis*).
+`;
+
 // 🛠️ Modular Imports
 const { calculateTransaction } = require('../services/pricingEngine');
 
@@ -131,26 +154,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
         return { handled: true, clearSessionFlag: false };
     }
 	
-	// Add this helper to your AI Tutor file
-async function logStudentActivity(studentId, actionType, subject, score = null) {
-    try {
-        await prisma.studyLog.create({
-            data: {
-                memberId: studentId,
-                actionType: actionType, // 'QUIZ_TAKEN' or 'QUESTION_ASKED'
-                subject: subject,
-                score: score
-            }
-        });
-    } catch (e) {
-        console.error("Failed to log study activity:", e);
-    }
-}
-
-// Example usage inside your bot:
-// await logStudentActivity(student.id, 'QUIZ_TAKEN', 'Math', 85);
-
-    if (session.step === 'AWAITING_TUTOR_QUESTION') {
+	if (session.step === 'AWAITING_TUTOR_QUESTION') {
         if (cleanMsg === 'cancel' || cleanMsg === 'exit') {
             session.step = null;
             await reply(cleanPhone, "🔙 Exited Tutor Mode. Reply *Menu* to see your options.");
@@ -166,16 +170,22 @@ async function logStudentActivity(studentId, actionType, subject, score = null) 
 
         try {
             const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-            const aiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+            
+            // 🚀 THE FIX: Generate the strict CAPS Socratic prompt using the student's actual DB profile
+            const systemInstruction = generateTutorPrompt(session.grade, member?.language);
+
+            // Initialize Gemini with the system instructions baked into the model's core brain
+            const aiModel = genAI.getGenerativeModel({ 
+                model: "gemini-2.5-flash",
+                systemInstruction: { parts: [{ text: systemInstruction }] },
+                generationConfig: {
+                    temperature: 0.3, // Keep it low so the AI is logical and strictly educational, not overly creative
+                }
+            });
     
-            // Structure the prompt to force logical, step-by-step breakdowns
+            // Structure the user's specific question
             const promptParts = [
-                "You are an expert, highly patient AI tutor helping a student on WhatsApp.",
-                "The user has asked a question or provided an image of a math, logic, or academic problem.",
-                "1. DO NOT just give the final answer.",
-                "2. Break down the methodology step-by-step so the student actually learns how to solve it.",
-                "3. Format cleanly for WhatsApp (use * for bold, _ for italics). Use bullet points for steps.",
-                `User's text input: "${rawMsg || '[No text provided, rely entirely on the image]'}"`
+                `Student's Input: "${rawMsg || '[No text provided, rely entirely on the image]'}"`
             ];
 
             // 📸 Securely fetch the Twilio Image if one was sent
@@ -198,11 +208,11 @@ async function logStudentActivity(studentId, actionType, subject, score = null) 
 
             const result = await aiModel.generateContent(promptParts);
             const aiResponse = result.response.text();
-			
-			if (member && member.id) {
-				await logStudentActivity(member.id, 'QUESTION_ASKED', 'AI Tutor');
-			}
-			
+            
+            if (member && member.id) {
+                await logStudentActivity(member.id, 'QUESTION_ASKED', 'AI Tutor');
+            }
+            
             await reply(cleanPhone, `🎓 *Tutor Solution:*\n\n${aiResponse.trim()}\n\n_Send another question or reply *Cancel* to exit._`);
             
             return { handled: true, clearSessionFlag: false };
