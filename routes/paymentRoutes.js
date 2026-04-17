@@ -20,7 +20,6 @@
 		} catch (e) { return null; }
 	}
 	
-
 	// Twilio Setup
 	let client;
 	if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
@@ -250,7 +249,7 @@
 		try {
 			// 🚀 UPDATED: Extract targetIds and type
 			const { memberId, code, amount, apptId, targetIds, type } = req.body;
-			const payAmount = parseFloat(amount);
+			let payAmount = parseFloat(amount); // ✅ Changed to 'let' so Lwazi can safely override it
 
 			let org, reference, txType, description, phone, dbMemberId, notes;
 
