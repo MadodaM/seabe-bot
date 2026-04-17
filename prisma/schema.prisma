@@ -31,6 +31,11 @@ model Member {
   mandateStatus     String?
   lastInteractionAt DateTime  @default(now())
   engagementScore   Int       @default(100) // 100 = Perfect, drops over time
+  
+  // 🚀 NEW: Program Tracking
+  activeProgramId   Int?
+  activeProgram     Program?  @relation(fields: [activeProgramId], references: [id])
+  programSelectedAt DateTime?
 
   // 👨‍👩‍👧‍👦 Family Plan Link
   parentId Int? // Links a student to the paying parent
@@ -789,4 +794,6 @@ model Program {
   courses     Course[] // One-to-many relationship with courses
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  
+  activeMembers     Member[]
 }

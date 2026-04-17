@@ -144,6 +144,14 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
             } else {
                 statusMsg += `\n_Reply *Menu* to return to the learning dashboard._`;
             }
+			
+			// Check their explicit active program
+            if (member.activeProgramId) {
+                const activeProgram = await prisma.program.findUnique({ where: { id: member.activeProgramId } });
+                if (activeProgram) {
+                    statusMsg += `\n🎓 *Current Program:* ${activeProgram.title} _(Selected: ${member.programSelectedAt ? member.programSelectedAt.toLocaleDateString() : 'N/A'})_\n`;
+                }
+            }
             
             await sendLwazi(phone, statusMsg);
             return;
@@ -249,8 +257,18 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
                 }
             }
         }
-        
+		
+		// 3. Update the explicit Program tracking on the Member profile
+        await prisma.member.update({
+            where: { id: member.id },
+            data: { 
+                activeProgramId: selectedProgramId,
+                programSelectedAt: new Date() 
+            }
+        });
+
         session.step = null;
+        
         delete session.availablePrograms;
         await sendLwazi(phone, "✅ *Program Changed Successfully!*\n\nYou are now enrolled in your new program. Reply *Menu* to open your learning dashboard.");
         return;
@@ -283,6 +301,15 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
                 data: { status: 'ACTIVE' }
             });
         }
+
+        // 3. Update the explicit Program tracking on the Member profile
+        await prisma.member.update({
+            where: { id: member.id },
+            data: { 
+                activeProgramId: selectedProgramId,
+                programSelectedAt: new Date() 
+            }
+        });
 
         session.step = null;
         delete session.availablePrograms;
@@ -406,7 +433,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
         });
         
         if (programs.length === 0) {
-            await prisma.member.update({ where: { id: member.id }, data: { idType: 'ONBOARDED' } });
+            await prisma.member.update({ where: { id: member.id }, data: { idType: 'ONBOARDED' }, activeProgramId: selectedProgramId, programSelectedAt: new Date() });
             session.step = null;
             await sendLwazi(phone, `✅ Language set to ${langNames[msg]}!\n\nThere are no programs currently available. Reply *Menu* to open your dashboard.`);
             return;
