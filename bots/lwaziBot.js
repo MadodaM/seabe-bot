@@ -102,8 +102,8 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
             session.step = 'LWAZI_COLLECT_NUMBERS';
             await sendLwazi(phone, "📱 Please reply with the *WhatsApp number* of the first student (e.g., 0821234567):");
             return;
-       } else if (msg === '3') {
-            // 🚀 THE FIX: Verify they actually have a program attached
+        } else if (msg === '3') {
+            // 🚀 Verify they actually have a program attached
             session.step = null;
             
             const activeEnrollmentCount = await prisma.enrollment.count({
@@ -148,7 +148,11 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
             
             await sendLwazi(phone, statusMsg);
             return;
+        } else {
+            await sendLwazi(phone, "⚠️ Please reply with 1, 2, or 3.");
+            return;
         }
+    }
 
     if (session.step === 'LWAZI_COLLECT_NUMBERS') {
         let targetPhone = msg.replace(/\D/g, ''); 
@@ -327,7 +331,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
         return;
     }
 
-// ================================================
+    // ================================================
     // 🔍 REQUEST A LESSON (PROGRAM-SCOPED SEARCH)
     // ================================================
     if (!session.step && (msg === '1' || msg === 'request a lesson' || msg === 'request' || msg === 'lesson')) {
@@ -347,7 +351,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
         const subscribedProgramIds = [...new Set(userEnrollments.map(e => e.course.programId).filter(Boolean))];
 
         if (subscribedProgramIds.length === 0) {
-            // 🚀 THE FIX: Catch paying users who missed program selection and auto-recover them
+            // Catch paying users who missed program selection and auto-recover them
             const programs = await prisma.program.findMany({
                 where: { churchId: member.churchId, status: 'LIVE' }
             });
@@ -476,6 +480,15 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
         }
         return;
     }
+    
+    if (session.step === 'LWAZI_AWAITING_QUIZ') {
+        session.step = null; // Clear the state so they can use the menu again
+        const correctAnswer = session.currentQuizAnswer || "Not provided";
+        
+        // Give them immediate feedback on the correct answer
+        await sendLwazi(phone, `✅ *Feedback*\n\nHere is the correct answer:\n${correctAnswer}\n\n_Reply *Menu* to request another lesson, or continue chatting with the AI Tutor!_`);
+        return;
+    }
 
     // ================================================
     // 🧠 AI TUTOR FALLBACK
@@ -484,7 +497,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     if (!lmsResult.handled) {
         await sendLwazi(phone, "I didn't quite catch that. Reply *Menu* to return to the main dashboard.");
     }
-}
+} // <--- This bracket was missing!
 
 /**
  * 🧮 Dynamic Checkout Generator (Option 2: Fully-Loaded Price Display)
