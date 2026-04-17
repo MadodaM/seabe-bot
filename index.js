@@ -18,7 +18,8 @@ const { startCronJobs } = require('./services/scheduler');
 const { startCourseEngine } = require('./services/courseCron');
 const { startDripCampaign } = require('./services/dripCampaign');
 const { startBillingEngine } = require('./services/billingCron');
-const { startBatchEngine } = require('./services/batchCron');  
+const { startBatchEngine } = require('./services/batchCron');
+const { startLwaziCrons } = require('./services/lwaziCron');
 const { startWeeklyReportEngine } = require('./services/weeklyReportCron');
 const { runEngagementMonitor } = require('./jobs/engagementMonitor');
 const cron = require('node-cron');
@@ -179,8 +180,9 @@ if (process.env.NODE_ENV !== 'test') {
             startBillingEngine();
             startWeeklyReportEngine();
             startBatchEngine();
+			startLwaziCrons();
             startCourseEngine();
-            console.log(`✅ All ${6} Cron Jobs scheduled.`);          
+            console.log(`✅ All ${7} Cron Jobs scheduled.`);          
         } catch (e) {
             console.log("⚠️ Scheduler module failed to start.");
         }
