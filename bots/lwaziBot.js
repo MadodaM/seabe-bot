@@ -399,7 +399,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     if (member.status === 'ACTIVE' && member.idType !== 'ONBOARDED') {
         
         // 1. Instantly capture "start" or "onboard" and reset the flow
-        if ['start', 'onboard', 'menu', 'hi', 'hello'].includes(msg)) {
+        if (['start', 'onboard', 'menu', 'hi', 'hello'].includes(msg)) {
             session.step = null;
         }
 
