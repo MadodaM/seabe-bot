@@ -500,7 +500,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
 } // <--- This bracket was missing!
 
 /**
- * 🧮 Dynamic Checkout Generator (Option 2: Fully-Loaded Price Display)
+ * 🧮 Dynamic Checkout Generator (Base Price Only)
  */
 async function generateLwaziCheckout(payerPhone, payerMember, session, sendLwazi) {
     let totalBaseCost = 0;
@@ -531,25 +531,21 @@ async function generateLwaziCheckout(payerPhone, payerMember, session, sendLwazi
         targetIds.push(student.id);
     }
 
-    // 2. Calculate the FINAL price including the gateway service fees
-    const pricing = await calculateTransaction(totalBaseCost, 'LWAZI_SUB', 'CARD', true);
-    
-    // 3. Build a clean, single-price message for the user
+    // 2. Build a clean, single-price message for the user using the BASE cost
     let breakdownMsg = "🛒 *Subscription Summary*\n\n";
     breakdownMsg += `👨‍👩‍👧‍👦 Total Students: ${session.nominatedNumbers.length}\n`;
     if (session.nominatedNumbers.length >= 4) breakdownMsg += `_Includes Family Discount for students 4 & 5!_\n`;
     
-    // Only show them the fully loaded final cost
-    breakdownMsg += `\n*Total Monthly Subscription: R${pricing.totalChargedToUser.toFixed(2)}*\n`;
-    breakdownMsg += `_(Includes secure Netcash gateway & network fees)_\n\n`;
+    breakdownMsg += `\n*Base Monthly Subscription: R${totalBaseCost.toFixed(2)}*\n`;
+    breakdownMsg += `_(Standard gateway processing fee will be added at checkout)_\n\n`;
 
     const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
     
-    // 🔒 1. Bundle the data into a tiny object
+    // 🔒 1. Bundle the RAW BASE COST into the token payload
     const payload = { 
         t: targetIds.join(','), 
         p: payerMember.id, 
-        a: pricing.totalChargedToUser, 
+        a: totalBaseCost, 
         y: 'LWAZI_MULTI' 
     };
 

@@ -315,15 +315,12 @@
 			}
 			
 			// 1. Calculate precise fees
-            // 🛑 STOP DOUBLE CHARGING: The Lwazi bot already pre-calculated the fully-loaded price.
-            // If it is Lwazi, we set addFees to FALSE so it works backwards from the total.
-            const isLwazi = type && type.startsWith('LWAZI');
-            
+            // Lwazi bot passes the base amount. We MUST add gateway fees here.
             const fees = await calculateTransaction(
                 payAmount, 
                 txType || 'STANDARD', 
                 'PAYMENT_LINK', 
-                !isLwazi // Add fees for Stokvels, but DO NOT add fees for Lwazi
+                true // ALWAYS add fees to the checkout total
             );
 
 			// 2. Safely log the PENDING transaction
