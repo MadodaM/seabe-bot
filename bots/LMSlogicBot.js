@@ -80,13 +80,20 @@ async function logStudentActivity(studentId, actionType, subject, score = null) 
 
 /**
  * Handles all LMS / Academy logic. 
- * 🚀 FIXED: Added `customSender` to the signature to support Lwazi Multi-tenancy!
  */
- 
-async function processLmsMessage(cleanPhone, incomingMsg, session, member, mediaUrl = null, customSender = null) {
+async function processLmsMessage(cleanPhone, incomingMsg, session, member, mediaUrl = null) {
     
-    // 🧠 THE ROUTER: If a custom sender (Lwazi) is passed, use it. Otherwise, use the default chunker above.
-    const reply = customSender ? customSender : sendWhatsApp;
+    // 🧠 THE SMART ROUTER: Automatically pass the member's Org Code to the WhatsApp sender.
+    // If they belong to Lwazi, the sender service will swap the phone number behind the scenes.
+    const orgCode = member ? member.churchCode : null;
+    const reply = (phone, text, media) => sendWhatsApp(phone, text, media, orgCode);
+
+    // 🛑 STRICT TENANT ISOLATION
+    // If this specific bot script is EXCLUSIVELY for Lwazi, you can lock it down here.
+    // (If other orgs use the LMS too, remove this IF statement)
+    if (orgCode !== 'LWAZI') {
+         return { handled: false, clearSessionFlag: false };
+    }
 
     // 1. Normalize the message to be 100% safe
     const rawMsg = incomingMsg; 

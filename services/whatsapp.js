@@ -1,17 +1,5 @@
-require('dotenv').config();
-
-const ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-const AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
-const DEFAULT_FROM = process.env.TWILIO_PHONE_NUMBER; // Usually Seabe Pay
-
-const client = require('twilio')(ACCOUNT_SID, AUTH_TOKEN);
-
 /**
- * Sends a WhatsApp message with dynamic sender support.
- * @param {string} to - Recipient (e.g., '2782...')
- * @param {string} body - The text
- * @param {string|null} mediaUrl - Optional Image/PDF
- * @param {string|null} fromOverride - Optional specific sender (e.g., '+27875511057')
+ * Sends a WhatsApp message with dynamic sender support and chunking.
  */
 async function sendWhatsApp(to, body, mediaUrl = null, fromOverride = null) {
     if (!ACCOUNT_SID || !AUTH_TOKEN) {
@@ -20,42 +8,76 @@ async function sendWhatsApp(to, body, mediaUrl = null, fromOverride = null) {
     }
 
     try {
-        // 1. Clean the recipient number
         const cleanTo = to.replace('whatsapp:', '').replace('+', '').trim();
         const formattedTo = `whatsapp:+${cleanTo}`;
 
-        // 2. Determine the SENDER (Lwazi vs. Seabe)
-        // Use the override if provided, otherwise fallback to the .env default
-        let sender = fromOverride || DEFAULT_FROM;
-        
-        // Ensure sender is in 'whatsapp:+...' format
+        // 🧠 TENANT ROUTER: Default to Seabe Digital
+        let sender = DEFAULT_FROM; 
+
+        // 🛑 STRICT TENANT OVERRIDE: Route Lwazi traffic to their dedicated number
+        if (fromOverride === 'LWAZI' || fromOverride === 'LWAZI_HQ') {
+            sender = process.env.LWAZI_WHATSAPP_NUMBER;
+            if (!sender) console.log("⚠️ CRITICAL: LWAZI_WHATSAPP_NUMBER is missing from .env!");
+        } else if (fromOverride) {
+            // Fallback: If a raw phone number was passed instead of a tenant code
+            sender = fromOverride;
+        }
+
+        // Format the sender correctly for Twilio
         if (!sender.startsWith('whatsapp:')) {
             sender = `whatsapp:${sender.startsWith('+') ? sender : '+' + sender}`;
         }
 
-        const messageOptions = {
-            from: sender,
-            to: formattedTo,
-            body: body
-        };
+        const MAX_LENGTH = 1500;
+        const messageChunks = [];
 
-        if (mediaUrl) messageOptions.mediaUrl = [mediaUrl];
+        // --- Smart Chunking Logic ---
+        if (body.length > MAX_LENGTH) {
+            let remainingText = body;
+            while (remainingText.length > 0) {
+                if (remainingText.length <= MAX_LENGTH) {
+                    messageChunks.push(remainingText);
+                    break;
+                }
+                
+                let chunk = remainingText.substring(0, MAX_LENGTH);
+                let splitIndex = MAX_LENGTH;
+                
+                let lastDoubleNewline = chunk.lastIndexOf('\n\n');
+                let lastNewline = chunk.lastIndexOf('\n');
+                let lastSpace = chunk.lastIndexOf(' ');
 
-        const message = await client.messages.create(messageOptions);
+                if (lastDoubleNewline > MAX_LENGTH - 300) splitIndex = lastDoubleNewline; 
+                else if (lastNewline > MAX_LENGTH - 200) splitIndex = lastNewline;       
+                else if (lastSpace > MAX_LENGTH - 100) splitIndex = lastSpace;         
 
-        console.log(`✅ Sent from ${sender} to ${formattedTo} (SID: ${message.sid})`);
+                messageChunks.push(remainingText.substring(0, splitIndex).trim());
+                remainingText = remainingText.substring(splitIndex).trim();
+            }
+        } else {
+            messageChunks.push(body);
+        }
+
+        // --- Send the Chunks ---
+        for (const chunk of messageChunks) {
+            const messageOptions = {
+                from: sender, // 👈 Dynamically routes through the correct Meta number
+                to: formattedTo,
+                body: chunk
+            };
+            if (mediaUrl) messageOptions.mediaUrl = [mediaUrl];
+
+            const message = await client.messages.create(messageOptions);
+            console.log(`✅ Sent from ${sender} to ${formattedTo} (SID: ${message.sid})`);
+            await new Promise(resolve => setTimeout(resolve, 500)); 
+        }
         return true;
 
     } catch (error) {
         console.error("❌ Twilio Send Error:", error.message);
-        
-        // 🚨 63016 Specific Logic
         if (error.code === 63016) {
-            console.error("⛔ WINDOW BLOCKED: You cannot initiate a chat without a Template.");
-            // In production, this is where you'd trigger your 'lwazi_onboarding' template instead
+            console.error("⛔ WINDOW BLOCKED: Attempted to message outside 24h window without template.");
         }
         return false;
     }
 }
-
-module.exports = { sendWhatsApp };
