@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-	"seed:lwazi": "node scripts/seedLwazi.js",
+    "seed:lwazi": "node scripts/seedLwazi.js",
     "test": "jest --detectOpenHandles",
     "start": "node index.js",
     "onboard": "node scripts/onboard.js",
@@ -27,6 +27,7 @@
     "body-parser": "^2.2.2",
     "canvas": "^3.2.1",
     "cheerio": "^1.2.0",
+    "chrono-node": "^2.9.0",
     "cloudinary": "^2.9.0",
     "cookie-parser": "^1.4.7",
     "csv-parser": "^3.2.0",

@@ -2,6 +2,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { chargeSavedToken } = require('../services/netcash');
+const chrono = require('chrono-node'); // 🧠 NEW: Natural Language Date Parser
 
 async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp) {
     const cleanMsg = incomingMsg.trim();
@@ -154,7 +155,7 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
     }
 
     // ==========================================
-    // 4. BOOKING_DATE -> FINAL_CONFIRMATION
+    // 4. BOOKING_DATE -> COLLISION ENGINE -> CONFIRMATION
     // ==========================================
     if (step === 'BOOKING_DATE') {
         if (cleanMsg === '0') {
@@ -174,6 +175,69 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
             return true;
         }
 
+        // 🧠 1. AI Date Parsing (forwardDate ensures "Friday" means *next* Friday)
+        const requestedDate = chrono.parseDate(cleanMsg, new Date(), { forwardDate: true });
+        
+        if (!requestedDate) {
+            await sendWhatsApp(phone, "⚠️ I couldn't quite understand that time. Please try again (e.g., 'Tomorrow at 2pm' or 'Friday 10am').");
+            return true;
+        }
+
+        // 🕒 2. Business Hours Guardrail (8:00 AM to 5:00 PM)
+        const hour = requestedDate.getHours();
+        if (hour < 8 || hour >= 17) {
+            await sendWhatsApp(phone, "🏢 Our operating hours are 8:00 AM to 5:00 PM. Please reply with a time within our business hours.");
+            return true;
+        }
+
+        // 🛡️ 3. Collision Engine Logic
+        const selectedService = await prisma.product.findUnique({ where: { id: serviceId } });
+        const durationMins = selectedService?.durationMins || 30; // Fallback to 30 mins
+
+        const proposedStart = requestedDate;
+        const proposedEnd = new Date(proposedStart.getTime() + durationMins * 60000);
+
+        // Fetch all of the Salon's existing bookings for THAT SPECIFIC DAY
+        const startOfDay = new Date(proposedStart); startOfDay.setHours(0,0,0,0);
+        const endOfDay = new Date(proposedStart); endOfDay.setHours(23,59,59,999);
+
+        const dailyAppts = await prisma.appointment.findMany({
+            where: {
+                churchId: orgId,
+                bookingDate: { gte: startOfDay, lte: endOfDay },
+                status: { in: ['CONFIRMED', 'PENDING_PAYMENT', 'COMPLETED'] }
+            },
+            include: { product: true },
+            orderBy: { bookingDate: 'asc' }
+        });
+
+        let isConflict = false;
+        let nextAvailableTime = null;
+
+        for (const appt of dailyAppts) {
+            const apptStart = new Date(appt.bookingDate);
+            const apptDuration = appt.product?.durationMins || 30;
+            const apptEnd = new Date(apptStart.getTime() + apptDuration * 60000);
+
+            // Mathematical Overlap Formula: (StartA < EndB) AND (EndA > StartB)
+            if (proposedStart < apptEnd && proposedEnd > apptStart) {
+                isConflict = true;
+                nextAvailableTime = apptEnd; // Suggest the moment this conflicting haircut finishes
+            }
+        }
+
+        // 🛑 4. Handle Collision Rejection
+        if (isConflict && nextAvailableTime) {
+            if (nextAvailableTime.getHours() >= 17) {
+                await sendWhatsApp(phone, `Sorry, we are fully booked around that time, and the next available slot falls outside our business hours.\n\nHow about another day?\n_(Reply with a new time, or 0 to cancel)_`);
+            } else {
+                const prettyNext = nextAvailableTime.toLocaleTimeString('en-ZA', { hour: '2-digit', minute:'2-digit' });
+                await sendWhatsApp(phone, `Sorry, that time is already taken! ✂️\n\nHow about *${prettyNext}* on the same day instead?\n_(Reply with a new time, or 0 to cancel)_`);
+            }
+            return true;
+        }
+
+        // ✅ 5. Safe to Proceed! Create the Client and Booking
         let member = await prisma.member.findFirst({ where: { phone: phone } });
         if (!member) {
             member = await prisma.member.create({
@@ -186,10 +250,10 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
                 churchId: orgId,
                 memberId: Number(member.id),
                 productId: serviceId,
-                bookingDate: new Date(),
+                bookingDate: requestedDate, // Uses the exact validated parsed date
                 status: 'CONFIRMED', 
                 depositPaid: false,
-                notes: `Client requested time: ${cleanMsg}`
+                notes: `Client requested: ${cleanMsg}`
             }
         });
 
@@ -204,9 +268,15 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
             await prisma.botSession.update({ where: { phone: phone }, data: { step: newStep } });
             if (session) { session.step = newStep; }
 
-            await sendWhatsApp(phone, `✅ *Booking Held!*\n\nWe've reserved your *${data.serviceName}* on *${cleanMsg}*.\n\nWould you like to prepay the *R${price.toFixed(2)}* using your saved *${savedCards.cardBrand} ending in ${savedCards.last4}* so you can just walk in and out?\n\n*1️⃣ Yes, Prepay now*\n*2️⃣ No, I'll pay in-store*`);
+            const prettyDate = requestedDate.toLocaleDateString('en-ZA', { weekday: 'short', month: 'short', day: 'numeric' });
+            const prettyTime = requestedDate.toLocaleTimeString('en-ZA', { hour: '2-digit', minute:'2-digit' });
+
+            await sendWhatsApp(phone, `✅ *Booking Held!*\n\nWe've reserved your *${data.serviceName}* on *${prettyDate} at ${prettyTime}*.\n\nWould you like to prepay the *R${price.toFixed(2)}* using your saved *${savedCards.cardBrand} ending in ${savedCards.last4}* so you can just walk in and out?\n\n*1️⃣ Yes, Prepay now*\n*2️⃣ No, I'll pay in-store*`);
         } else {
-            const confirmation = `✅ *Booking Confirmed!*\n\nWe've locked in your *${data.serviceName || 'Service'}* on *${cleanMsg}*.\n\n📍 *${data.orgName || 'Salon'}*\n💰 Payment of *R${price.toFixed(2)}* can be made in-store after your appointment.\n\nSee you soon! ✂️`;
+            const prettyDate = requestedDate.toLocaleDateString('en-ZA', { weekday: 'short', month: 'short', day: 'numeric' });
+            const prettyTime = requestedDate.toLocaleTimeString('en-ZA', { hour: '2-digit', minute:'2-digit' });
+
+            const confirmation = `✅ *Booking Confirmed!*\n\nWe've locked in your *${data.serviceName || 'Service'}* on *${prettyDate} at ${prettyTime}*.\n\n📍 *${data.orgName || 'Salon'}*\n💰 Payment of *R${price.toFixed(2)}* can be made in-store after your appointment.\n\nSee you soon! ✂️`;
             await sendWhatsApp(phone, confirmation);
             
             // Clean up session
