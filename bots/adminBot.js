@@ -99,8 +99,8 @@ module.exports.process = async (incomingMsg, cleanPhone, member, sendWhatsApp, s
         return true;
     }
 
-// ==========================================
-    // 📅 TODAY'S SCHEDULE
+	// ==========================================
+    // 📅 TODAY'S SCHEDULE (UPDATED FOR MULTI-BARBER & BLOCKS)
     // ==========================================
     if (action === 'schedule') {
         const startOfDay = new Date();
@@ -108,31 +108,139 @@ module.exports.process = async (incomingMsg, cleanPhone, member, sendWhatsApp, s
         const endOfDay = new Date();
         endOfDay.setHours(23, 59, 59, 999);
 
+        // Fetch appointments AND include the Barber (Admin)
         const todayAppts = await prisma.appointment.findMany({
             where: {
                 churchId: org.id,
                 bookingDate: { gte: startOfDay, lte: endOfDay }
             },
-            include: { member: true, product: true },
+            include: { member: true, product: true, admin: true },
             orderBy: { bookingDate: 'asc' }
         });
 
         if (todayAppts.length === 0) {
-            await sendWhatsApp(cleanPhone, `📅 *Today's Schedule*\n\nYou have no appointments booked for today.`);
+            await sendWhatsApp(cleanPhone, `📅 *Today's Schedule*\n\nYou have no appointments or blocked time for today.`);
             return true;
         }
 
         let scheduleMsg = `📅 *Today's Schedule (${todayAppts.length})*\n\n`;
         todayAppts.forEach(appt => {
             const time = new Date(appt.bookingDate).toLocaleTimeString('en-ZA', { hour: '2-digit', minute:'2-digit' });
-            const statusIcon = appt.status === 'CONFIRMED' ? '✅' : (appt.status === 'PENDING_PAYMENT' ? '⏳' : '🗓️');
-            // 🚀 Added [ID] so the admin knows which number to bill
-            scheduleMsg += `${statusIcon} *[ID: ${appt.id}]* ${time} - ${appt.member.firstName} (${appt.product.name})\n`;
+            
+            // Handle Ghost Appointments (Blocked Time)
+            if (appt.member.phone === 'SYSTEM') {
+                const barberName = appt.admin ? appt.admin.name : 'Entire Salon';
+                scheduleMsg += `🛑 *[BLOCKED]* ${time} - ${barberName} (${appt.product.durationMins} mins)\n`;
+            } else {
+                const statusIcon = appt.status === 'CONFIRMED' ? '✅' : (appt.status === 'PENDING_PAYMENT' ? '⏳' : (appt.status === 'COMPLETED' ? '🏁' : '🗓️'));
+                const barberName = appt.admin ? appt.admin.name : 'Any Barber';
+                scheduleMsg += `${statusIcon} *[ID: ${appt.id}]* ${time} - ${appt.member.firstName} w/ ${barberName} (${appt.product.name})\n`;
+            }
         });
         
-        scheduleMsg += `\n_To check a client out, type:_\n*Admin Bill [ID] [Amount] [Extras]*\n_Example: Admin Bill 14 150 Premium Beard Oil_`;
-
+        scheduleMsg += `\n_To check a client out, type:_\n*Admin Bill [ID] [Amount] [Extras]*`;
         await sendWhatsApp(cleanPhone, scheduleMsg);
+        return true;
+    }
+	
+	// ==========================================
+    // 🛑 CALENDAR MANAGEMENT: BLOCK TIME
+    // ==========================================
+    if (action === 'block') {
+        // Expected format: Admin Block [Minutes] [Reason]
+        // Example: Admin Block 30 Lunch break
+        const duration = parseInt(parts[2]);
+        const reason = parts.slice(3).join(' ') || 'Manual WhatsApp Block';
+
+        if (isNaN(duration)) {
+            await sendWhatsApp(cleanPhone, "⚠️ *Format Error*\nPlease use: *Admin Block [Minutes] [Reason]*\n_Example: Admin Block 45 Going to the bank_");
+            return true;
+        }
+
+        // 1. Find the exact admin making the request (so we block THEIR calendar, not the whole salon)
+        const requestingAdmin = await prisma.admin.findFirst({
+            where: { churchId: org.id, phone: { endsWith: cleanPhone.slice(-9) } }
+        });
+
+        // 2. Ensure System Member exists
+        let systemMember = await prisma.member.findFirst({ where: { phone: 'SYSTEM', churchCode: org.code } });
+        if (!systemMember) {
+            systemMember = await prisma.member.create({ data: { phone: 'SYSTEM', firstName: 'Blocked', lastName: 'Time', status: 'ACTIVE', churchCode: org.code }});
+        }
+
+        // 3. Ensure Ghost Service exists
+        const blockName = `Blocked Slot (${duration}m)`;
+        let blockProduct = await prisma.product.findFirst({ where: { churchId: org.id, name: blockName, type: 'SYSTEM' } });
+        if (!blockProduct) {
+            blockProduct = await prisma.product.create({ data: { name: blockName, price: 0, durationMins: duration, type: 'SYSTEM', isActive: false, churchId: org.id }});
+        }
+
+        // 4. Create Ghost Appointment instantly
+        await prisma.appointment.create({
+            data: {
+                churchId: org.id,
+                memberId: systemMember.id,
+                productId: blockProduct.id,
+                adminId: requestingAdmin ? requestingAdmin.id : null,
+                bookingDate: new Date(), // Blocks it from RIGHT NOW
+                status: 'CONFIRMED',
+                depositPaid: true,
+                notes: `[BLOCKED] ${reason}`
+            }
+        });
+
+        await sendWhatsApp(cleanPhone, `🛑 *Calendar Blocked!*\n\nYour schedule is now locked for the next ${duration} minutes. The bot will automatically route new digital bookings around this time.\n\nReason: ${reason}`);
+        return true;
+    }
+	
+	// ==========================================
+    // 🏃‍♂️ CALENDAR MANAGEMENT: QUICK WALK-IN
+    // ==========================================
+    if (action === 'walkin') {
+        // Expected format: Admin Walkin [ServiceID] [Name]
+        const serviceId = parseInt(parts[2]);
+        const clientName = parts.slice(3).join(' ') || 'Walk-in';
+
+        if (isNaN(serviceId)) {
+            // First, fetch their services so they know what ID to type
+            const services = await prisma.product.findMany({ where: { churchId: org.id, type: 'SERVICE', isActive: true } });
+            let svcMsg = "⚠️ *Format Error*\nPlease use: *Admin Walkin [ServiceID] [Client Name]*\n\n*Available Services:*\n";
+            services.forEach(s => svcMsg += `ID: ${s.id} - ${s.name}\n`);
+            await sendWhatsApp(cleanPhone, svcMsg);
+            return true;
+        }
+
+        // Validate service
+        const product = await prisma.product.findUnique({ where: { id: serviceId } });
+        if (!product || product.churchId !== org.id) {
+            await sendWhatsApp(cleanPhone, "❌ Invalid Service ID.");
+            return true;
+        }
+
+        const requestingAdmin = await prisma.admin.findFirst({
+            where: { churchId: org.id, phone: { endsWith: cleanPhone.slice(-9) } }
+        });
+
+        // Generate dummy profile
+        const dummyPhone = `0000${Math.floor(Math.random() * 1000000)}`;
+        const member = await prisma.member.create({
+            data: { phone: dummyPhone, firstName: clientName, lastName: '', status: 'ACTIVE', churchCode: org.code }
+        });
+
+        await prisma.appointment.create({
+            data: {
+                churchId: org.id,
+                memberId: member.id,
+                productId: product.id,
+                adminId: requestingAdmin ? requestingAdmin.id : null,
+                bookingDate: new Date(), // Locks from right now
+                status: 'CONFIRMED',
+                depositPaid: false,
+                notes: `Walk-in logged via WhatsApp by Admin.`
+            }
+        });
+
+        await sendWhatsApp(cleanPhone, `🏃‍♂️ *Walk-in Logged!*\n\n${clientName} is now booked for a ${product.name}. This time slot has been secured on your digital calendar to prevent overlaps.`);
         return true;
     }
 	
