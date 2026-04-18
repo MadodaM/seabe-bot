@@ -34,6 +34,47 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
         if (session) { session.mode = null; session.step = null; session.data = null; }
         return true;
     }
+	
+	// ==========================================
+    // 🛑 GLOBAL INTERCEPTOR: HANDLE CANCELLATIONS
+    // ==========================================
+    if (cleanMsg.toLowerCase() === 'cancel booking') {
+        const upcomingAppt = await prisma.appointment.findFirst({
+            where: {
+                member: { phone: phone },
+                bookingDate: { gte: new Date() },
+                status: { in: ['CONFIRMED', 'PENDING_PAYMENT'] }
+            },
+            include: { church: true, member: true },
+            orderBy: { bookingDate: 'asc' }
+        });
+
+        if (upcomingAppt) {
+            // Cancel it in the DB
+            await prisma.appointment.update({ 
+                where: { id: upcomingAppt.id }, 
+                data: { status: 'CANCELLED' }
+            });
+            
+            await sendWhatsApp(phone, `✅ Your appointment at *${upcomingAppt.church.name}* has been successfully cancelled. Thanks for letting us know!\n\nReply *Hi* to return to the main menu.`);
+            
+            // Notify the Barber
+            if (upcomingAppt.church.adminPhone) {
+                let cleanAdminPhone = upcomingAppt.church.adminPhone.replace(/\D/g, '');
+                if (cleanAdminPhone.startsWith('0')) cleanAdminPhone = '27' + cleanAdminPhone.substring(1);
+                
+                const prettyTime = new Date(upcomingAppt.bookingDate).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
+                await sendWhatsApp(cleanAdminPhone, `⚠️ *Cancellation Notice*\n\n${upcomingAppt.member.firstName} just cancelled their appointment for today at ${prettyTime}. The slot is now open in your CRM.`);
+            }
+        } else {
+            await sendWhatsApp(phone, "You don't have any upcoming bookings to cancel.\n\nReply *Hi* to return to the main menu.");
+        }
+        
+        // Wipe session
+        await prisma.botSession.deleteMany({ where: { phone: phone } });
+        if (session) { session.mode = null; session.step = null; session.data = null; }
+        return true;
+    }
 
     // ==========================================
     // 1. THE TRIGGER: Check if they typed a Salon Name

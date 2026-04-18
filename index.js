@@ -24,6 +24,7 @@ const { startWeeklyReportEngine } = require('./services/weeklyReportCron');
 const { runEngagementMonitor } = require('./jobs/engagementMonitor');
 const cron = require('node-cron');
 const { runArrearsChaser } = require('./jobs/arrearsChaser');
+const { startReminderCron } = require('./services/reminderWorker');
 
 // Route Imports
 const blastEngineRoute = require('./routes/blastEngine');
@@ -182,7 +183,8 @@ if (process.env.NODE_ENV !== 'test') {
             startBatchEngine();
 			startLwaziCrons();
             startCourseEngine();
-            console.log(`✅ All ${7} Cron Jobs scheduled.`);          
+			startReminderCron();
+            console.log(`✅ All ${8} Cron Jobs scheduled.`);          
         } catch (e) {
             console.log("⚠️ Scheduler module failed to start.");
         }
