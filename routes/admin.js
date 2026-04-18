@@ -66,6 +66,7 @@ const renderPage = (org, activeTab, content) => {
     const eventsTab = isChurch ? `<a href="/admin/${org.code}/events" style="${navStyle('events')}">📅 Events</a>` : '';
     const appointmentsTab = isGrooming ? `<a href="/admin/${org.code}/appointments" style="${navStyle('appointments')}">📅 Schedule</a>` : '';
     const servicesTab = isGrooming ? `<a href="/admin/${org.code}/services" style="${navStyle('services')}">✂️ Services</a>` : '';
+	const inventoryTab = isGrooming ? `<a href="/admin/${org.code}/inventory" style="${navStyle('inventory')}">📦 Inventory</a>` : '';
     const academyTab = isAcademy ? `<a href="/admin/${org.code}/academy" style="${navStyle('academy')}">🎓 Academy</a>` : '';
 
     return `<!DOCTYPE html><html><head><title>${org.name}</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:-apple-system,sans-serif;background:#f4f7f6;margin:0;padding-bottom:50px;}.header{background:white;padding:20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;}.nav{background:white;padding:0 20px;border-bottom:1px solid #ddd;overflow-x:auto;white-space:nowrap;display:flex;}.container{padding:20px;max-width:800px;margin:0 auto;}.card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.05);margin-bottom:20px;}.btn{display:inline-block;padding:12px 20px;background:#1e272e;color:white;text-decoration:none;border-radius:8px;border:none;font-weight:bold;font-size:14px;width:100%;text-align:center;cursor:pointer;}.btn-del{background:#ffebeb;color:#d63031;padding:5px 10px;font-size:11px;width:auto;border-radius:4px;border:none;}.approve{background:#2ecc71;}.reject{background:#e74c3c;}.img-preview{max-width:100%;height:auto;border:1px solid #ddd;border-radius:5px;margin-top:10px;}input,select,textarea,button{box-sizing:border-box;}input,select,textarea{width:100%;padding:12px;margin-bottom:15px;border:1px solid #ddd;border-radius:6px;}label{display:block;margin-bottom:5px;font-weight:bold;font-size:12px;color:#555;text-transform:uppercase;}table{width:100%;border-collapse:collapse;}td,th{padding:12px 8px;border-bottom:1px solid #eee;font-size:14px;text-align:left;}.badge{padding:4px 8px;border-radius:4px;font-size:10px;color:white;font-weight:bold;}a{color:#0984e3;text-decoration:none;}</style></head>
@@ -75,7 +76,7 @@ const renderPage = (org, activeTab, content) => {
         <a href="/admin/${org.code}/transactions" style="${navStyle('transactions')}">🧾 Ledger</a>
         ${verifyTab}
         <a href="/admin/${org.code}/members" style="${navStyle('members')}">👥 Members/Clients</a>
-        ${appointmentsTab} ${servicesTab} ${claimsTab}
+        ${appointmentsTab} ${servicesTab} ${inventoryTab} ${claimsTab}
         ${eventsTab} ${academyTab}
         <a href="/admin/${org.code}/team" style="${navStyle('team')}">🛡️ Team</a>
         <a href="/admin/${org.code}/broadcast" style="${navStyle('broadcast')}">📢 Broadcasts</a>
@@ -3163,6 +3164,147 @@ module.exports = (app, { prisma }) => {
             console.error("Services Error:", error);
             res.send(renderPage(req.org, 'services', `<div class="card" style="color:red;">Error loading services.</div>`));
         }
+		
+	});
+	
+	// ============================================================
+    // 📦 RETAIL INVENTORY & STOCK MANAGEMENT
+    // ============================================================
+    router.get('/admin/:code/inventory', checkSession, async (req, res) => {
+        try {
+            const products = await prisma.product.findMany({
+                where: { churchId: req.org.id, type: 'RETAIL' },
+                orderBy: { name: 'asc' }
+            });
+
+            const rows = products.map(p => {
+                const stockColor = p.stockLevel > 5 ? '#27ae60' : (p.stockLevel > 0 ? '#f39c12' : '#c0392b');
+                const stockText = p.stockLevel > 0 ? 'In Stock' : 'Out of Stock';
+
+                return `
+                <tr>
+                    <td>
+                        <b>${p.name}</b><br>
+                        <span style="font-size:11px; color:#888;">Barcode: ${p.barcode || 'N/A'}</span>
+                    </td>
+                    <td>R${p.price.toFixed(2)}</td>
+                    <td>
+                        <form method="POST" action="/admin/${req.org.code}/inventory/stock" style="display:flex; gap:5px; align-items:center; margin:0;">
+                            <input type="hidden" name="productId" value="${p.id}">
+                            <input type="number" name="newStockLevel" value="${p.stockLevel}" style="width:80px; padding:6px; margin:0; text-align:center; border:1px solid #ddd; border-radius:4px;">
+                            <button class="btn" style="padding:6px 12px; width:auto; background:#0984e3; font-size:12px;">Set</button>
+                        </form>
+                    </td>
+                    <td><span class="badge" style="background:${stockColor};">${stockText}</span></td>
+                    <td style="text-align:right;">
+                        <form method="POST" action="/admin/${req.org.code}/inventory/delete" style="display:inline;">
+                            <input type="hidden" name="productId" value="${p.id}">
+                            <button class="btn-del" onclick="return confirm('Are you sure you want to delete this product?');">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                `;
+            }).join('');
+
+            const content = `
+                <div class="card" style="display:flex; justify-content:space-between; align-items:center; background:#2d3436; color:white;">
+                    <div>
+                        <h2 style="margin:0; color:#00d2d3;">📦 Retail Inventory</h2>
+                        <p style="margin:0; margin-top:5px; font-size:13px; color:#b2bec3;">Manage physical products, barcodes, and stock levels.</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 style="margin-top:0;">Add New Retail Product</h3>
+                    <form method="POST" action="/admin/${req.org.code}/inventory/add" style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; background:#f8f9fa; padding:15px; border-radius:6px;">
+                        <div>
+                            <label>Product Name</label>
+                            <input type="text" name="name" required placeholder="e.g. Premium Beard Oil">
+                        </div>
+                        <div>
+                            <label>Selling Price (R)</label>
+                            <input type="number" name="price" required placeholder="150" step="0.01">
+                        </div>
+                        <div>
+                            <label>Barcode (Optional)</label>
+                            <input type="text" name="barcode" placeholder="Scan or type barcode">
+                        </div>
+                        <div>
+                            <label>Initial Stock Level</label>
+                            <input type="number" name="stockLevel" required value="0">
+                        </div>
+                        <div style="grid-column: span 2;">
+                            <button type="submit" class="btn" style="background:#27ae60; width:100%;">Add to Inventory</button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="card" style="overflow-x:auto;">
+                    <h3 style="margin:0 0 15px 0;">Stock List (${products.length})</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Product & Barcode</th>
+                                <th>Price</th>
+                                <th>Count Stock</th>
+                                <th>Status</th>
+                                <th style="text-align:right;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${products.length > 0 ? rows : '<tr><td colspan="5" style="text-align:center; padding:30px; color:#999;">No retail products added yet.</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            res.send(renderPage(req.org, 'inventory', content));
+        } catch (error) {
+            console.error("Inventory Error:", error);
+            res.send(renderPage(req.org, 'inventory', '<div class="card" style="color:red;">Error loading inventory.</div>'));
+        }
+    });
+
+    router.post('/admin/:code/inventory/add', checkSession, async (req, res) => {
+        try {
+            await prisma.product.create({
+                data: {
+                    name: req.body.name,
+                    price: parseFloat(req.body.price),
+                    barcode: req.body.barcode || null,
+                    stockLevel: parseInt(req.body.stockLevel) || 0,
+                    type: 'RETAIL',
+                    churchId: req.org.id,
+                    isActive: true
+                }
+            });
+        } catch (e) {
+            console.error("Add inventory error:", e);
+        }
+        res.redirect(`/admin/${req.org.code}/inventory`);
+    });
+
+    router.post('/admin/:code/inventory/stock', checkSession, async (req, res) => {
+        try {
+            await prisma.product.update({
+                where: { id: parseInt(req.body.productId) },
+                data: { stockLevel: parseInt(req.body.newStockLevel) }
+            });
+        } catch (e) {
+            console.error("Update stock error:", e);
+        }
+        res.redirect(`/admin/${req.org.code}/inventory`);
+    });
+
+    router.post('/admin/:code/inventory/delete', checkSession, async (req, res) => {
+        try {
+            await prisma.product.delete({
+                where: { id: parseInt(req.body.productId) }
+            });
+        } catch (e) {
+            console.error("Delete inventory error:", e);
+        }
+        res.redirect(`/admin/${req.org.code}/inventory`);
     });
 
     router.post('/admin/:code/services/add', checkSession, async (req, res) => {
