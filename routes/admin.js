@@ -67,17 +67,18 @@ const renderPage = (org, activeTab, content) => {
     const appointmentsTab = isGrooming ? `<a href="/admin/${org.code}/appointments" style="${navStyle('appointments')}">📅 Schedule</a>` : '';
     const servicesTab = isGrooming ? `<a href="/admin/${org.code}/services" style="${navStyle('services')}">✂️ Services</a>` : '';
 	const inventoryTab = isGrooming ? `<a href="/admin/${org.code}/inventory" style="${navStyle('inventory')}">📦 Inventory</a>` : '';
+	const procurementTab = `<a href="/admin/${org.code}/procurement" style="${navStyle('procurement')}">📋 Quotes & POs</a>`;
     const academyTab = isAcademy ? `<a href="/admin/${org.code}/academy" style="${navStyle('academy')}">🎓 Academy</a>` : '';
 
     return `<!DOCTYPE html><html><head><title>${org.name}</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:-apple-system,sans-serif;background:#f4f7f6;margin:0;padding-bottom:50px;}.header{background:white;padding:20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;}.nav{background:white;padding:0 20px;border-bottom:1px solid #ddd;overflow-x:auto;white-space:nowrap;display:flex;}.container{padding:20px;max-width:800px;margin:0 auto;}.card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.05);margin-bottom:20px;}.btn{display:inline-block;padding:12px 20px;background:#1e272e;color:white;text-decoration:none;border-radius:8px;border:none;font-weight:bold;font-size:14px;width:100%;text-align:center;cursor:pointer;}.btn-del{background:#ffebeb;color:#d63031;padding:5px 10px;font-size:11px;width:auto;border-radius:4px;border:none;}.approve{background:#2ecc71;}.reject{background:#e74c3c;}.img-preview{max-width:100%;height:auto;border:1px solid #ddd;border-radius:5px;margin-top:10px;}input,select,textarea,button{box-sizing:border-box;}input,select,textarea{width:100%;padding:12px;margin-bottom:15px;border:1px solid #ddd;border-radius:6px;}label{display:block;margin-bottom:5px;font-weight:bold;font-size:12px;color:#555;text-transform:uppercase;}table{width:100%;border-collapse:collapse;}td,th{padding:12px 8px;border-bottom:1px solid #eee;font-size:14px;text-align:left;}.badge{padding:4px 8px;border-radius:4px;font-size:10px;color:white;font-weight:bold;}a{color:#0984e3;text-decoration:none;}</style></head>
     <body><div class="header"><b>${org.name} (${org.type})</b><a href="/admin/${org.code}/logout" style="color:red;font-size:12px;">Logout</a></div>
     <div class="nav">
-        <a href="/admin/${org.code}/dashboard" style="${navStyle('dashboard')}">📊 Dashboard</a>
-        <a href="/admin/${org.code}/transactions" style="${navStyle('transactions')}">🧾 Ledger</a>
-        ${verifyTab}
-        <a href="/admin/${org.code}/members" style="${navStyle('members')}">👥 Members/Clients</a>
-        ${appointmentsTab} ${servicesTab} ${inventoryTab} ${claimsTab}
-        ${eventsTab} ${academyTab}
+            <a href="/admin/${org.code}/dashboard" style="${navStyle('dashboard')}">📊 Dashboard</a>
+            <a href="/admin/${org.code}/transactions" style="${navStyle('transactions')}">🧾 Ledger</a>
+            ${verifyTab}
+            <a href="/admin/${org.code}/members" style="${navStyle('members')}">👥 Members/Clients</a>
+            ${appointmentsTab} ${servicesTab} ${inventoryTab} ${procurementTab} ${claimsTab}
+            ${eventsTab} ${academyTab}
         <a href="/admin/${org.code}/team" style="${navStyle('team')}">🛡️ Team</a>
         <a href="/admin/${org.code}/broadcast" style="${navStyle('broadcast')}">📢 Broadcasts</a>
         <a href="/admin/${org.code}/settings" style="${navStyle('settings')}">⚙️ Settings</a>
@@ -3262,6 +3263,182 @@ module.exports = (app, { prisma }) => {
         } catch (error) {
             console.error("Inventory Error:", error);
             res.send(renderPage(req.org, 'inventory', '<div class="card" style="color:red;">Error loading inventory.</div>'));
+        }
+    });
+	
+	// ============================================================
+    // 📋 PROCUREMENT: QUOTE REVIEW & PURCHASE ORDERS
+    // ============================================================
+    router.get('/admin/:code/procurement', checkSession, async (req, res) => {
+        try {
+            // 1. Fetch RFQs with their nested Quotes (sorted by cheapest)
+            const rfqs = await prisma.requestForQuote.findMany({
+                where: { churchId: req.org.id },
+                include: {
+                    quotes: {
+                        include: { vendor: true },
+                        orderBy: { amount: 'asc' } // 🥇 Cheapest first!
+                    }
+                },
+                orderBy: { id: 'desc' }
+            });
+
+            // 2. Fetch official Purchase Orders
+            const pos = await prisma.purchaseOrder.findMany({
+                where: { churchId: req.org.id },
+                include: { vendor: true },
+                orderBy: { id: 'desc' }
+            });
+
+            // Build RFQ & Quotes HTML
+            let rfqHtml = '';
+            if (rfqs.length === 0) {
+                rfqHtml = '<p style="color:#7f8c8d; text-align:center; padding:20px;">No Request for Quotes (RFQs) found. Use the Vendor Directory to blast an RFQ.</p>';
+            } else {
+                rfqHtml = rfqs.map(rfq => {
+                    const statusColor = rfq.status === 'OPEN' ? '#27ae60' : '#7f8c8d';
+                    let quotesHtml = '';
+
+                    if (rfq.quotes.length === 0) {
+                        quotesHtml = '<p style="font-size:12px; color:#95a5a6; margin:10px 0 0 0;">No bids received yet from vendors.</p>';
+                    } else {
+                        quotesHtml = `
+                        <table style="margin-top:10px; background:#f8f9fa; border-radius:5px;">
+                            <thead><tr><th>Vendor</th><th>Notes</th><th>Amount</th><th style="text-align:right;">Action</th></tr></thead>
+                            <tbody>
+                                ${rfq.quotes.map((q, idx) => `
+                                    <tr>
+                                        <td><strong>${q.vendor.name}</strong> ${idx === 0 ? '🥇' : ''}</td>
+                                        <td style="font-size:11px; color:#555;">${q.notes || '-'}</td>
+                                        <td><strong>R${q.amount.toFixed(2)}</strong></td>
+                                        <td style="text-align:right;">
+                                            ${rfq.status === 'OPEN' ? `
+                                            <form method="POST" action="/admin/${req.org.code}/procurement/accept" style="margin:0;">
+                                                <input type="hidden" name="quoteId" value="${q.id}">
+                                                <button class="btn" style="background:#27ae60; padding:6px 12px; font-size:11px; width:auto;" onclick="return confirm('Accept this quote and generate a Purchase Order?');">Accept Quote</button>
+                                            </form>` : `<span class="badge" style="background:${q.status === 'ACCEPTED' ? '#27ae60' : '#e74c3c'}">${q.status}</span>`}
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>`;
+                    }
+
+                    return `
+                    <div style="border:1px solid #eee; border-radius:8px; padding:15px; margin-bottom:15px; background:white;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <div>
+                                <h4 style="margin:0; color:#2c3e50;">${rfq.title} (ID: ${rfq.id})</h4>
+                                <p style="margin:0; font-size:12px; color:#7f8c8d;">${rfq.description}</p>
+                            </div>
+                            <span class="badge" style="background:${statusColor};">${rfq.status}</span>
+                        </div>
+                        ${quotesHtml}
+                    </div>
+                    `;
+                }).join('');
+            }
+
+            // Build PO HTML
+            let poHtml = '';
+            if (pos.length === 0) {
+                poHtml = '<tr><td colspan="4" style="text-align:center; padding:20px; color:#95a5a6;">No Purchase Orders generated yet.</td></tr>';
+            } else {
+                poHtml = pos.map(po => `
+                    <tr>
+                        <td><strong>${po.poNumber}</strong><br><span style="font-size:11px; color:#7f8c8d;">${new Date(po.createdAt).toLocaleDateString()}</span></td>
+                        <td>
+                            <strong>${po.vendor.name}</strong><br>
+                            <a href="https://wa.me/${po.vendor.phone.replace('+', '')}" target="_blank" style="font-size:11px; color:#3498db; text-decoration:none;">${po.vendor.phone}</a>
+                        </td>
+                        <td><strong>R${po.amount.toFixed(2)}</strong></td>
+                        <td><span class="badge" style="background:#f39c12;">${po.status}</span></td>
+                    </tr>
+                `).join('');
+            }
+
+            const content = `
+                <div class="card" style="display:flex; justify-content:space-between; align-items:center; background:#2c3e50; color:white;">
+                    <div>
+                        <h2 style="margin:0; color:#00d2d3;">📋 Quotes & Purchase Orders</h2>
+                        <p style="margin:0; margin-top:5px; font-size:13px; color:#b2bec3;">Review incoming bids from your vendors and generate official Purchase Orders.</p>
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; align-items:start;">
+                    <div style="background:transparent; padding:0;">
+                        <h3 style="margin-top:0; color:#2c3e50;">📨 Active RFQs & Bids</h3>
+                        <p style="font-size:12px; color:#7f8c8d; margin-bottom:15px;">Incoming quotes are automatically sorted. The cheapest bid gets the 🥇 medal.</p>
+                        ${rfqHtml}
+                    </div>
+
+                    <div class="card" style="margin-bottom:0; border-top: 4px solid #f39c12;">
+                        <h3 style="margin-top:0;">🛒 Official Purchase Orders</h3>
+                        <table style="margin-top:0;">
+                            <thead>
+                                <tr><th>PO Number</th><th>Vendor</th><th>Amount</th><th>Status</th></tr>
+                            </thead>
+                            <tbody>${poHtml}</tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+            
+            res.send(renderPage(req.org, 'procurement', content));
+        } catch (error) {
+            console.error("Procurement Error:", error);
+            res.send(renderPage(req.org, 'procurement', '<div class="card" style="color:red;">Error loading procurement dashboard.</div>'));
+        }
+    });
+
+    // 🚀 NEW: Accept Quote & Generate PO API
+    router.post('/admin/:code/procurement/accept', checkSession, async (req, res) => {
+        try {
+            const quoteId = parseInt(req.body.quoteId);
+            
+            // 1. Verify Quote and Ownership
+            const winningQuote = await prisma.quote.findUnique({
+                where: { id: quoteId },
+                include: { vendor: true, rfq: true }
+            });
+
+            if (!winningQuote || winningQuote.rfq.churchId !== req.org.id) {
+                return res.status(403).send("Unauthorized or quote not found.");
+            }
+
+            // 2. Database Transaction: Update Statuses and Generate PO
+            const poNumber = `PO-${req.org.code}-${Date.now().toString().slice(-6)}`;
+            
+            await prisma.$transaction([
+                prisma.quote.update({ where: { id: quoteId }, data: { status: 'ACCEPTED' } }),
+                prisma.quote.updateMany({ where: { rfqId: winningQuote.rfqId, id: { not: quoteId } }, data: { status: 'REJECTED' } }),
+                prisma.requestForQuote.update({ where: { id: winningQuote.rfqId }, data: { status: 'FULFILLED' } }),
+                prisma.purchaseOrder.create({
+                    data: {
+                        poNumber: poNumber,
+                        churchId: req.org.id,
+                        vendorId: winningQuote.vendorId,
+                        amount: winningQuote.amount,
+                        lineItems: JSON.stringify([{ description: winningQuote.rfq.description, amount: winningQuote.amount, quoteId: quoteId }]),
+                        status: 'ISSUED'
+                    }
+                })
+            ]);
+
+            // 3. Notify the Winning Vendor via WhatsApp!
+            if (winningQuote.vendor.phone) {
+                let vendorPhone = winningQuote.vendor.phone.replace(/\D/g, '');
+                if (vendorPhone.startsWith('0')) vendorPhone = '27' + vendorPhone.substring(1);
+                
+                const vendorMsg = `🎉 *Quote Accepted!*\n\nCongratulations ${winningQuote.vendor.name}, your quote for *R${winningQuote.amount.toFixed(2)}* has been approved by ${req.org.name}.\n\n*Official PO Number:* ${poNumber}\n\nPlease reference this PO Number on your final invoice. You may proceed with the work!`;
+                
+                sendWhatsApp(vendorPhone, vendorMsg).catch(err => console.error("Failed to notify vendor:", err.message));
+            }
+
+            res.redirect(`/admin/${req.org.code}/procurement`);
+        } catch (error) {
+            console.error("Accept Quote Error:", error);
+            res.redirect(`/admin/${req.org.code}/procurement`);
         }
     });
 
