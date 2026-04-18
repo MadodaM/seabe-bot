@@ -2902,7 +2902,7 @@ module.exports = (app, { prisma }) => {
                     defaultPremium: parseFloat(req.body.defaultPremium) || 150,
                     bankName: req.body.bankName,
                     accountNumber: req.body.accountNumber,
-                    branchCode: req.body.branchCode
+                    branchCode: req.body.branchCode,
 					openTime: req.body.openTime,   // 👈 NEW: Save Open Time
                     closeTime: req.body.closeTime  // 👈 NEW: Save Close Time
                 }
