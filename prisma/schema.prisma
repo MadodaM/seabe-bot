@@ -105,6 +105,8 @@ model Church {
   password   String?
   mfaSecret  String?
   setupToken String?
+  openTime        String?   @default("08:00")
+  closeTime       String?   @default("17:00")
 
   // Account Status
   accountStatus String @default("TRIAL") // TRIAL, ACTIVE, SUSPENDED

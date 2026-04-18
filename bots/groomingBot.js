@@ -280,10 +280,14 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
             return true;
         }
 
-        // 🕒 2. Business Hours Guardrail (8:00 AM to 5:00 PM)
+        // 🕒 2. Dynamic Business Hours Guardrail
+        const salon = await prisma.church.findUnique({ where: { id: orgId } });
+        const openHour = parseInt((salon.openTime || '08:00').split(':')[0]);
+        const closeHour = parseInt((salon.closeTime || '17:00').split(':')[0]);
+
         const hour = requestedDate.getHours();
-        if (hour < 8 || hour >= 17) {
-            await sendWhatsApp(phone, "🏢 Our operating hours are 8:00 AM to 5:00 PM. Please reply with a time within our business hours.");
+        if (hour < openHour || hour >= closeHour) {
+            await sendWhatsApp(phone, `🏢 Our operating hours are ${salon.openTime || '08:00'} to ${salon.closeTime || '17:00'}. Please reply with a time within our business hours.`);
             return true;
         }
 

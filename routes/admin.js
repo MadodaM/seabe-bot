@@ -794,9 +794,47 @@ module.exports = (app, { prisma }) => {
                         <h2 style="margin:0; color:#00d2d3;">📅 Appointments Schedule</h2>
                         <p style="margin:0; margin-top:5px; font-size:13px; color:#b2bec3;">Manage your bookings and daily schedule.</p>
                     </div>
-                    <button onclick="document.getElementById('walkinModal').style.display='flex'" class="btn" style="background:#f39c12; width:auto; border:none; padding:10px 20px; font-size:14px;">
-                        🏃‍♂️ + Quick Walk-in
-                    </button>
+                    <div style="display:flex; gap:10px;">
+                        <button onclick="document.getElementById('blockTimeModal').style.display='flex'" class="btn" style="background:#e74c3c; width:auto; border:none; padding:10px 15px; font-size:13px;">
+                            🛑 Block Time
+                        </button>
+                        <button onclick="document.getElementById('walkinModal').style.display='flex'" class="btn" style="background:#f39c12; width:auto; border:none; padding:10px 15px; font-size:13px;">
+                            🏃‍♂️ + Walk-in
+                        </button>
+                    </div>
+                </div>
+				
+				<div id="blockTimeModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+                    <div style="background:white; width:90%; max-width:400px; border-radius:10px; padding:20px; box-shadow:0 10px 25px rgba(0,0,0,0.2);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                            <h3 style="margin:0; color:#c0392b;">🛑 Block Calendar Time</h3>
+                            <button type="button" onclick="document.getElementById('blockTimeModal').style.display='none'" style="background:none; border:none; font-size:20px; cursor:pointer;">&times;</button>
+                        </div>
+                        <form method="POST" action="/admin/${orgCode}/appointments/block">
+                            <label>Barber</label>
+                            <select name="adminId" required>
+                                ${staffOptions.replace('<option value="">Any Barber / Salon Walk-in</option>', '<option value="">All Staff (Close Entire Salon)</option>')}
+                            </select>
+
+                            <label>Start Time</label>
+                            <input type="datetime-local" name="bookingDate" id="blockDate" required>
+
+                            <label>Duration</label>
+                            <select name="durationMins" required>
+                                <option value="15">15 Minutes</option>
+                                <option value="30">30 Minutes (Lunch)</option>
+                                <option value="60">1 Hour (Errand)</option>
+                                <option value="120">2 Hours</option>
+                                <option value="240">4 Hours (Half Day)</option>
+                                <option value="480">8 Hours (Full Day)</option>
+                            </select>
+
+                            <label>Reason (Optional)</label>
+                            <input type="text" name="reason" placeholder="e.g. Lunch break, Sick day">
+
+                            <button type="submit" class="btn" style="background:#e74c3c; margin-top:10px;">🔒 Lock Slot</button>
+                        </form>
+                    </div>
                 </div>
 
                 <div class="card" style="overflow-x:auto;">
@@ -862,12 +900,14 @@ module.exports = (app, { prisma }) => {
                 </div>
 
                 <script>
-                    // Auto-fill the walk-in date input to the current exact time
+                    // Auto-fill the date inputs to the current exact time
                     document.addEventListener('DOMContentLoaded', () => {
                         const now = new Date();
                         now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-                        document.getElementById('walkinDate').value = now.toISOString().slice(0,16);
-                    });
+                        const localIso = now.toISOString().slice(0,16);
+                        document.getElementById('walkinDate').value = localIso;
+                        document.getElementById('blockDate').value = localIso;
+					}
 
                     function openCheckoutModal(id, clientName, serviceName, basePrice) {
                         document.getElementById('clientNameDisplay').innerText = clientName;
@@ -992,6 +1032,53 @@ module.exports = (app, { prisma }) => {
             res.redirect(`/admin/${req.org.code}/appointments`);
         } catch (e) {
             console.error("Status Update Error:", e);
+            res.redirect(`/admin/${req.org.code}/appointments`);
+        }
+    });
+	
+	// 🚀 NEW: Block Time Route (Ghost Appointments)
+    router.post('/admin/:code/appointments/block', checkSession, async (req, res) => {
+        try {
+            const { adminId, bookingDate, durationMins, reason } = req.body;
+            const parsedDuration = parseInt(durationMins);
+
+            // 1. Ensure a "System" member exists to hold the blocked appointments
+            let systemMember = await prisma.member.findFirst({ where: { phone: 'SYSTEM', churchCode: req.org.code } });
+            if (!systemMember) {
+                systemMember = await prisma.member.create({
+                    data: { phone: 'SYSTEM', firstName: 'Blocked', lastName: 'Time', status: 'ACTIVE', churchCode: req.org.code }
+                });
+            }
+
+            // 2. Ensure a hidden "Blocked Time" service exists for this exact duration
+            const blockName = `Blocked Slot (${parsedDuration}m)`;
+            let blockProduct = await prisma.product.findFirst({
+                where: { churchId: req.org.id, name: blockName, type: 'SYSTEM' }
+            });
+
+            if (!blockProduct) {
+                blockProduct = await prisma.product.create({
+                    data: { name: blockName, price: 0, durationMins: parsedDuration, type: 'SYSTEM', isActive: false, churchId: req.org.id }
+                });
+            }
+
+            // 3. Create the blocking appointment
+            await prisma.appointment.create({
+                data: {
+                    churchId: req.org.id,
+                    memberId: systemMember.id,
+                    productId: blockProduct.id,
+                    adminId: adminId ? parseInt(adminId) : null,
+                    bookingDate: new Date(bookingDate),
+                    status: 'CONFIRMED',
+                    depositPaid: true, // Prevents billing prompts in the UI
+                    notes: `[BLOCKED] ${reason || 'Manual block via Admin'}`
+                }
+            });
+
+            res.redirect(`/admin/${req.org.code}/appointments`);
+        } catch (e) {
+            console.error("Block Time Error:", e);
             res.redirect(`/admin/${req.org.code}/appointments`);
         }
     });
