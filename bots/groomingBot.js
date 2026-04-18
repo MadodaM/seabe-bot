@@ -8,8 +8,8 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
     const cleanMsg = incomingMsg.trim();
     
     // 🚨 DECODE STRING-BASED STATE MACHINE
-    // Format: "STEP|orgId|serviceId|price"
-    const [rawStep, orgIdStr, serviceIdStr, priceStr] = (session?.step || '').split('|');
+    // Format: "STEP|orgId|serviceId|price|staffId"
+    const [rawStep, orgIdStr, serviceIdStr, priceStr, staffIdStr] = (session?.step || '').split('|');
     const step = rawStep || '';
     const orgId = parseInt(orgIdStr);
 
@@ -159,7 +159,7 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
     }
 
     // ==========================================
-    // 3. BOOKING_SERVICE -> Select from list
+    // 3. BOOKING_SERVICE -> CHECK FOR STAFF
     // ==========================================
     if (step === 'BOOKING_SERVICE') {
         if (cleanMsg === '0') {
@@ -181,17 +181,73 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
         }
 
         const selectedService = services[index];
-        const newStep = `BOOKING_DATE|${orgId}|${selectedService.id}|${selectedService.price}`;
         const newData = { orgName: data.orgName, serviceName: selectedService.name };
+
+        // 🧠 Check if this salon has team members (barbers)
+        const staff = await prisma.admin.findMany({ 
+            where: { churchId: orgId },
+            orderBy: { id: 'asc' }
+        });
+
+        if (staff.length > 0) {
+            // 👨‍🦲 Ask them to pick a barber
+            const newStep = `BOOKING_STAFF|${orgId}|${selectedService.id}|${selectedService.price}`;
+            await prisma.botSession.update({ where: { phone: phone }, data: { step: newStep, data: newData } });
+            if (session) { session.step = newStep; session.data = newData; }
+
+            let staffMenu = `✂️ *Who would you like to book with?*\n\n`;
+            staff.forEach((s, i) => staffMenu += `*${i + 1}.* ${s.name}\n`);
+            staffMenu += `*${staff.length + 1}.* Anyone available\n\n_Reply with a number (or 0 to cancel)_`;
+            
+            await sendWhatsApp(phone, staffMenu);
+        } else {
+            // ⏩ Skip straight to the date if it's a solo-barber shop
+            const newStep = `BOOKING_DATE|${orgId}|${selectedService.id}|${selectedService.price}|ANY`;
+            await prisma.botSession.update({ where: { phone: phone }, data: { step: newStep, data: newData } });
+            if (session) { session.step = newStep; session.data = newData; }
+
+            await sendWhatsApp(phone, `Great! You selected *${selectedService.name}* (R${Number(selectedService.price).toFixed(2)}).\n\n📅 What date and time would you like to come in?\n_(e.g., "Tomorrow at 2pm" or "Friday 10am")_`);
+        }
+        return true;
+    }
+
+    // ==========================================
+    // 3.5 BOOKING_STAFF -> Select Barber
+    // ==========================================
+    if (step === 'BOOKING_STAFF') {
+        if (cleanMsg === '0') {
+            await prisma.botSession.deleteMany({ where: { phone } });
+            if (session) { session.mode = null; session.step = null; }
+            await sendWhatsApp(phone, "Booking cancelled. Reply *Hi* to start over.");
+            return true;
+        }
+
+        const staffIndex = parseInt(cleanMsg) - 1;
+        const staff = await prisma.admin.findMany({ where: { churchId: orgId }, orderBy: { id: 'asc' } });
+        
+        let chosenStaffId = 'ANY';
+        let chosenStaffName = 'Anyone';
+
+        if (staffIndex === staff.length) {
+            // User selected "Anyone available" - defaults are fine
+        } else if (staffIndex >= 0 && staffIndex < staff.length) {
+            chosenStaffId = staff[staffIndex].id;
+            chosenStaffName = staff[staffIndex].name;
+        } else {
+            await sendWhatsApp(phone, "⚠️ Please reply with a valid number from the list.");
+            return true;
+        }
+
+        const newStep = `BOOKING_DATE|${orgId}|${serviceIdStr}|${priceStr}|${chosenStaffId}`;
+        const newData = { ...data, staffName: chosenStaffName };
 
         await prisma.botSession.update({
             where: { phone: phone },
             data: { step: newStep, data: newData }
         });
-
         if (session) { session.step = newStep; session.data = newData; }
 
-        await sendWhatsApp(phone, `Great! You selected *${selectedService.name}* (R${Number(selectedService.price).toFixed(2)}).\n\n📅 What date and time would you like to come in?\n_(e.g., "Tomorrow at 2pm" or "Friday 10am")_`);
+        await sendWhatsApp(phone, `Awesome, booking with *${chosenStaffName}*.\n\n📅 What date and time would you like to come in?\n_(e.g., "Tomorrow at 2pm" or "Friday 10am")_`);
         return true;
     }
 
@@ -231,22 +287,28 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
             return true;
         }
 
-        // 🛡️ 3. Collision Engine Logic
+        // 🛡️ 3. Collision Engine Logic (NOW PER BARBER)
         const selectedService = await prisma.product.findUnique({ where: { id: serviceId } });
-        const durationMins = selectedService?.durationMins || 30; // Fallback to 30 mins
+        const durationMins = selectedService?.durationMins || 30; 
 
         const proposedStart = requestedDate;
         const proposedEnd = new Date(proposedStart.getTime() + durationMins * 60000);
 
-        // Fetch all of the Salon's existing bookings for THAT SPECIFIC DAY
         const startOfDay = new Date(proposedStart); startOfDay.setHours(0,0,0,0);
         const endOfDay = new Date(proposedStart); endOfDay.setHours(23,59,59,999);
+
+        // 🧠 If they picked a specific barber, only check collisions for THAT barber!
+        let staffFilter = {};
+        if (staffIdStr && staffIdStr !== 'ANY') {
+            staffFilter = { adminId: parseInt(staffIdStr) };
+        }
 
         const dailyAppts = await prisma.appointment.findMany({
             where: {
                 churchId: orgId,
                 bookingDate: { gte: startOfDay, lte: endOfDay },
-                status: { in: ['CONFIRMED', 'PENDING_PAYMENT', 'COMPLETED'] }
+                status: { in: ['CONFIRMED', 'PENDING_PAYMENT', 'COMPLETED'] },
+                ...staffFilter // Inject the barber filter
             },
             include: { product: true },
             orderBy: { bookingDate: 'asc' }
@@ -260,17 +322,17 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
             const apptDuration = appt.product?.durationMins || 30;
             const apptEnd = new Date(apptStart.getTime() + apptDuration * 60000);
 
-            // Mathematical Overlap Formula: (StartA < EndB) AND (EndA > StartB)
             if (proposedStart < apptEnd && proposedEnd > apptStart) {
                 isConflict = true;
-                nextAvailableTime = apptEnd; // Suggest the moment this conflicting haircut finishes
+                nextAvailableTime = apptEnd; 
             }
         }
 
         // 🛑 4. Handle Collision Rejection
         if (isConflict && nextAvailableTime) {
+            const barberPrefix = (data.staffName && data.staffName !== 'Anyone') ? `${data.staffName} is` : 'We are';
             if (nextAvailableTime.getHours() >= 17) {
-                await sendWhatsApp(phone, `Sorry, we are fully booked around that time, and the next available slot falls outside our business hours.\n\nHow about another day?\n_(Reply with a new time, or 0 to cancel)_`);
+                await sendWhatsApp(phone, `Sorry, ${barberPrefix} fully booked around that time, and the next available slot falls outside our business hours.\n\nHow about another day?\n_(Reply with a new time, or 0 to cancel)_`);
             } else {
                 const prettyNext = nextAvailableTime.toLocaleTimeString('en-ZA', { hour: '2-digit', minute:'2-digit' });
                 await sendWhatsApp(phone, `Sorry, that time is already taken! ✂️\n\nHow about *${prettyNext}* on the same day instead?\n_(Reply with a new time, or 0 to cancel)_`);
@@ -280,21 +342,18 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
 
         // ✅ 5. Safe to Proceed! Create the Client and Booking
         let member = await prisma.member.findFirst({ where: { phone: phone } });
-        if (!member) {
-            member = await prisma.member.create({
-                data: { phone: phone, firstName: 'Client', lastName: '', status: 'ACTIVE' }
-            });
-        }
+        if (!member) member = await prisma.member.create({ data: { phone: phone, firstName: 'Client', lastName: '', status: 'ACTIVE' } });
 
         await prisma.appointment.create({
             data: {
                 churchId: orgId,
                 memberId: Number(member.id),
                 productId: serviceId,
-                bookingDate: requestedDate, // Uses the exact validated parsed date
+                adminId: (staffIdStr && staffIdStr !== 'ANY') ? parseInt(staffIdStr) : null, // 👈 Save the barber!
+                bookingDate: requestedDate, 
                 status: 'CONFIRMED', 
                 depositPaid: false,
-                notes: `Client requested: ${cleanMsg}`
+                notes: `Client requested: ${cleanMsg} | Barber: ${data.staffName || 'Anyone'}`
             }
         });
 

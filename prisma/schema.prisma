@@ -304,6 +304,7 @@ model Admin {
   church    Church   @relation(fields: [churchId], references: [id])
   churchId  Int
   createdAt DateTime @default(now())
+  appointments Appointment[]
 }
 
 model Collection {
@@ -705,6 +706,9 @@ model Appointment {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  
+  adminId     Int?
+  admin       Admin?    @relation(fields: [adminId], references: [id])
 }
 
 // 3. Statuses for the Booking Engine

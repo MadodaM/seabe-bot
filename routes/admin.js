@@ -700,7 +700,7 @@ module.exports = (app, { prisma }) => {
         try {
             const appointments = await prisma.appointment.findMany({
                 where: { churchId: req.org.id },
-                include: { member: true, product: true },
+                include: { member: true, product: true, admin: true }, // 👈 Added admin: true
                 orderBy: { bookingDate: 'desc' }
             });
 
@@ -764,6 +764,7 @@ module.exports = (app, { prisma }) => {
                             </td>
                             <td>
                                 <strong>${appt.product.name}</strong><br>
+                                <span style="font-size:11px; color:#8e44ad; font-weight:bold;">💈 ${appt.admin ? appt.admin.name : 'Any Barber'}</span><br>
                                 <span style="font-size:11px; color:#7f8c8d;">R${basePrice}</span>
                             </td>
                             <td>${statusDropdown}</td>
