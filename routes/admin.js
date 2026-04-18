@@ -2900,6 +2900,8 @@ module.exports = (app, { prisma }) => {
                     bankName: req.body.bankName,
                     accountNumber: req.body.accountNumber,
                     branchCode: req.body.branchCode
+					openTime: req.body.openTime,   // 👈 NEW: Save Open Time
+                    closeTime: req.body.closeTime  // 👈 NEW: Save Close Time
                 }
             });
             res.json({ success: true, message: "Settings saved successfully!" });
