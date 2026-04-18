@@ -691,7 +691,7 @@ module.exports = (app, { prisma }) => {
         }
     });
 	
-// ==========================================
+	// ==========================================
     // 📅 MERCHANT DASHBOARD: APPOINTMENTS
     // ==========================================
     router.get('/admin/:code/appointments', checkSession, async (req, res) => {
@@ -700,10 +700,7 @@ module.exports = (app, { prisma }) => {
         try {
             const appointments = await prisma.appointment.findMany({
                 where: { churchId: req.org.id },
-                include: { 
-                    member: true,   
-                    product: true   
-                },
+                include: { member: true, product: true },
                 orderBy: { bookingDate: 'desc' }
             });
 
@@ -717,35 +714,40 @@ module.exports = (app, { prisma }) => {
                     const formattedDate = dateObj.toLocaleDateString('en-ZA', { weekday: 'short', month: 'short', day: 'numeric' });
                     const formattedTime = dateObj.toLocaleTimeString('en-ZA', { hour: '2-digit', minute:'2-digit' });
 
-                    let statusBadgeColor = '#f39c12'; // PENDING
-                    if (appt.status === 'CONFIRMED' || appt.status === 'COMPLETED') statusBadgeColor = '#27ae60';
-                    if (appt.status === 'CANCELLED') statusBadgeColor = '#c0392b';
-                    let statusBadge = `<span class="badge" style="background:${statusBadgeColor};">${appt.status}</span>`;
-
                     const basePrice = appt.product.price.toFixed(2);
+
+                    // 🚀 NEW: Interactive Status Dropdown
+                    const statusColors = { 'PENDING': '#f39c12', 'CONFIRMED': '#3498db', 'PENDING_PAYMENT': '#e67e22', 'COMPLETED': '#27ae60', 'CANCELLED': '#c0392b' };
+                    const color = statusColors[appt.status] || '#95a5a6';
+                    
+                    const statusDropdown = `
+                        <form action="/admin/${orgCode}/appointments/status" method="POST" style="margin:0;">
+                            <input type="hidden" name="appointmentId" value="${appt.id}">
+                            <select name="status" onchange="this.form.submit()" style="padding:4px; border-radius:4px; border:1px solid ${color}; color:${color}; font-weight:bold; font-size:11px; background:#fff; width:auto; margin:0;">
+                                <option value="PENDING" ${appt.status === 'PENDING' ? 'selected' : ''}>Pending</option>
+                                <option value="CONFIRMED" ${appt.status === 'CONFIRMED' ? 'selected' : ''}>Confirmed</option>
+                                <option value="PENDING_PAYMENT" ${appt.status === 'PENDING_PAYMENT' ? 'selected' : ''}>Awaiting Pay</option>
+                                <option value="COMPLETED" ${appt.status === 'COMPLETED' ? 'selected' : ''}>Completed</option>
+                                <option value="CANCELLED" ${appt.status === 'CANCELLED' ? 'selected' : ''}>Cancelled</option>
+                            </select>
+                        </form>
+                    `;
 
                     // --- 🚀 DYNAMIC ACTION BUTTONS ---
                     let actionBtns = '-';
                     if (appt.status === 'CONFIRMED' && !appt.depositPaid) {
                         actionBtns = `
-                            <button onclick="openCheckoutModal(${appt.id}, '${appt.member.firstName}', '${appt.product.name}', ${basePrice})" class="btn" style="background:#00d2d3; color:#1e272e; padding:6px 12px; font-size:11px; width:auto;">
+                            <button onclick="openCheckoutModal(${appt.id}, '${appt.member.firstName}', '${appt.product.name.replace(/'/g, "\\'")}', ${basePrice})" class="btn" style="background:#00d2d3; color:#1e272e; padding:6px 12px; font-size:11px; width:auto;">
                                 💳 Send Bill
                             </button>`;
                     } else if (appt.status === 'PENDING_PAYMENT') {
                         actionBtns = `
-                            <button id="resend-btn-${appt.id}"
-                                class="btn"
-                                style="background:#fff7ed; color:#ea580c; border:1px solid #fdba74; padding:6px 12px; font-size:11px; width:auto;"
-                                onclick="executeResendLink(${appt.id})"
-                                data-sent-time="${appt.updatedAt.toISOString()}"
-                                disabled>
+                            <button id="resend-btn-${appt.id}" class="btn" style="background:#fff7ed; color:#ea580c; border:1px solid #fdba74; padding:6px 12px; font-size:11px; width:auto;" onclick="executeResendLink(${appt.id})" data-sent-time="${appt.updatedAt.toISOString()}" disabled>
                                 Wait...
                             </button>`;
                     } else if (appt.depositPaid || appt.status === 'COMPLETED') {
                         actionBtns = `
-                            <button class="btn" 
-                                style="background:#f0fdf4; color:#16a34a; border:1px solid #bbf7d0; padding:6px 12px; font-size:11px; width:auto;"
-                                onclick="resendInvoice(${appt.id})">
+                            <button class="btn" style="background:#f0fdf4; color:#16a34a; border:1px solid #bbf7d0; padding:6px 12px; font-size:11px; width:auto;" onclick="resendInvoice(${appt.id})">
                                 🧾 Resend Invoice
                             </button>`;
                     }
@@ -764,7 +766,7 @@ module.exports = (app, { prisma }) => {
                                 <strong>${appt.product.name}</strong><br>
                                 <span style="font-size:11px; color:#7f8c8d;">R${basePrice}</span>
                             </td>
-                            <td>${statusBadge}</td>
+                            <td>${statusDropdown}</td>
                             <td style="text-align:right;">${actionBtns}</td>
                         </tr>
                     `;
@@ -818,7 +820,6 @@ module.exports = (app, { prisma }) => {
                         document.getElementById('checkoutModal').style.display = 'flex';
                     }
 
-                    // --- ⏳ COUNTDOWN TIMER LOGIC ---
                     document.addEventListener('DOMContentLoaded', () => {
                         document.querySelectorAll('[id^="resend-btn-"]').forEach(btn => {
                             const sentTime = new Date(btn.dataset.sentTime).getTime();
@@ -833,14 +834,12 @@ module.exports = (app, { prisma }) => {
                                     btn.style.color = "white";
                                     clearInterval(checkTimer);
                                 } else {
-                                    const remaining = Math.ceil(120 - diffSeconds);
-                                    btn.innerHTML = 'Wait ' + remaining + 's';
+                                    btn.innerHTML = 'Wait ' + Math.ceil(120 - diffSeconds) + 's';
                                 }
                             }, 1000);
                         });
                     });
 
-                    // --- 🔗 RESEND LINK EXECUTION ---
                     function executeResendLink(apptId) {
                         if(!confirm("Resend the payment link to the client?")) return;
                         const form = document.createElement('form');
@@ -850,18 +849,14 @@ module.exports = (app, { prisma }) => {
                         form.submit();
                     }
 
-                    // --- 🧾 RESEND INVOICE ---
                     async function resendInvoice(apptId) {
                         if(!confirm("Resend the official PDF invoice to the client?")) return;
-                        const fetchUrl = window.location.pathname + '/' + apptId + '/resend-invoice';
                         try {
-                            const response = await fetch(fetchUrl, { method: 'POST', headers: {'Content-Type': 'application/json'} });
+                            const response = await fetch(window.location.pathname + '/' + apptId + '/resend-invoice', { method: 'POST' });
                             const data = await response.json();
                             if(data.success) alert("✅ Invoice successfully resent!");
                             else alert("⚠️ Error: " + data.error);
-                        } catch (error) {
-                            alert("⚠️ Connection error.");
-                        }
+                        } catch (error) { alert("⚠️ Connection error."); }
                     }
                 </script>
             `;
@@ -869,8 +864,21 @@ module.exports = (app, { prisma }) => {
             res.send(renderPage(req.org, 'appointments', content));
 
         } catch (e) {
-            console.error("Schedule Load Error:", e);
             res.send(renderPage(req.org, 'appointments', '<div class="card">System Error Loading Schedule</div>'));
+        }
+    });
+
+    // 🚀 NEW: Update Appointment Status Route
+    router.post('/admin/:code/appointments/status', checkSession, async (req, res) => {
+        try {
+            await prisma.appointment.update({
+                where: { id: parseInt(req.body.appointmentId) },
+                data: { status: req.body.status }
+            });
+            res.redirect(`/admin/${req.org.code}/appointments`);
+        } catch (e) {
+            console.error("Status Update Error:", e);
+            res.redirect(`/admin/${req.org.code}/appointments`);
         }
     });
 
@@ -2880,7 +2888,7 @@ module.exports = (app, { prisma }) => {
     router.get('/admin/:code/services', checkSession, async (req, res) => {
         try {
             const services = await prisma.product.findMany({
-                where: { churchId: req.org.id },
+                where: { churchId: req.org.id, type: 'SERVICE' },
                 orderBy: { name: 'asc' }
             });
 
@@ -2888,7 +2896,8 @@ module.exports = (app, { prisma }) => {
                 <tr>
                     <td><b>${s.name}</b></td>
                     <td>R${s.price.toFixed(2)}</td>
-                    <td><span class="badge" style="background:${s.isActive ? '#27ae60' : '#e74c3c'};">${s.isActive ? 'Active' : 'Inactive'}</span></td>
+                    <td>${s.durationMins || 30} mins</td>
+                    <td><span class="badge" style="background:${s.isActive ? '#27ae60' : '#e74c3c'};">${s.isActive ? 'Active' : 'Hidden'}</span></td>
                     <td style="text-align:right;">
                         <form method="POST" action="/admin/${req.org.code}/services/delete" style="display:inline;">
                             <input type="hidden" name="serviceId" value="${s.id}">
@@ -2909,13 +2918,17 @@ module.exports = (app, { prisma }) => {
                 <div class="card">
                     <h3 style="margin-top:0;">Add New Service</h3>
                     <form method="POST" action="/admin/${req.org.code}/services/add" style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; background:#f8f9fa; padding:15px; border-radius:6px;">
-                        <div>
+                        <div style="grid-column: span 2;">
                             <label>Service Name</label>
                             <input type="text" name="name" required placeholder="e.g. Standard Fade">
                         </div>
                         <div>
                             <label>Price (R)</label>
                             <input type="number" name="price" required placeholder="100" step="0.01">
+                        </div>
+                        <div>
+                            <label>Duration (Minutes)</label>
+                            <input type="number" name="durationMins" required value="30">
                         </div>
                         <div style="grid-column: span 2;">
                             <button type="submit" class="btn" style="background:#0984e3; width:100%;">Add Service</button>
@@ -2930,12 +2943,13 @@ module.exports = (app, { prisma }) => {
                             <tr>
                                 <th>Service Name</th>
                                 <th>Price</th>
+                                <th>Time</th>
                                 <th>Status</th>
                                 <th style="text-align:right;">Action</th>
                             </tr>
                         </thead>
                         <tbody>
-                            ${services.length > 0 ? rows : '<tr><td colspan="4" style="text-align:center; padding:30px; color:#999;">No services added yet. Add one above!</td></tr>'}
+                            ${services.length > 0 ? rows : '<tr><td colspan="5" style="text-align:center; padding:30px; color:#999;">No services added yet. Add one above!</td></tr>'}
                         </tbody>
                     </table>
                 </div>
@@ -2954,6 +2968,9 @@ module.exports = (app, { prisma }) => {
                 data: {
                     name: req.body.name,
                     price: parseFloat(req.body.price),
+                    durationMins: parseInt(req.body.durationMins) || 30,
+                    type: 'SERVICE',
+                    stockLevel: 999,
                     churchId: req.org.id,
                     isActive: true
                 }
