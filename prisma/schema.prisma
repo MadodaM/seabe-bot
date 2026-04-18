@@ -107,6 +107,7 @@ model Church {
   setupToken String?
   openTime        String?   @default("08:00")
   closeTime       String?   @default("17:00")
+  googleReviewUrl String?
 
   // Account Status
   accountStatus String @default("TRIAL") // TRIAL, ACTIVE, SUSPENDED

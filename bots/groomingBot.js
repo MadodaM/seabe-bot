@@ -16,6 +16,88 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
     let data = typeof session?.data === 'string' ? JSON.parse(session.data) : (session?.data || {});
     if (typeof data === 'string') { try { data = JSON.parse(data); } catch(e) {} }
 
+	// ==========================================
+    // ⭐ POST-CUT REVIEW & TIPPING ENGINE
+    // ==========================================
+    if (session && session.mode === 'GROOMING_REVIEW') {
+        let reviewData = typeof session.data === 'string' ? JSON.parse(session.data) : session.data;
+
+        // 1. Handle the 1-5 Star Rating
+        if (session.step === 'AWAITING_RATING') {
+            const rating = parseInt(cleanMsg);
+            if (isNaN(rating) || rating < 1 || rating > 5) {
+                await sendWhatsApp(phone, "Please reply with a single number from 1 to 5.");
+                return true;
+            }
+
+            if (rating === 5) {
+                await sendWhatsApp(phone, `🌟 *5 Stars! Thank you!*\n\nWe're thrilled you loved your cut with ${reviewData.barberName}. It would mean the world to us if you dropped a quick review on Google:\n👉 ${reviewData.googleUrl}\n\n_Reply *Tip* if you'd like to send a quick digital tip to ${reviewData.barberName}!_`);
+                await prisma.botSession.update({ where: { phone }, data: { step: 'AWAITING_TIP_INTENT' }});
+            } else {
+                await sendWhatsApp(phone, `Thank you for the ${rating}-star rating. We appreciate your feedback and will use it to improve!\n\nReply *Hi* to return to the main menu.`);
+                await prisma.botSession.deleteMany({ where: { phone } });
+            }
+            return true;
+        }
+
+        // 2. Handle the intent to Tip
+        if (session.step === 'AWAITING_TIP_INTENT') {
+            if (cleanMsg.toLowerCase() === 'tip') {
+                await sendWhatsApp(phone, `Awesome! How much would you like to tip ${reviewData.barberName}?\n\n_Reply with an amount (e.g. 20, 50, 100) or 0 to cancel._`);
+                await prisma.botSession.update({ where: { phone }, data: { step: 'AWAITING_TIP_AMOUNT' }});
+            } else {
+                await prisma.botSession.deleteMany({ where: { phone } });
+                await sendWhatsApp(phone, "Thanks again! Reply *Hi* if you need anything else.");
+            }
+            return true;
+        }
+
+        // 3. Process the Tip Amount using Seabe ID!
+        if (session.step === 'AWAITING_TIP_AMOUNT') {
+            const tipAmount = parseFloat(cleanMsg);
+            if (isNaN(tipAmount) || tipAmount <= 0) {
+                await prisma.botSession.deleteMany({ where: { phone } });
+                await sendWhatsApp(phone, "Tip cancelled. See you next time!");
+                return true;
+            }
+
+            let member = await prisma.member.findFirst({ where: { phone: phone } });
+            const savedCard = await prisma.paymentMethod.findFirst({
+                where: { memberId: member.id },
+                orderBy: { createdAt: 'desc' }
+            });
+
+            if (savedCard) {
+                await sendWhatsApp(phone, `🔄 Processing R${tipAmount.toFixed(2)} tip for ${reviewData.barberName}...`);
+                const ref = `${reviewData.orgId}-TIP-${phone.slice(-4)}-${Date.now().toString().slice(-4)}`;
+                
+                // Fire the 1-click charge
+                const chargeResult = await chargeSavedToken(savedCard.token, tipAmount, ref);
+
+                if (chargeResult.success) {
+                    await prisma.transaction.create({
+                        data: {
+                            amount: tipAmount, type: 'SALON_TIP', status: 'SUCCESS', reference: ref, method: 'SEABE_ID_TOKEN',
+                            description: `Tip for ${reviewData.barberName}`, phone: phone, date: new Date(), church: { connect: { id: reviewData.orgId } }
+                        }
+                    });
+                    await sendWhatsApp(phone, `✅ *Tip Sent!*\n\n${reviewData.barberName} just received your R${tipAmount.toFixed(2)} tip. You are a legend! 🙌\n\nReply *Hi* for the main menu.`);
+                } else {
+                    await sendWhatsApp(phone, `⚠️ Tip failed (bank declined). No worries, it's the thought that counts!`);
+                }
+            } else {
+                // If they don't have a saved card, send them a standard Paynow link
+                const host = process.env.HOST_URL || 'https://seabe.tech';
+                const payLink = `${host}/pay?orgId=${reviewData.orgId}&amount=${tipAmount}&type=SALON_TIP`;
+                await sendWhatsApp(phone, `Please click here to securely pay the R${tipAmount.toFixed(2)} tip:\n👉 ${payLink}\n\nThanks for your generosity!`);
+            }
+            
+            // Clean up the session
+            await prisma.botSession.deleteMany({ where: { phone } });
+            return true;
+        }
+    }
+
     // ==========================================
     // 🛠️ MAGIC KEYWORD: SHOW ALL SALONS
     // ==========================================
