@@ -692,17 +692,32 @@ module.exports = (app, { prisma }) => {
     });
 	
 	// ==========================================
-    // 📅 MERCHANT DASHBOARD: APPOINTMENTS
+    // 📅 MERCHANT DASHBOARD: APPOINTMENTS & WALK-INS
     // ==========================================
     router.get('/admin/:code/appointments', checkSession, async (req, res) => {
         const orgCode = req.params.code.toUpperCase();
 
         try {
+            // 1. Fetch existing appointments
             const appointments = await prisma.appointment.findMany({
                 where: { churchId: req.org.id },
-                include: { member: true, product: true, admin: true }, // 👈 Added admin: true
+                include: { member: true, product: true, admin: true },
                 orderBy: { bookingDate: 'desc' }
             });
+
+            // 2. Fetch active services & staff for the Walk-in Modal
+            const services = await prisma.product.findMany({
+                where: { churchId: req.org.id, type: 'SERVICE', isActive: true },
+                orderBy: { name: 'asc' }
+            });
+            const staff = await prisma.admin.findMany({
+                where: { churchId: req.org.id },
+                orderBy: { name: 'asc' }
+            });
+
+            const serviceOptions = services.map(s => `<option value="${s.id}">${s.name} (R${s.price.toFixed(2)})</option>`).join('');
+            let staffOptions = `<option value="">Any Barber / Salon Walk-in</option>`;
+            staffOptions += staff.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
 
             let rowsHtml = '';
             
@@ -716,7 +731,6 @@ module.exports = (app, { prisma }) => {
 
                     const basePrice = appt.product.price.toFixed(2);
 
-                    // 🚀 NEW: Interactive Status Dropdown
                     const statusColors = { 'PENDING': '#f39c12', 'CONFIRMED': '#3498db', 'PENDING_PAYMENT': '#e67e22', 'COMPLETED': '#27ae60', 'CANCELLED': '#c0392b' };
                     const color = statusColors[appt.status] || '#95a5a6';
                     
@@ -737,7 +751,7 @@ module.exports = (app, { prisma }) => {
                     let actionBtns = '-';
                     if (appt.status === 'CONFIRMED' && !appt.depositPaid) {
                         actionBtns = `
-                            <button onclick="openCheckoutModal(${appt.id}, '${appt.member.firstName}', '${appt.product.name.replace(/'/g, "\\'")}', ${basePrice})" class="btn" style="background:#00d2d3; color:#1e272e; padding:6px 12px; font-size:11px; width:auto;">
+                            <button onclick="openCheckoutModal(${appt.id}, '${appt.member.firstName.replace(/'/g, "\\'")}', '${appt.product.name.replace(/'/g, "\\'")}', ${basePrice})" class="btn" style="background:#00d2d3; color:#1e272e; padding:6px 12px; font-size:11px; width:auto;">
                                 💳 Send Bill
                             </button>`;
                     } else if (appt.status === 'PENDING_PAYMENT') {
@@ -780,6 +794,9 @@ module.exports = (app, { prisma }) => {
                         <h2 style="margin:0; color:#00d2d3;">📅 Appointments Schedule</h2>
                         <p style="margin:0; margin-top:5px; font-size:13px; color:#b2bec3;">Manage your bookings and daily schedule.</p>
                     </div>
+                    <button onclick="document.getElementById('walkinModal').style.display='flex'" class="btn" style="background:#f39c12; width:auto; border:none; padding:10px 20px; font-size:14px;">
+                        🏃‍♂️ + Quick Walk-in
+                    </button>
                 </div>
 
                 <div class="card" style="overflow-x:auto;">
@@ -795,6 +812,37 @@ module.exports = (app, { prisma }) => {
                         </thead>
                         <tbody>${rowsHtml}</tbody>
                     </table>
+                </div>
+
+                <div id="walkinModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+                    <div style="background:white; width:90%; max-width:400px; border-radius:10px; padding:20px; box-shadow:0 10px 25px rgba(0,0,0,0.2);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                            <h3 style="margin:0; color:#e67e22;">🏃‍♂️ Log Walk-in Client</h3>
+                            <button type="button" onclick="document.getElementById('walkinModal').style.display='none'" style="background:none; border:none; font-size:20px; cursor:pointer;">&times;</button>
+                        </div>
+                        <form method="POST" action="/admin/${orgCode}/appointments/walkin">
+                            <label>Client Name (Optional)</label>
+                            <input type="text" name="firstName" placeholder="e.g. John (Defaults to 'Walk-in')">
+                            
+                            <label>Client WhatsApp (Optional)</label>
+                            <input type="text" name="phone" placeholder="082...">
+                            
+                            <label>Service / Haircut</label>
+                            <select name="productId" required>
+                                ${serviceOptions || '<option value="">No services found. Add one first!</option>'}
+                            </select>
+
+                            <label>Barber</label>
+                            <select name="adminId">
+                                ${staffOptions}
+                            </select>
+
+                            <label>Time of Cut</label>
+                            <input type="datetime-local" name="bookingDate" id="walkinDate" required>
+
+                            <button type="submit" class="btn" style="background:#f39c12;">🔒 Lock Calendar Slot</button>
+                        </form>
+                    </div>
                 </div>
 
                 <div id="checkoutModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
@@ -814,6 +862,13 @@ module.exports = (app, { prisma }) => {
                 </div>
 
                 <script>
+                    // Auto-fill the walk-in date input to the current exact time
+                    document.addEventListener('DOMContentLoaded', () => {
+                        const now = new Date();
+                        now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+                        document.getElementById('walkinDate').value = now.toISOString().slice(0,16);
+                    });
+
                     function openCheckoutModal(id, clientName, serviceName, basePrice) {
                         document.getElementById('clientNameDisplay').innerText = clientName;
                         document.getElementById('finalAmountInput').value = basePrice;
@@ -865,7 +920,65 @@ module.exports = (app, { prisma }) => {
             res.send(renderPage(req.org, 'appointments', content));
 
         } catch (e) {
+            console.error(e);
             res.send(renderPage(req.org, 'appointments', '<div class="card">System Error Loading Schedule</div>'));
+        }
+    });
+
+    // 🚀 NEW: Quick Walk-in Creation Route
+    router.post('/admin/:code/appointments/walkin', checkSession, async (req, res) => {
+        try {
+            const { firstName, phone, productId, adminId, bookingDate } = req.body;
+            
+            // Generate a dummy phone if the client didn't want to provide one
+            let cleanPhone = phone ? phone.replace(/\D/g, '') : `0000${Math.floor(Math.random() * 1000000)}`;
+            if (cleanPhone.startsWith('0') && cleanPhone.length === 10) cleanPhone = '27' + cleanPhone.substring(1);
+
+            let member = await prisma.member.findFirst({ where: { phone: cleanPhone, churchCode: req.org.code } });
+            
+            if (!member) {
+                member = await prisma.member.create({
+                    data: {
+                        phone: cleanPhone,
+                        firstName: firstName || 'Walk-in',
+                        lastName: '',
+                        status: 'ACTIVE',
+                        churchCode: req.org.code
+                    }
+                });
+            }
+
+            await prisma.appointment.create({
+                data: {
+                    churchId: req.org.id,
+                    memberId: member.id,
+                    productId: parseInt(productId),
+                    adminId: adminId ? parseInt(adminId) : null,
+                    bookingDate: new Date(bookingDate),
+                    status: 'CONFIRMED',
+                    depositPaid: false,
+                    notes: `Walk-in logged by admin.`
+                }
+            });
+
+            res.redirect(`/admin/${req.org.code}/appointments`);
+        } catch (e) {
+            console.error("Walkin Error:", e);
+            res.redirect(`/admin/${req.org.code}/appointments`);
+        }
+    });
+
+    // 🚀 KEEP: Existing Status Update Route
+    router.post('/admin/:code/appointments/status', checkSession, async (req, res) => {
+        try {
+            await prisma.appointment.update({
+                where: { id: parseInt(req.body.appointmentId) },
+                data: { status: req.body.status }
+            });
+            res.redirect(`/admin/${req.org.code}/appointments`);
+        } catch (e) {
+            console.error("Status Update Error:", e);
+            res.redirect(`/admin/${req.org.code}/appointments`);
         }
     });
 
