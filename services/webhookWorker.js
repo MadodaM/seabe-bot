@@ -183,60 +183,108 @@ async function processNetcashITN(webhookLogId) {
             } else if (correctType === 'LWAZI_MULTI' || correctType === 'LWAZI_SUB') {
                 // 🎓 LWAZI MULTI-SUBSCRIPTION ACTIVATION
                 if (tx.notes) {
-                    // Assuming targetIds were saved as a comma-separated string in tx.notes (e.g., "15,16,17")
                     const idsToActivate = tx.notes.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
 
                     if (idsToActivate.length > 0) {
-                        // 1. Activate all student profiles in the database
                         await prisma.member.updateMany({
                             where: { id: { in: idsToActivate } },
                             data: { status: 'ACTIVE', lastPaymentDate: new Date(), consecutiveFailures: 0 }
                         });
 
-                        // 2. Loop through and send the WhatsApp Welcome Message to each student!
                         for (const studentId of idsToActivate) {
                             const student = await prisma.member.findUnique({ where: { id: studentId } });
                             if (student && student.phone) {
-                                // 🚀 THE FIX: Use our new stateless welcome trigger to kick off onboarding!
                                 await sendLwaziWelcome(student.phone);
                             }
                         }
                     }
                 } else if (tx.memberId) {
-                    // Fallback for single subscriptions just in case
                     await prisma.member.update({
                         where: { id: tx.memberId },
                         data: { status: 'ACTIVE', lastPaymentDate: new Date(), consecutiveFailures: 0 }
                     });
-                    
-                    // 🚀 THE FIX: Fire the welcome message for the single user too
                     await sendLwaziWelcome(tx.phone);
                 }
-				} else if (reference.includes('-PREM-') || reference.includes('-ONCEOFF-')) {
+            } else if (reference.includes('-PREM-') || reference.includes('-ONCEOFF-')) {
                 if (tx.memberId) {
                     await prisma.member.update({
                         where: { id: tx.memberId },
                         data: { status: 'ACTIVE', lastPaymentDate: new Date(), consecutiveFailures: 0 }
                      });
                 }
-            } else if (reference.startsWith('APPT-') || reference.includes('-GROOMING-')) {
-                const apptId = parseInt(reference.split('-')[1]);
-                if (!isNaN(apptId)) {
+            } 
+            // ============================================================
+            // ✂️ GROOMING MODULE: AUTO-COMPLETE APPOINTMENTS ON PAYMENT
+            // ============================================================
+            else if (reference.startsWith('APPT-') || reference.includes('-GROOMING-') || correctType === 'SALON_BILL' || correctType === 'PREPAID_APPOINTMENT') {
+                let apptIdToUpdate = null;
+
+                // Attempt to grab the ID directly from the reference (e.g., APPT-123-XYZ)
+                if (reference.startsWith('APPT-')) {
+                    apptIdToUpdate = parseInt(reference.split('-')[1]);
+                } 
+                // AI Fallback Magic: Hunt down the most recent pending appointment for this client
+                else if (tx.memberId && tx.churchId) {
+                    const pendingAppt = await prisma.appointment.findFirst({
+                        where: { 
+                            memberId: tx.memberId, 
+                            churchId: tx.churchId,
+                            OR: [
+                                { status: 'PENDING_PAYMENT' },
+                                { status: 'CONFIRMED', depositPaid: false }
+                            ]
+                        },
+                        orderBy: { updatedAt: 'desc' }
+                    });
+                    if (pendingAppt) apptIdToUpdate = pendingAppt.id;
+                }
+
+                if (apptIdToUpdate && !isNaN(apptIdToUpdate)) {
                     try {
-                        const appointment = await prisma.appointment.update({
-                            where: { id: apptId },
-                            data: { depositPaid: true, status: 'CONFIRMED' },
-                            include: { member: true, church: true, product: true }
+                        const updatedAppt = await prisma.appointment.update({
+                            where: { id: apptIdToUpdate },
+                            data: { 
+                                status: 'COMPLETED',
+                                depositPaid: true,
+                                updatedAt: new Date()
+                            },
+                            include: { church: true, member: true, product: true }
                         });
 
-                        if (appointment.member && appointment.member.phone) {
-                            const dateObj = new Date(appointment.bookingDate);
+                        // 📱 1. Notify the Salon Admin (Barber)
+                        if (updatedAppt.church.adminPhone) {
+                            let cleanAdminPhone = updatedAppt.church.adminPhone.replace(/\D/g, '');
+                            if (cleanAdminPhone.startsWith('0')) cleanAdminPhone = '27' + cleanAdminPhone.substring(1);
+                            
+                            const extrasTxt = updatedAppt.addedItems ? `\n➕ Extras: ${updatedAppt.addedItems}` : '';
+                            const adminMsg = `💰 *Payment Received!*\n\n${updatedAppt.member.firstName} has successfully paid *R${amountPaid.toFixed(2)}* for their ${updatedAppt.product.name}.${extrasTxt}\n\nThe appointment has been automatically marked as COMPLETED in your CRM.`;
+                            
+                            sendWhatsApp(cleanAdminPhone, adminMsg).catch(e => console.error("Barber Notify Error:", e.message));
+                        }
+
+                        // 📱 2. Send the confirmation to the Client
+                        if (updatedAppt.member.phone) {
+                            let cleanClientPhone = updatedAppt.member.phone.replace(/\D/g, '');
+                            if (cleanClientPhone.startsWith('0')) cleanClientPhone = '27' + cleanClientPhone.substring(1);
+                            
+                            const dateObj = new Date(updatedAppt.bookingDate);
                             const prettyDate = dateObj.toLocaleDateString('en-ZA', { weekday: 'short', month: 'short', day: 'numeric' });
                             const prettyTime = dateObj.toLocaleTimeString('en-ZA', { hour: '2-digit', minute:'2-digit' });
-                            const confirmMsg = `🎉 *Booking Confirmed!*\n\nHi ${appointment.member.firstName}, your payment has been successfully received.\n\n*${appointment.church.name}* has locked in your slot for a *${appointment.product.name}* on *${prettyDate} at ${prettyTime}*.\n\nSee you then! ✂️`;
-                            await sendWhatsApp(appointment.member.phone, confirmMsg);
+                            
+                            let clientMsg = '';
+                            if (correctType === 'PREPAID_APPOINTMENT') {
+                                clientMsg = `🎉 *Booking Confirmed!*\n\nHi ${updatedAppt.member.firstName}, your payment of *R${amountPaid.toFixed(2)}* has been successfully received.\n\n*${updatedAppt.church.name}* has locked in your slot for a *${updatedAppt.product.name}* on *${prettyDate} at ${prettyTime}*.\n\nSee you then! ✂️`;
+                            } else {
+                                clientMsg = `✅ *Payment Complete!*\n\nThank you, ${updatedAppt.member.firstName}! We have received your final payment of *R${amountPaid.toFixed(2)}* for ${updatedAppt.church.name}.\n\nYour appointment is officially complete. Have a great day! ✂️`;
+                            }
+                            
+                            sendWhatsApp(cleanClientPhone, clientMsg).catch(e => console.error("Client Notify Error:", e.message));
                         }
-                    } catch (e) { console.error("❌ Failed to process appointment webhook:", e); }
+
+                        console.log(`✅ [GROOMING] Successfully closed loop on Appointment #${updatedAppt.id}`);
+                    } catch (error) {
+                        console.error(`❌ [GROOMING] Failed to auto-update appointment:`, error.message);
+                    }
                 }
             }
 
