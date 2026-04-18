@@ -68,6 +68,7 @@ const renderPage = (org, activeTab, content) => {
     const servicesTab = isGrooming ? `<a href="/admin/${org.code}/services" style="${navStyle('services')}">✂️ Services</a>` : '';
 	const inventoryTab = isGrooming ? `<a href="/admin/${org.code}/inventory" style="${navStyle('inventory')}">📦 Inventory</a>` : '';
 	const procurementTab = `<a href="/admin/${org.code}/procurement" style="${navStyle('procurement')}">📋 Quotes & POs</a>`;
+	const facilityTab = `<a href="/admin/${org.code}/facilities" style="${navStyle('facilities')}">🏢 Venues</a>`;
     const academyTab = isAcademy ? `<a href="/admin/${org.code}/academy" style="${navStyle('academy')}">🎓 Academy</a>` : '';
 
     return `<!DOCTYPE html><html><head><title>${org.name}</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:-apple-system,sans-serif;background:#f4f7f6;margin:0;padding-bottom:50px;}.header{background:white;padding:20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;}.nav{background:white;padding:0 20px;border-bottom:1px solid #ddd;overflow-x:auto;white-space:nowrap;display:flex;}.container{padding:20px;max-width:800px;margin:0 auto;}.card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.05);margin-bottom:20px;}.btn{display:inline-block;padding:12px 20px;background:#1e272e;color:white;text-decoration:none;border-radius:8px;border:none;font-weight:bold;font-size:14px;width:100%;text-align:center;cursor:pointer;}.btn-del{background:#ffebeb;color:#d63031;padding:5px 10px;font-size:11px;width:auto;border-radius:4px;border:none;}.approve{background:#2ecc71;}.reject{background:#e74c3c;}.img-preview{max-width:100%;height:auto;border:1px solid #ddd;border-radius:5px;margin-top:10px;}input,select,textarea,button{box-sizing:border-box;}input,select,textarea{width:100%;padding:12px;margin-bottom:15px;border:1px solid #ddd;border-radius:6px;}label{display:block;margin-bottom:5px;font-weight:bold;font-size:12px;color:#555;text-transform:uppercase;}table{width:100%;border-collapse:collapse;}td,th{padding:12px 8px;border-bottom:1px solid #eee;font-size:14px;text-align:left;}.badge{padding:4px 8px;border-radius:4px;font-size:10px;color:white;font-weight:bold;}a{color:#0984e3;text-decoration:none;}</style></head>
@@ -77,7 +78,7 @@ const renderPage = (org, activeTab, content) => {
             <a href="/admin/${org.code}/transactions" style="${navStyle('transactions')}">🧾 Ledger</a>
             ${verifyTab}
             <a href="/admin/${org.code}/members" style="${navStyle('members')}">👥 Members/Clients</a>
-            ${appointmentsTab} ${servicesTab} ${inventoryTab} ${procurementTab} ${claimsTab}
+            ${appointmentsTab} ${servicesTab} ${inventoryTab} ${procurementTab} ${facilityTab} ${claimsTab}
             ${eventsTab} ${academyTab}
         <a href="/admin/${org.code}/team" style="${navStyle('team')}">🛡️ Team</a>
         <a href="/admin/${org.code}/broadcast" style="${navStyle('broadcast')}">📢 Broadcasts</a>
@@ -3439,6 +3440,106 @@ module.exports = (app, { prisma }) => {
         } catch (error) {
             console.error("Accept Quote Error:", error);
             res.redirect(`/admin/${req.org.code}/procurement`);
+        }
+    });
+	
+	// ============================================================
+    // 🏢 FACILITY & VENUE HIRE MANAGEMENT
+    // ============================================================
+    router.get('/admin/:code/facilities', checkSession, async (req, res) => {
+        try {
+            // Fetch all active facilities for this organization
+            const facilities = await prisma.facility.findMany({
+                where: { churchId: req.org.id, isActive: true },
+                orderBy: { name: 'asc' }
+            });
+
+            const facilityRows = facilities.map(f => `
+                <tr>
+                    <td><strong>${f.name}</strong></td>
+                    <td>R${f.pricePerDay.toFixed(2)} / day</td>
+                    <td><span class="badge" style="background:#27ae60;">Active</span></td>
+                    <td style="text-align:right;">
+                        <form method="POST" action="/admin/${req.org.code}/facilities/delete" style="display:inline;">
+                            <input type="hidden" name="facilityId" value="${f.id}">
+                            <button class="btn-del" onclick="return confirm('Are you sure you want to remove this venue?');">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+            `).join('');
+
+            const content = `
+                <div class="card" style="display:flex; justify-content:space-between; align-items:center; background:#2c3e50; color:white;">
+                    <div>
+                        <h2 style="margin:0; color:#00d2d3;">🏢 Venue & Facility Hire</h2>
+                        <p style="margin:0; margin-top:5px; font-size:13px; color:#b2bec3;">Manage your rentable spaces, boardrooms, and their daily rates.</p>
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns: 1fr 2fr; gap:20px; align-items:start;">
+                    
+                    <div class="card" style="margin-bottom:0; border-top: 4px solid #3498db;">
+                        <h3 style="margin-top:0;">➕ Add New Venue</h3>
+                        <form method="POST" action="/admin/${req.org.code}/facilities/add">
+                            <label>Venue Name</label>
+                            <input type="text" name="name" required placeholder="e.g. Main Hall or Boardroom">
+                            
+                            <label>Daily Rate (R)</label>
+                            <input type="number" name="pricePerDay" required placeholder="1500" step="0.01">
+                            
+                            <button type="submit" class="btn" style="background:#3498db; width:100%; margin-top:10px;">Save Venue</button>
+                        </form>
+                    </div>
+
+                    <div class="card" style="margin-bottom:0;">
+                        <h3 style="margin-top:0;">Available Venues (${facilities.length})</h3>
+                        <table style="margin-top:0;">
+                            <thead>
+                                <tr><th>Venue Name</th><th>Daily Rate</th><th>Status</th><th style="text-align:right;">Action</th></tr>
+                            </thead>
+                            <tbody>
+                                ${facilities.length > 0 ? facilityRows : '<tr><td colspan="4" style="text-align:center; padding:30px; color:#95a5a6;">No venues added yet.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+
+            res.send(renderPage(req.org, 'facilities', content));
+        } catch (error) {
+            console.error("Facility Error:", error);
+            res.send(renderPage(req.org, 'facilities', '<div class="card" style="color:red;">Error loading facilities dashboard.</div>'));
+        }
+    });
+
+    // 🚀 API: Add New Facility
+    router.post('/admin/:code/facilities/add', checkSession, async (req, res) => {
+        try {
+            await prisma.facility.create({
+                data: {
+                    name: req.body.name,
+                    pricePerDay: parseFloat(req.body.pricePerDay),
+                    churchId: req.org.id,
+                    isActive: true
+                }
+            });
+            res.redirect(`/admin/${req.org.code}/facilities`);
+        } catch (e) {
+            console.error("Add facility error:", e);
+            res.redirect(`/admin/${req.org.code}/facilities`);
+        }
+    });
+
+    // 🚀 API: Delete Facility
+    router.post('/admin/:code/facilities/delete', checkSession, async (req, res) => {
+        try {
+            await prisma.facility.delete({
+                where: { id: parseInt(req.body.facilityId) }
+            });
+            res.redirect(`/admin/${req.org.code}/facilities`);
+        } catch (e) {
+            console.error("Delete facility error:", e);
+            res.redirect(`/admin/${req.org.code}/facilities`);
         }
     });
 
