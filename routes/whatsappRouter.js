@@ -99,28 +99,16 @@ router.post('/', (req, res) => {
 
             // 🛡️ 2. SEABE FIREWALL (BLOCK LWAZI USERS)
             if (toPhone.includes(SEABE_NUMBER)) {
-                // If the user's current active session belongs to Lwazi, bounce them
-                if (session.mode === 'LWAZI') {
+                // If the session actively belongs to Lwazi OR the active org code is LWAZI_HQ
+                if (session.mode === 'LWAZI' || session.churchCode === 'LWAZI_HQ' || session.orgCode === 'LWAZI_HQ') {
+                    // Wipe the Lwazi context from the Seabe session to prevent bleeding
+                    clearSessionFlag = true; 
                     await sendWhatsApp(
                         cleanPhone, 
-                        `⚠️ You have reached the *Seabe Digital* administration line.\n\nTo continue with your tutoring and CAPS lessons, please send your message to the Lwazi Tutor at: wa.me/${LWAZI_NUMBER.replace('27', '+27')}`
+                        `⚠️ You have reached the *Seabe Digital* administration line.\n\nTo continue with your tutoring, please message the Lwazi Tutor at: wa.me/${LWAZI_NUMBER.replace('27', '+27')}\n\n_Session cleared. Reply *Join* to access your Church or Society._`
                     );
                     return; // 🛑 HALT
                 }
-
-                // Optional DB strict-check: If your Lwazi students are stored in the 'member' table 
-                // under a specific type (e.g., 'EDTECH'), you can uncomment and adapt this:
-                /*
-                const draftCheck = await prisma.member.findFirst({
-                    where: { phone: cleanPhone },
-                    orderBy: { id: 'desc' },
-                    include: { church: true }
-                });
-                if (draftCheck && draftCheck.church && draftCheck.church.type === 'EDTECH') {
-                    await sendWhatsApp(cleanPhone, `⚠️ Please message the Lwazi Tutor at: wa.me/${LWAZI_NUMBER.replace('27', '+27')}`);
-                    return; 
-                }
-                */
             }
 
             // ================================================
@@ -159,8 +147,13 @@ router.post('/', (req, res) => {
                 const activeOrgCode = session.churchCode || session.orgCode;
                 if (activeOrgCode) {
                     member = await prisma.member.findFirst({
-                        where: { phone: cleanPhone, churchCode: activeOrgCode },
+                        where: { 
+                            phone: cleanPhone,
+                            churchCode: { not: 'LWAZI_HQ' } // 👈 This strictly ignores their Lwazi profile!
+                        },
+                        orderBy: { id: 'desc' },
                         include: { church: true, society: true }
+                        
                     });
                 }
                 if (!member) {
@@ -425,9 +418,17 @@ router.post('/', (req, res) => {
                 
                 let org = await prisma.church.findUnique({ where: { code: searchTerm.toUpperCase() } });
                 
+				// 🛡️ FIREWALL FIX: Block users trying to join Lwazi via Seabe
+                if (org && org.code === 'LWAZI_HQ') {
+                    await sendWhatsApp(cleanPhone, `⚠️ To access Lwazi Tutoring, please send your message directly to our dedicated line: wa.me/${LWAZI_NUMBER.replace('27', '+27')}`);
+                    return;
+                }
+				
                 if (!org) {
                     const results = await prisma.church.findMany({
                         where: { name: { contains: searchTerm, mode: 'insensitive' } },
+						code: { not: 'LWAZI_HQ' } // 👈 Hide Lwazi from generic Seabe searches
+                        },
                         take: 5
                     });
 
