@@ -124,7 +124,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
         }
 
         session.step = 'AWAITING_TUTOR_QUESTION';
-        await reply(cleanPhone, "🧠 *AI Tutor Mode*\n\nSend me your question, or upload a clear photo of a math/logic problem. I'll break it down and show you how to solve it step-by-step!\n\n_Reply *Cancel* to exit._");
+        await reply(cleanPhone, "🧠 *AI Tutor Mode*\n\nSend me your question, or upload a clear photo of a math/logic problem. I'll break it down and show you how to solve it step-by-step!\n\n_Reply *Exit* to go back to main menu._");
         return { handled: true, clearSessionFlag: false };
     }
     
