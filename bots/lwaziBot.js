@@ -5,12 +5,22 @@ const { calculateTransaction } = require('../services/pricingEngine');
 const { processLmsMessage } = require('./LMSlogicBot'); 
 const crypto = require('crypto');
 
+if (!process.env.TWILIO_AUTH || !process.env.TWILIO_SID) {
+    console.error("⛔ CRITICAL: Twilio credentials missing in .env");
+}
+
 // Generates a consistent 32-byte locking key using your Twilio Auth token
 const SECRET_KEY = crypto.scryptSync(process.env.TWILIO_AUTH || 'seabe-fallback-key', 'seabe-salt', 32);
-
-// 🚀 THE SLEDGEHAMMER FIX: Isolate Lwazi's Twilio Connection!
-const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 const LWAZI_NUMBER = 'whatsapp:+27875511057'; // Force the Lwazi number
+
+// 🚀 FIX 1: The Lazy Loader (Prevents startup crashes but keeps Twilio alive)
+let twilioClient;
+const getTwilioClient = () => {
+    if (!twilioClient) {
+        twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+    }
+    return twilioClient;
+};
 
 // 📬 Dedicated Lwazi Sender (Includes smart chunking)
 const sendLwazi = async (to, body, mediaUrl = null) => {
@@ -58,30 +68,31 @@ const sendLwazi = async (to, body, mediaUrl = null) => {
 
 // Notice we just ignore the global sendWhatsApp parameter now!
 async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobalSender) {
-    
-    // 1. Fetch or Create the Payer User
-    let member = await prisma.member.findFirst({
-        where: { phone: phone, churchCode: 'LWAZI_HQ' },
-        include: { church: true } 
-    });
+    try { // 🛡️ FIX 2: The Global Try/Catch
+		// 1. Fetch or Create the Payer User
+		let member = await prisma.member.findFirst({
+			where: { phone: phone, churchCode: 'LWAZI_HQ' },
+			include: { church: true } 
+		});
 
-    if (!member) {
-        let lwaziOrg = await prisma.church.findUnique({ where: { code: 'LWAZI_HQ' } });
-        if (!lwaziOrg) {
-            lwaziOrg = await prisma.church.create({
-                data: { name: 'Lwazi Caps Tutor', code: 'LWAZI_HQ', type: 'ACADEMY', accountStatus: 'ACTIVE' }
-            });
-        }
-        member = await prisma.member.create({
-            data: { 
-                phone: phone, 
-                firstName: 'Student', 
-                lastName: '.', 
-                church: { connect: { id: lwaziOrg.id } }, 
-                status: 'PENDING_SUBSCRIPTION' 
-            },
-            include: { church: true }
-        });
+		if (!member) {
+			let lwaziOrg = await prisma.church.findUnique({ where: { code: 'LWAZI_HQ' } });
+			if (!lwaziOrg) {
+				lwaziOrg = await prisma.church.create({
+					data: { name: 'Lwazi Caps Tutor', code: 'LWAZI_HQ', type: 'ACADEMY', accountStatus: 'ACTIVE' }
+				});
+			}
+			member = await prisma.member.create({
+				data: { 
+					phone: phone, 
+					firstName: 'Student', 
+					lastName: '.', 
+					church: { connect: { id: lwaziOrg.id } }, 
+					status: 'PENDING_SUBSCRIPTION' 
+				},
+				include: { church: true }
+			});
+	
     }
 
     // ================================================
@@ -720,6 +731,11 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     const lmsResult = await processLmsMessage(phone, msg, session, member, mediaUrl, sendLwazi);
     if (!lmsResult.handled) {
         await sendLwazi(phone, "I didn't quite catch that. Reply *Menu* to return to the main dashboard.");
+    }
+	
+	} catch (error) {
+        console.error(`🚨 Lwazi Critical Error for ${phone}:`, error);
+        await sendLwazi(phone, "⚠️ *System Update*\n\nLwazi is currently processing a high volume of requests. Please try sending your message again in a few seconds.");
     }
 } 
 
