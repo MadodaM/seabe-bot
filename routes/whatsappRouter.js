@@ -426,9 +426,10 @@ router.post('/', (req, res) => {
 				
                 if (!org) {
                     const results = await prisma.church.findMany({
-                        where: { name: { contains: searchTerm, mode: 'insensitive' } },
-						code: { not: 'LWAZI_HQ' } // 👈 Hide Lwazi from generic Seabe searches
-                        },
+                        where: { 
+                            name: { contains: searchTerm, mode: 'insensitive' },
+                            code: { not: 'LWAZI_HQ' } 
+                        }, // 👈 This closing bracket and comma are the fix!
                         take: 5
                     });
 
