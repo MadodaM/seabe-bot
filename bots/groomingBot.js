@@ -161,31 +161,37 @@ async function processGroomingMessage(incomingMsg, phone, session, sendWhatsApp)
     // ==========================================
     // 1. THE TRIGGER: Check if they typed a Salon Name
     // ==========================================
-    if (!session || session.mode !== 'GROOMING') {
-        const salon = await prisma.church.findFirst({
-            where: { name: { equals: cleanMsg, mode: 'insensitive' }, type: 'PERSONAL_CARE' }
+    
+    // We run the check regardless of current session so users can jump to a salon at any time.
+    // Changed 'equals' to 'contains' for a better fuzzy search experience.
+    const salon = await prisma.church.findFirst({
+        where: { name: { contains: cleanMsg, mode: 'insensitive' }, type: 'PERSONAL_CARE' }
+    });
+
+    if (salon) {
+        const newStep = `MAIN_MENU|${salon.id}`;
+        const newData = { orgName: salon.name };
+        
+        await prisma.botSession.upsert({
+            where: { phone: phone },
+            update: { mode: 'GROOMING', step: newStep, data: newData },
+            create: { phone: phone, mode: 'GROOMING', step: newStep, data: newData }
         });
 
-        if (salon) {
-            const newStep = `MAIN_MENU|${salon.id}`;
-            const newData = { orgName: salon.name };
-            
-            await prisma.botSession.upsert({
-                where: { phone: phone },
-                update: { mode: 'GROOMING', step: newStep, data: newData },
-                create: { phone: phone, mode: 'GROOMING', step: newStep, data: newData }
-            });
-
-            if (session) {
-                session.mode = 'GROOMING';
-                session.step = newStep;
-                session.data = newData;
-            }
-
-            const menu = `✂️ *Welcome to ${salon.name}!*\n\nReply with a number:\n*1.* Book an Appointment\n*2.* View Services & Prices\n*0.* Exit`;
-            await sendWhatsApp(phone, menu);
-            return true;
+        if (session) {
+            session.mode = 'GROOMING';
+            session.step = newStep;
+            session.data = newData;
         }
+
+        const menu = `✂️ *Welcome to ${salon.name}!*\n\nReply with a number:\n*1.* Book an Appointment\n*2.* View Services & Prices\n*0.* Exit`;
+        await sendWhatsApp(phone, menu);
+        return true;
+    }
+
+    // If they didn't type a salon name, AND they aren't already in a grooming session, 
+    // return false so the main platform router can handle the message.
+    if (!session || session.mode !== 'GROOMING') {
         return false; 
     }
 
