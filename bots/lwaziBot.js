@@ -25,6 +25,8 @@ const getTwilioClient = () => {
 // 📬 Dedicated Lwazi Sender (Includes smart chunking)
 const sendLwazi = async (to, body, mediaUrl = null) => {
     if (!process.env.TWILIO_SID) return console.log("⚠️ Twilio Keys Missing!");
+	
+	const client = getTwilioClient();
     
     const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:+${to.replace('+', '')}`;
     const MAX_LENGTH = 1500;
@@ -58,7 +60,8 @@ const sendLwazi = async (to, body, mediaUrl = null) => {
         try {
             const options = { from: LWAZI_NUMBER, to: formattedTo, body: chunk };
             if (mediaUrl) options.mediaUrl = [mediaUrl];
-            await twilioClient.messages.create(options);
+            //await twilioClient.messages.create(options);
+			await client.messages.create(options);
             await new Promise(res => setTimeout(res, 500));
         } catch (e) { 
             console.error("❌ Lwazi Send Error:", e.message); 
