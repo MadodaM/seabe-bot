@@ -2,9 +2,9 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { calculateTransaction } = require('../services/pricingEngine');
 
-// bots/LMSlogicBot.js
-
+// 🧠 THE SOCRATIC PROMPT
 const generateTutorPrompt = (grade, language) => `
 You are Lwazi, an expert, patient, and highly encouraging AI Tutor designed for South African students.
 You strictly adhere to the South African Department of Basic Education CAPS curriculum.
@@ -17,56 +17,46 @@ Respond entirely in the student's preferred language, adapting your vocabulary t
 STRICT GUARDRAILS & SOCRATIC METHOD:
 1. NEVER GIVE THE FINAL ANSWER: You are a teacher, not an answer key. If a student asks you to solve a problem or writes "what is the answer to...", you MUST refuse to give the final number.
 2. USE THE SOCRATIC METHOD: Break complex problems into smaller, manageable steps. Ask the student a guiding question to help them figure out the *first step* on their own. 
-3. PRAISE AND PIVOT: If the student makes a mistake, do not just say "Wrong." Gently explain where the logical error occurred, praise their effort, and ask them to try that specific step again.
-4. SOUTH AFRICAN CONTEXT: Use localized examples. Use ZAR (Rands) for money, local cities (Johannesburg, Durban, Cape Town), and the metric system. 
+3. PRAISE AND PIVOT: If the student makes a mistake, gently explain where the logical error occurred, praise their effort, and ask them to try that specific step again.
+4. SOUTH AFRICAN CONTEXT: Use localized examples (ZAR, local cities, metric system). 
 
 FORMATTING RULES FOR WHATSAPP:
-- Keep responses concise (under 150 words). Students are reading on phones.
-- Use line breaks and emojis to make the text readable and friendly.
-- Use bolding for key terms (e.g., *Denominator*, *Photosynthesis*).
+- Keep responses concise (under 150 words).
+- Use line breaks and emojis to make the text friendly.
+- Use bolding for key terms (e.g., *Denominator*).
 `;
 
-// 🛠️ Modular Imports
-const { calculateTransaction } = require('../services/pricingEngine');
-
-// Safely initialize Twilio
+// 🛡️ SEABE FALLBACK SENDER (Used ONLY if LMS is accessed via Seabe)
 let twilioClient;
-if (process.env.TWILIO_SID && process.env.TWILIO_AUTH) {
-    twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
-}
+const getTwilioClient = () => {
+    if (!twilioClient && process.env.TWILIO_SID) {
+        twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+    }
+    return twilioClient;
+};
 
-// Background Sender with Multi-Tenant Support & Smart Chunking
-const sendWhatsApp = async (to, body, mediaUrl = null, fromOverride = null) => {
-    if (!twilioClient) return console.log("⚠️ Twilio Keys Missing! Could not send message.");
+const sendFallbackWhatsApp = async (to, body, mediaUrl = null) => {
+    const client = getTwilioClient();
+    if (!client) return console.log("⚠️ Twilio Keys Missing! Could not send message.");
     
-    // 🧠 THE FIX: Use the override number (Lwazi) if provided, otherwise fallback to the default Seabe number
-    let sender = fromOverride || process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '');
-    if (!sender.startsWith('whatsapp:')) sender = `whatsapp:${sender.startsWith('+') ? sender : '+' + sender}`;
-
-    const cleanTo = to.replace('whatsapp:', '').replace('+', '').trim();
-    const formattedTo = `whatsapp:+${cleanTo}`;
-
+    let sender = `whatsapp:${process.env.TWILIO_PHONE_NUMBER.replace('whatsapp:', '')}`;
+    const formattedTo = `whatsapp:+${to.replace('whatsapp:', '').replace('+', '').trim()}`;
     const MAX_LENGTH = 1500;
     const messageChunks = [];
 
     if (body.length > MAX_LENGTH) {
         let remainingText = body;
         while (remainingText.length > 0) {
-            if (remainingText.length <= MAX_LENGTH) {
-                messageChunks.push(remainingText);
-                break;
-            }
-            
-            let chunk = remainingText.substring(0, MAX_LENGTH);
+            if (remainingText.length <= MAX_LENGTH) { messageChunks.push(remainingText); break; }
             let splitIndex = MAX_LENGTH;
-            
+            let chunk = remainingText.substring(0, MAX_LENGTH);
             let lastDoubleNewline = chunk.lastIndexOf('\n\n');
             let lastNewline = chunk.lastIndexOf('\n');
             let lastSpace = chunk.lastIndexOf(' ');
 
             if (lastDoubleNewline > MAX_LENGTH - 300) splitIndex = lastDoubleNewline; 
-            else if (lastNewline > MAX_LENGTH - 200) splitIndex = lastNewline;       
-            else if (lastSpace > MAX_LENGTH - 100) splitIndex = lastSpace;         
+            else if (lastNewline > MAX_LENGTH - 200) splitIndex = lastNewline;        
+            else if (lastSpace > MAX_LENGTH - 100) splitIndex = lastSpace;          
 
             messageChunks.push(remainingText.substring(0, splitIndex).trim());
             remainingText = remainingText.substring(splitIndex).trim();
@@ -77,22 +67,14 @@ const sendWhatsApp = async (to, body, mediaUrl = null, fromOverride = null) => {
 
     for (const chunk of messageChunks) {
         try {
-            const messageOptions = {
-                from: sender, // 👈 Now correctly routes from Lwazi!
-                to: formattedTo,
-                body: chunk
-            };
-            if (mediaUrl) messageOptions.mediaUrl = [mediaUrl];
-
-            await twilioClient.messages.create(messageOptions);
-            await new Promise(resolve => setTimeout(resolve, 500)); 
-        } catch (err) {
-            console.error("❌ Twilio Send Error:", err.message);
-        }
+            const options = { from: sender, to: formattedTo, body: chunk };
+            if (mediaUrl) options.mediaUrl = [mediaUrl];
+            await client.messages.create(options);
+            await new Promise(res => setTimeout(res, 500)); 
+        } catch (err) { console.error("❌ Twilio Send Error:", err.message); }
     }
 };
- 
-// 📈 NEW: Activity Logger for Parent Report Cards
+
 async function logStudentActivity(studentId, actionType, subject, score = null) {
     try {
         await prisma.studyLog.create({
@@ -103,26 +85,17 @@ async function logStudentActivity(studentId, actionType, subject, score = null) 
 
 /**
  * Handles all LMS / Academy logic. 
+ * 🚀 FIX: Accepts injectedSender to preserve the Lwazi Number Firewall!
  */
-async function processLmsMessage(cleanPhone, incomingMsg, session, member, mediaUrl = null) {
+async function processLmsMessage(cleanPhone, incomingMsg, session, member, mediaUrl = null, injectedSender = null) {
     
-    // 🧠 THE SMART ROUTER: Automatically pass the member's Org Code to the WhatsApp sender.
-    // If they belong to Lwazi, the sender service will swap the phone number behind the scenes.
+    // 🧠 THE SMART ROUTER: Use Lwazi's sender if injected, otherwise fallback to Seabe
+    const reply = injectedSender ? injectedSender : (phone, text, media) => sendFallbackWhatsApp(phone, text, media);
     const orgCode = member ? member.churchCode : null;
-    const reply = (phone, text, media) => sendWhatsApp(phone, text, media, orgCode);
 
-    // 🛑 STRICT TENANT ISOLATION
-    // If this specific bot script is EXCLUSIVELY for Lwazi, you can lock it down here.
-    // (If other orgs use the LMS too, remove this IF statement)
-    if (orgCode !== 'LWAZI') {
-         return { handled: false, clearSessionFlag: false };
-    }
-
-    // 1. Normalize the message to be 100% safe
     const rawMsg = incomingMsg; 
     const cleanMsg = (incomingMsg || '').toLowerCase().trim();
     
-    // 2. The Escape Hatches (Added 'tutor', 'ask', 'solve')
     const systemCommands = [
         'menu', 'profile', 'my profile', 'my courses', 'courses', 
         'exit', 'cancel', 'home', 'join', 'stokvel', 'npo', 
@@ -130,31 +103,32 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
         'tutor', 'ask', 'solve'
     ];
     
-    // 3. The Menu Shield
     const activeMenuSteps = [
-        'AWAITING_COURSE_SELECTION', 
-        'PROFILE_MENU', 
-        'COURSE_ACTIONS', 
-        'UPDATE_NAME_FIRST', 
-        'UPDATE_NAME_LAST',
-        'AWAITING_TUTOR_QUESTION' 
+        'AWAITING_COURSE_SELECTION', 'PROFILE_MENU', 'COURSE_ACTIONS', 
+        'UPDATE_NAME_FIRST', 'UPDATE_NAME_LAST', 'AWAITING_TUTOR_QUESTION' 
     ];
 
     const isSystemCommand = systemCommands.includes(cleanMsg);
     const isInMenu = activeMenuSteps.includes(session.step);
 
     // ================================================
-    // 🧠 NEW: MULTIMODAL AI TUTOR (Text + Image Solver)
+    // 🧠 MULTIMODAL AI TUTOR (Protected Lwazi Feature)
     // ================================================
     const tutorTriggers = ['tutor', 'ask', 'solve', 'ask tutor'];
     
     if (tutorTriggers.includes(cleanMsg)) {
+        // 🛡️ PAYWALL: Only Active Lwazi students get the expensive AI API
+        if (orgCode !== 'LWAZI_HQ' || member.status !== 'ACTIVE') {
+            await reply(cleanPhone, "⚠️ The Premium AI Tutor is a Lwazi exclusive feature. Please ensure your subscription is active.");
+            return { handled: true, clearSessionFlag: false };
+        }
+
         session.step = 'AWAITING_TUTOR_QUESTION';
         await reply(cleanPhone, "🧠 *AI Tutor Mode*\n\nSend me your question, or upload a clear photo of a math/logic problem. I'll break it down and show you how to solve it step-by-step!\n\n_Reply *Cancel* to exit._");
         return { handled: true, clearSessionFlag: false };
     }
-	
-	if (session.step === 'AWAITING_TUTOR_QUESTION') {
+    
+    if (session.step === 'AWAITING_TUTOR_QUESTION') {
         if (cleanMsg === 'cancel' || cleanMsg === 'exit') {
             session.step = null;
             await reply(cleanPhone, "🔙 Exited Tutor Mode. Reply *Menu* to see your options.");
@@ -170,51 +144,37 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
 
         try {
             const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-            
-            // 🚀 THE FIX: Generate the strict CAPS Socratic prompt using the student's actual DB profile
             const systemInstruction = generateTutorPrompt(session.grade, member?.language);
 
-            // Initialize Gemini with the system instructions baked into the model's core brain
             const aiModel = genAI.getGenerativeModel({ 
                 model: "gemini-2.5-flash",
                 systemInstruction: { parts: [{ text: systemInstruction }] },
-                generationConfig: {
-                    temperature: 0.3, // Keep it low so the AI is logical and strictly educational, not overly creative
-                }
+                generationConfig: { temperature: 0.3 }
             });
     
-            // Structure the user's specific question
-            const promptParts = [
-                `Student's Input: "${rawMsg || '[No text provided, rely entirely on the image]'}"`
-            ];
+            const promptParts = [ `Student's Input: "${rawMsg || '[No text provided, rely entirely on the image]'}"` ];
 
-            // 📸 Securely fetch the Twilio Image if one was sent
             if (mediaUrl) {
                 const authHeader = 'Basic ' + Buffer.from(`${process.env.TWILIO_SID}:${process.env.TWILIO_AUTH}`).toString('base64');
                 const response = await fetch(mediaUrl, { headers: { 'Authorization': authHeader } });
-                
                 if (!response.ok) throw new Error("Failed to fetch media from Twilio");
                 
                 const arrayBuffer = await response.arrayBuffer();
-                const buffer = Buffer.from(arrayBuffer);
-                
                 promptParts.push({
                     inlineData: {
-                        data: buffer.toString("base64"),
+                        data: Buffer.from(arrayBuffer).toString("base64"),
                         mimeType: response.headers.get("content-type") || "image/jpeg"
                     }
                 });
             }
 
             const result = await aiModel.generateContent(promptParts);
-            const aiResponse = result.response.text();
             
             if (member && member.id) {
                 await logStudentActivity(member.id, 'QUESTION_ASKED', 'AI Tutor');
             }
             
-            await reply(cleanPhone, `🎓 *Tutor Solution:*\n\n${aiResponse.trim()}\n\n_Send another question or reply *Cancel* to exit._`);
-            
+            await reply(cleanPhone, `🎓 *Tutor Solution:*\n\n${result.response.text().trim()}\n\n_Send another question or reply *Cancel* to exit._`);
             return { handled: true, clearSessionFlag: false };
 
         } catch (error) {
@@ -225,7 +185,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
     }
 
     // ================================================
-    // 🛑 0. LMS INTERCEPTOR: AI Quiz Evaluator
+    // 🛑 LMS INTERCEPTOR: AI Quiz Evaluator
     // ================================================
     if (member && !isSystemCommand && !isInMenu) {
         const activeEnrollment = await prisma.enrollment.findFirst({
@@ -237,9 +197,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
             let currentModule;
             
             if (activeEnrollment.currentModuleId) {
-                currentModule = await prisma.module.findUnique({
-                    where: { id: activeEnrollment.currentModuleId }
-                });
+                currentModule = await prisma.module.findUnique({ where: { id: activeEnrollment.currentModuleId } });
             } else {
                 const modules = await prisma.module.findMany({
                     where: { courseId: activeEnrollment.courseId },
@@ -257,19 +215,22 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
 
             try {
                 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-                const aiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+                // 🚀 FIX: Force Gemini to ONLY output standard JSON, removing parsing crashes
+                const aiModel = genAI.getGenerativeModel({ 
+                    model: "gemini-2.5-flash",
+                    generationConfig: { responseMimeType: "application/json" } 
+                });
 
-                const prompt = `You are an encouraging and knowledgeable teacher evaluating a student's answer.
+                const prompt = `You are an encouraging teacher evaluating a student's answer.
                 Course: ${activeEnrollment.course.title}
                 Lesson Material: ${currentModule.dailyLessonText || currentModule.content || 'General Knowledge'}
                 Question: ${currentModule.quizQuestion}
-                Correct Answer Context: ${currentModule.quizAnswer || 'Use your own knowledge based on the lesson'}
+                Correct Answer Context: ${currentModule.quizAnswer || 'Use your own knowledge'}
                 
                 Student's Answer: "${rawMsg}"
 
-                Evaluate if the student's answer is fundamentally correct or demonstrates a good understanding of the material.
-                Return ONLY a raw JSON object (no markdown, no backticks) in this exact format:
-                {"isCorrect": true/false, "feedback": "A short, encouraging explanation of why they are right or wrong."}`;
+                Evaluate if the student's answer is fundamentally correct.
+                Return ONLY JSON using this exact schema: {"isCorrect": boolean, "feedback": "string"}`;
 
                 let result;
                 let retries = 3;
@@ -280,15 +241,14 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                         break; 
                     } catch (apiError) {
                         if (apiError.status === 503 && retries > 1) {
-                            console.log(`⏳ Gemini busy. Retrying in 2s... (${retries - 1} attempts left)`);
                             await new Promise(resolve => setTimeout(resolve, 2000)); 
                             retries--;
-                        } else {
-                            throw apiError; 
-                        }
+                        } else { throw apiError; }
                     }
                 }
-                const aiResponse = JSON.parse(result.response.text().replace(/```json/gi, '').replace(/```/g, '').trim());
+                
+                // Pure JSON parse since we forced the mimeType
+                const aiResponse = JSON.parse(result.response.text());
 
                 await prisma.assessmentLog.create({
                     data: {
@@ -298,15 +258,15 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                         isCorrect: aiResponse.isCorrect 
                     }
                 });
-				
-				if (member && member.id) {
-					await logStudentActivity(
-						member.id, 
-						'QUIZ_TAKEN', 
-						activeEnrollment.course.title || 'General Subject', 
-						aiResponse.isCorrect ? 100 : 0
-					);
-				}
+                
+                if (member && member.id) {
+                    await logStudentActivity(
+                        member.id, 
+                        'QUIZ_TAKEN', 
+                        activeEnrollment.course.title || 'General Subject', 
+                        aiResponse.isCorrect ? 100 : 0
+                    );
+                }
 
                 if (aiResponse.isCorrect) {
                     await prisma.enrollment.update({
@@ -319,11 +279,9 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                         }
                     });
 
-                    const replyMsg = `✅ *Correct!*\n\n${aiResponse.feedback}\n\n_Your next lesson will arrive automatically tomorrow, or reply *Next* to continue right now!_ 🚀🎓`;
-                    await reply(cleanPhone, replyMsg);
+                    await reply(cleanPhone, `✅ *Correct!*\n\n${aiResponse.feedback}\n\n_Your next lesson will arrive automatically tomorrow, or reply *Next* to continue right now!_ 🚀🎓`);
                 } else {
-                    const replyMsg = `❌ *Not quite!*\n\n${aiResponse.feedback}\n\n_Please try again. Reply with your new answer!_ 💡`;
-                    await reply(cleanPhone, replyMsg);
+                    await reply(cleanPhone, `❌ *Not quite!*\n\n${aiResponse.feedback}\n\n_Please try again. Reply with your new answer!_ 💡`);
                 }
             } catch (error) {
                 console.error("AI Evaluation Error:", error);
@@ -373,15 +331,8 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
             const selectedCourse = courses[selectedIndex];
 
             const existingEnrollment = await prisma.enrollment.findFirst({
-                where: {
-                    memberId: member.id,
-                    courseId: selectedCourse.id
-                },
-                include: {
-                    course: {
-                        include: { modules: { orderBy: { order: 'asc' } } }
-                    }
-                }
+                where: { memberId: member.id, courseId: selectedCourse.id },
+                include: { course: { include: { modules: { orderBy: { order: 'asc' } } } } }
             });
 
             if (existingEnrollment) {
@@ -407,11 +358,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                 if (existingEnrollment.status === 'UNSUBSCRIBED' || existingEnrollment.status === 'DROPPED') {
                     await prisma.enrollment.update({
                         where: { id: existingEnrollment.id },
-                        data: { 
-                            status: 'ACTIVE',
-                            reminderCount: 0, 
-                            updatedAt: new Date()
-                        }
+                        data: { status: 'ACTIVE', reminderCount: 0, updatedAt: new Date() }
                     });
 
                     const currentProgress = existingEnrollment.progress || 0;
@@ -424,10 +371,8 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                         if (resumedModule.quizQuestion || resumedModule.quiz) {
                             resumeMsg += `🧠 *Your Pending Quiz:*\n${resumedModule.quizQuestion || resumedModule.quiz}\n\n_Reply with your answer to continue!_`;
                         }
-                        await reply(cleanPhone, resumeMsg); 
-                    } else {
-                        await reply(cleanPhone, resumeMsg);
                     }
+                    await reply(cleanPhone, resumeMsg); 
                     return { handled: true, clearSessionFlag: true };
                 }
             }
@@ -449,7 +394,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                 const host = process.env.HOST_URL || 'https://seabe-bot-test.onrender.com';
                 const paymentLink = `${host}/pay?enrollmentId=${enrollment.id}&amount=${pricing.totalChargedToUser}`;
                 
-                await reply(cleanPhone, `🎓 *${selectedCourse.title}*\n\nCourse Fee: *R${pricing.baseAmount.toFixed(2)}*\nService Fee: *R${pricing.totalFees.toFixed(2)}*\n*Total Due: R${pricing.totalChargedToUser.toFixed(2)}*\n\nTo unlock your modules, please complete your payment.\n\n💳 *Pay securely here:*\n👉 ${paymentLink}\n\nOnce paid, your modules will unlock automatically!`);
+                await reply(cleanPhone, `🎓 *${selectedCourse.title}*\n\nCourse Fee: *R${pricing.baseAmount.toFixed(2)}*\nService Fee: *R${pricing.totalFees.toFixed(2)}*\n*Total Due: R${pricing.totalChargedToUser.toFixed(2)}*\n\n💳 *Pay securely here:*\n👉 ${paymentLink}\n\nOnce paid, your modules will unlock automatically!`);
             }
             return { handled: true, clearSessionFlag: true }; 
         } else {
@@ -482,13 +427,10 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
         const nextModule = enrollment.course.modules[nextModuleIndex];
 
         if (nextModule) {
-            let lessonMessage = `🎓 *${enrollment.course.title}* (Day ${nextModuleIndex + 1})\n\n`;
-            lessonMessage += `*${nextModule.title}*\n\n`;
-            lessonMessage += `${nextModule.content || nextModule.dailyLessonText}\n\n`;
+            let lessonMessage = `🎓 *${enrollment.course.title}* (Day ${nextModuleIndex + 1})\n\n*${nextModule.title}*\n\n${nextModule.content || nextModule.dailyLessonText}\n\n`;
 
             if (nextModule.quizQuestion || nextModule.quiz) {
-                lessonMessage += `🧠 *Today's Quiz:*\n${nextModule.quizQuestion || nextModule.quiz}\n\n`;
-                lessonMessage += `_Reply with your answer to chat with our AI tutor!_`;
+                lessonMessage += `🧠 *Today's Quiz:*\n${nextModule.quizQuestion || nextModule.quiz}\n\n_Reply with your answer!_`;
             } else {
                 lessonMessage += `_Reply *Next* when you are ready to continue!_`; 
             }
@@ -505,12 +447,8 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                 }
             });
         } else {
-            await reply(cleanPhone, `🎉 *CONGRATULATIONS, ${member.firstName}!* 🎉\n\nYou have officially passed all modules and completed *${enrollment.course.title}*!\n\nWe hope you enjoyed the journey. Reply *Menu* to explore more resources or check your dashboard for your certificate.`);
-            
-            await prisma.enrollment.update({
-                where: { id: enrollment.id },
-                data: { status: 'COMPLETED', completedAt: new Date() }
-            });
+            await reply(cleanPhone, `🎉 *CONGRATULATIONS, ${member.firstName}!* 🎉\n\nYou have completed *${enrollment.course.title}*!\n\nReply *Menu* to explore more resources.`);
+            await prisma.enrollment.update({ where: { id: enrollment.id }, data: { status: 'COMPLETED', completedAt: new Date() } });
         }
         return { handled: true, clearSessionFlag: false };
     }
@@ -526,7 +464,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
         });
 
         if (!enrollment) {
-            await reply(cleanPhone, "❌ You are not enrolled in any active courses.\n\nReply *Courses* to browse our catalogue.");
+            await reply(cleanPhone, "❌ You are not enrolled in any active courses.");
             return { handled: true, clearSessionFlag: false };
         }
 
@@ -542,15 +480,11 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
         const targetDay = enrollment.progress === 0 ? 1 : enrollment.progress;
 
         if (module) {
-            let msg = `🎓 *${incomingMsg === 'replay' ? 'REPLAY' : 'RESUMING'}: ${enrollment.course.title}* (Day ${targetDay})\n\n`;
-            msg += `*${module.title}*\n\n${module.content || module.dailyLessonText}\n\n`;
+            let msg = `🎓 *${incomingMsg === 'replay' ? 'REPLAY' : 'RESUMING'}: ${enrollment.course.title}* (Day ${targetDay})\n\n*${module.title}*\n\n${module.content || module.dailyLessonText}\n\n`;
             
             if (module.quizQuestion || module.quiz) {
                 msg += `🧠 *Quiz:* ${module.quizQuestion || module.quiz}\n_Reply with your answer to get instant feedback!_`;
-                await prisma.enrollment.update({
-                    where: { id: enrollment.id },
-                    data: { quizState: 'AWAITING_ANSWER' } 
-                });
+                await prisma.enrollment.update({ where: { id: enrollment.id }, data: { quizState: 'AWAITING_ANSWER' } });
             }
             await reply(cleanPhone, msg); 
         } else {
@@ -581,9 +515,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
             enrollments.forEach((e, i) => {
                 menuMsg += `\n📚 *${i + 1}. ${e.course.title}*\n   - Current Day: ${e.progress || 0}\n   - Status: Active`;
             });
-            menuMsg += `\n\n👇 *Reply with an option:*\n`;
-            menuMsg += `*View 1* - To open course #1\n`;
-            menuMsg += `*Update Name* - To change your profile name`;
+            menuMsg += `\n\n👇 *Reply with an option:*\n*View 1* - To open course #1\n*Update Name* - To change your profile name`;
         } else {
             menuMsg += `\nYou have no active courses.\nReply *Courses* to browse catalog.\n\n👇 *Options:*\n*Update Name* - Change profile details`;
         }
@@ -604,8 +536,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                 session.selectedEnrollmentId = selectedCourse.id;
                 session.step = 'COURSE_ACTIONS';
                 
-                let msg = `📚 *${selectedCourse.title}*\n`;
-                msg += `You are currently on Day ${selectedCourse.progress}.\n\n👇 *What would you like to do?*\n`;
+                let msg = `📚 *${selectedCourse.title}*\nYou are currently on Day ${selectedCourse.progress}.\n\n👇 *What would you like to do?*\n`;
                 msg += `1. *Resume* (Get today's lesson)\n2. *Previous* (Go back to yesterday's lesson)\n3. *Back* (Return to profile)`;
                 
                 await reply(cleanPhone, msg);
@@ -664,7 +595,6 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
 
         if (incomingMsg === '2' || incomingMsg === 'previous') {
             const currentDay = enrollment.progress || 1;
-            
             if (currentDay <= 1) {
                 await reply(cleanPhone, "⚠️ You are on Day 1. There is no previous lesson.");
                 return { handled: true, clearSessionFlag: false };
@@ -675,8 +605,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
             const module = sortedModules[prevIndex];
 
             if (module) {
-                let msg = `⏮️ *PREVIOUS LESSON: ${enrollment.course.title}* (Day ${currentDay - 1})\n\n*${module.title}*\n\n${module.content || module.dailyLessonText}`;
-                await reply(cleanPhone, msg); 
+                await reply(cleanPhone, `⏮️ *PREVIOUS LESSON: ${enrollment.course.title}* (Day ${currentDay - 1})\n\n*${module.title}*\n\n${module.content || module.dailyLessonText}`); 
             } else {
                 await reply(cleanPhone, `⚠️ Could not find content for Day ${currentDay - 1}.`);
             }
@@ -699,12 +628,10 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
 
     if (session.step === 'UPDATE_NAME_LAST') {
         const newLastName = rawMsg.trim();
-        
         await prisma.member.updateMany({
             where: { phone: cleanPhone },
             data: { firstName: session.newFirstName, lastName: newLastName }
         });
-        
         await reply(cleanPhone, `✅ Profile Updated!\n\nNice to meet you, *${session.newFirstName} ${newLastName}*.\n\nReply *Menu* to continue.`);
         return { handled: true, clearSessionFlag: true }; 
     }
