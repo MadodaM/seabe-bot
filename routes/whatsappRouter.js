@@ -79,17 +79,48 @@ router.post('/', (req, res) => {
             const numMedia = parseInt(req.body.NumMedia || '0'); 
             
             // ================================================
-            // 🚀 LWAZI INTERCEPTOR (B2C EdTech)
+            // 🚦 NUMBER FIREWALL & ROUTING
             // ================================================
             const toPhone = req.body.To || '';
-            // If they messaged the Lwazi Number, send it to the Lwazi Bot and stop.
-            if (toPhone.includes('27875511057')) { 
+            const LWAZI_NUMBER = '27875511057';
+            const SEABE_NUMBER = '27872657872';
+
+            // 🚀 1. LWAZI INTERCEPTOR (B2C EdTech)
+            if (toPhone.includes(LWAZI_NUMBER)) { 
                 try {
+                    // 🔒 Lock this session so the DB knows they are an active student
+                    session.mode = 'LWAZI'; 
                     await processLwaziMessage(cleanPhone, incomingMsg, session, mediaUrl, sendWhatsApp);
                 } catch (e) {
                     console.error("❌ Lwazi Router Error:", e);
                 }
                 return; // 🛑 HALT: Do not run any Seabe Pay / Church logic
+            }
+
+            // 🛡️ 2. SEABE FIREWALL (BLOCK LWAZI USERS)
+            if (toPhone.includes(SEABE_NUMBER)) {
+                // If the user's current active session belongs to Lwazi, bounce them
+                if (session.mode === 'LWAZI') {
+                    await sendWhatsApp(
+                        cleanPhone, 
+                        `⚠️ You have reached the *Seabe Digital* administration line.\n\nTo continue with your tutoring and CAPS lessons, please send your message to the Lwazi Tutor at: wa.me/${LWAZI_NUMBER.replace('27', '+27')}`
+                    );
+                    return; // 🛑 HALT
+                }
+
+                // Optional DB strict-check: If your Lwazi students are stored in the 'member' table 
+                // under a specific type (e.g., 'EDTECH'), you can uncomment and adapt this:
+                /*
+                const draftCheck = await prisma.member.findFirst({
+                    where: { phone: cleanPhone },
+                    orderBy: { id: 'desc' },
+                    include: { church: true }
+                });
+                if (draftCheck && draftCheck.church && draftCheck.church.type === 'EDTECH') {
+                    await sendWhatsApp(cleanPhone, `⚠️ Please message the Lwazi Tutor at: wa.me/${LWAZI_NUMBER.replace('27', '+27')}`);
+                    return; 
+                }
+                */
             }
 
             // ================================================
