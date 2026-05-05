@@ -100,7 +100,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
         'menu', 'profile', 'my profile', 'my courses', 'courses', 
         'exit', 'cancel', 'home', 'join', 'stokvel', 'npo', 
         'society', 'amen', 'help', 'support', 'next', 'resume',
-        'tutor', 'ask', 'solve'
+        'tutor', 'ask', 'solve', '2', '3'
     ];
     
     const activeMenuSteps = [
@@ -114,9 +114,9 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
     // ================================================
     // 🧠 MULTIMODAL AI TUTOR (Protected Lwazi Feature)
     // ================================================
-    const tutorTriggers = ['tutor', 'ask', 'solve', 'ask tutor'];
+    const tutorTriggers = ['2', 'tutor', 'ask', 'solve', 'ask tutor']; // 👈 Included '2' here!
     
-    if (tutorTriggers.includes(cleanMsg) || (cleanMsg === '2' && !session.step))
+    if (tutorTriggers.includes(cleanMsg)) {
         // 🛡️ PAYWALL: Only Active Lwazi students get the expensive AI API
         if (orgCode !== 'LWAZI_HQ' || member.status !== 'ACTIVE') {
             await reply(cleanPhone, "⚠️ The Premium AI Tutor is a Lwazi exclusive feature. Please ensure your subscription is active.");
@@ -496,7 +496,7 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
     // ================================================
     // 👤 3. MY PROFILE & COURSES MENU
     // ================================================
-    const profileKeywords = ['my profile', 'profile', 'my courses', 'settings', '3'];
+    const profileKeywords = ['3', 'my profile', 'profile', 'my courses', 'settings']; // 👈 Included '3' here!
     if (profileKeywords.includes(incomingMsg)) {
         if (!member) {
             await reply(cleanPhone, "⚠️ You are not registered yet. Reply *Join* to start.");
