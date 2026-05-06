@@ -15,7 +15,8 @@ async function runEngagementMonitor() {
         where: {
             status: 'ACTIVE',
             lastInteractionAt: { lt: sixtyDaysAgo },
-            engagementScore: { gt: 50 } // Only target them if we haven't already dropped their score
+            engagementScore: { gt: 50 }, // Only target them if we haven't already dropped their score
+            churchCode: { not: 'LWAZI_HQ' } // 🛡️ FIX: Exclude Lwazi students from 60-day pings
         },
         include: { church: true }
     });
@@ -50,7 +51,8 @@ async function runEngagementMonitor() {
         where: {
             status: 'LEAD',
             lastInteractionAt: { lt: fourteenDaysAgo },
-            engagementScore: { gt: 10 }
+            engagementScore: { gt: 10 },
+            churchCode: { not: 'LWAZI_HQ' } // 🛡️ FIX: Exclude Lwazi leads from 14-day chase
         },
         include: { church: true }
     });
