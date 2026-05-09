@@ -111,6 +111,26 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
     const isSystemCommand = systemCommands.includes(cleanMsg);
     const isInMenu = activeMenuSteps.includes(session.step);
 
+	if (member && (member.status === 'DROPPED' || member.status === 'CANCELLED' || member.status === 'UNSUBSCRIBED') && session.step !== 'AWAITING_COURSE_SELECTION') {
+        const courses = await prisma.course.findMany({
+            where: { churchId: member.churchId },
+            orderBy: { price: 'asc' }
+        });
+
+        let msg = `👋 *Welcome back, ${member.firstName}!*\n\nYour account is currently inactive. To restore your access and continue learning, please select your program below:\n\n`;
+        
+        courses.forEach((c, index) => {
+            msg += `*${index + 1}. ${c.title}*\n`;
+        });
+        
+        msg += `\n_Reply with the number to reactivate your subscription._`;
+
+        session.step = 'AWAITING_COURSE_SELECTION';
+        session.availableCourses = courses;
+        await reply(cleanPhone, msg);
+        return { handled: true, clearSessionFlag: false };
+    }
+
     // ================================================
     // 🧠 MULTIMODAL AI TUTOR (Protected Lwazi Feature)
     // ================================================
@@ -329,7 +349,35 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
 
         if (selectedIndex >= 0 && selectedIndex < courses.length) {
             const selectedCourse = courses[selectedIndex];
+			const existingDroppedEnrollment = await prisma.enrollment.findFirst({
+                where: { 
+                    memberId: member.id, 
+                    courseId: selectedCourse.id,
+                    status: { in: ['DROPPED', 'CANCELLED', 'UNSUBSCRIBED'] }
+                }
+            });
 
+            if (existingDroppedEnrollment) {
+                // 1. Reactivate the Course Enrollment
+                await prisma.enrollment.update({
+                    where: { id: existingDroppedEnrollment.id },
+                    data: { 
+                        status: 'ACTIVE', 
+                        reminderCount: 0,
+                        lastActivityAt: new Date(),
+                        updatedAt: new Date()
+                    }
+                });
+
+                // 2. Reactivate the Main User Profile
+                await prisma.member.update({
+                    where: { id: member.id },
+                    data: { status: 'ACTIVE' }
+                });
+
+                await reply(cleanPhone, `🎉 *Welcome Back!* Your subscription to *${selectedCourse.title}* has been restored.\n\nYour progress has been saved. Reply *Resume* to pick up exactly where you left off!`);
+                return { handled: true, clearSessionFlag: true };
+            }
             const existingEnrollment = await prisma.enrollment.findFirst({
                 where: { memberId: member.id, courseId: selectedCourse.id },
                 include: { course: { include: { modules: { orderBy: { order: 'asc' } } } } }
