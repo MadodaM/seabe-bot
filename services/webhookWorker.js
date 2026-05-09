@@ -27,7 +27,8 @@ async function processNetcashITN(webhookLogId) {
 
         // 2. Smart Validation (Accepts both old and new Netcash formats)
         let isValid = false;
-        if (payload.p2) {
+        // 🛡️ SECURITY FIX: Prevent empty string false-positives
+        if (payload.p2 && payload.p2 !== "") {
             const validationParams = new URLSearchParams(payload).toString();
             const validationResponse = await axios.post(NETCASH_VALIDATE_URL, validationParams, {
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
@@ -147,8 +148,8 @@ async function processNetcashITN(webhookLogId) {
                     }
                 })
             ]);
-			
-			// 💰 🚀 NEW: FIRE THE LEDGER SPLITTER HERE!
+            
+            // 💰 🚀 NEW: FIRE THE LEDGER SPLITTER HERE!
             try {
                 console.log(`💸 [LEDGER] Triggering split for TX ${tx.id}`);
                 await recordSplit(tx.id);
@@ -180,32 +181,55 @@ async function processNetcashITN(webhookLogId) {
                     where: { reference: debtRef },
                     data: { status: 'PAID', paidAt: new Date() }
                 });
-            } else if (correctType === 'LWAZI_MULTI' || correctType === 'LWAZI_SUB') {
-                // 🎓 LWAZI MULTI-SUBSCRIPTION ACTIVATION
+            } 
+            // 🎓 LWAZI MULTI-SUBSCRIPTION ACTIVATION (Hardened with correct syntax)
+            else if (correctType === 'LWAZI_MULTI' || correctType === 'LWAZI_SUB') {
                 if (tx.notes) {
-                    const idsToActivate = tx.notes.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+                    const idsToActivate = tx.notes.split(',')
+                        .map(id => parseInt(id.trim()))
+                        .filter(id => !isNaN(id));
 
                     if (idsToActivate.length > 0) {
-                        await prisma.member.updateMany({
-                            where: { id: { in: idsToActivate } },
-                            data: { status: 'ACTIVE', lastPaymentDate: new Date(), consecutiveFailures: 0 }
-                        });
+                        // 🛡️ ATOMIC FIX: Update Member AND Enrollment together
+                        await prisma.$transaction([
+                            prisma.member.updateMany({
+                                where: { id: { in: idsToActivate } },
+                                data: { status: 'ACTIVE', lastPaymentDate: new Date(), consecutiveFailures: 0 }
+                            }),
+                            prisma.enrollment.updateMany({
+                                where: { 
+                                    memberId: { in: idsToActivate },
+                                    status: 'PENDING_PAYMENT'
+                                },
+                                data: { status: 'ACTIVE', updatedAt: new Date() }
+                            })
+                        ]);
 
                         for (const studentId of idsToActivate) {
                             const student = await prisma.member.findUnique({ where: { id: studentId } });
                             if (student && student.phone) {
-                                await sendLwaziWelcome(student.phone);
+                                sendLwaziWelcome(student.phone).catch(e => 
+                                    console.error(`[LWAZI] Welcome Error:`, e.message)
+                                );
                             }
                         }
                     }
                 } else if (tx.memberId) {
-                    await prisma.member.update({
-                        where: { id: tx.memberId },
-                        data: { status: 'ACTIVE', lastPaymentDate: new Date(), consecutiveFailures: 0 }
-                    });
+                    // Single Student Fallback
+                    await prisma.$transaction([
+                        prisma.member.update({
+                            where: { id: tx.memberId },
+                            data: { status: 'ACTIVE', lastPaymentDate: new Date(), consecutiveFailures: 0 }
+                        }),
+                        prisma.enrollment.updateMany({
+                            where: { memberId: tx.memberId, status: 'PENDING_PAYMENT' },
+                            data: { status: 'ACTIVE', updatedAt: new Date() }
+                        })
+                    ]);
                     await sendLwaziWelcome(tx.phone);
                 }
-            } else if (reference.includes('-PREM-') || reference.includes('-ONCEOFF-')) {
+            } 
+            else if (reference.includes('-PREM-') || reference.includes('-ONCEOFF-')) {
                 if (tx.memberId) {
                     await prisma.member.update({
                         where: { id: tx.memberId },
