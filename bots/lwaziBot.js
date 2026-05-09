@@ -661,7 +661,7 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
         const selection = parseInt(msg) - 1;
         
         if (isNaN(selection) || selection < 0 || !session.searchResults || selection >= session.searchResults.length) {
-            await sendLwazi(phone, "⚠️ Invalid selection. Please reply with the number of the lesson you want, or *Menu* to cancel.");
+            await sendLwazi(phone, "⚠️ Invalid selection. Please reply with the number of the lesson, or *Menu* to cancel.");
             return;
         }
 
@@ -707,15 +707,19 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
             mUrl = moduleData.contentUrl;
         }
 
+        // 🛡️ THE FIX: Clear the step BEFORE or DURING delivery
+        session.step = null; 
+        delete session.searchResults;
+
         await sendLwazi(phone, lessonText, mUrl);
 
         if (moduleData.quizQuestion) {
             await new Promise(res => setTimeout(res, 1500));
             session.currentQuizAnswer = moduleData.quizAnswer; 
-            session.step = 'LWAZI_AWAITING_QUIZ';
+            session.step = 'LWAZI_AWAITING_QUIZ'; // Set the NEXT step
             await sendLwazi(phone, `🧠 *Quick Quiz!*\n\n${moduleData.quizQuestion}\n\n_Reply with your answer._`);
         } else {
-            session.step = null;
+            // Step is already null from line above
             await sendLwazi(phone, "_Reply *Menu* to request another lesson._");
         }
         return;
