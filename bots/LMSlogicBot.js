@@ -430,7 +430,8 @@ async function processLmsMessage(cleanPhone, incomingMsg, session, member, media
                     memberId: member.id,
                     courseId: selectedCourse.id,
                     progress: 0,
-                    status: selectedCourse.price == 0 ? 'ACTIVE' : 'PENDING_PAYMENT',
+                    // FIX: If the member is already ACTIVE (CEO/Paid), the enrollment should be ACTIVE immediately
+                    status: (selectedCourse.price == 0 || member.status === 'ACTIVE') ? 'ACTIVE' : 'PENDING_PAYMENT',
                     quizState: 'IDLE'
                 }
             });
