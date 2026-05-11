@@ -23,6 +23,9 @@ model Member {
   idType            String?   @default("SA_ID")
   idNumber          String? // Stores ENCRYPTED data (e.g. "a1b2:f9e8...")
   address           String? // Stores ENCRYPTED data
+    
+  // 🏛️ SARS IT3(d) COMPLIANCE
+  taxReferenceNumber String? // Required for Section 18A issuance
   kycToken          String?   @unique
   kycTokenExpires   DateTime?
   idPhotoUrl        String? // Stores encrypted Cloudinary URL
@@ -67,7 +70,9 @@ model Member {
   stokvel     Church? @relation("StokvelMembers", fields: [stokvelCode], references: [code])
 
   // Society Data
-  status       String   @default("ACTIVE")
+  status            String    @default("PENDING_SUBSCRIPTION") 
+  trialStartedAt    DateTime? // 👈 Just add this brand new line right below it
+  
   policyNumber String?
   joinedAt     DateTime @default(now())
 
@@ -202,19 +207,24 @@ model Transaction {
   phone      String // Keep this for easy Twilio replies
   memberId   Int? // Link to the specific member profile
   member     Member? @relation(fields: [memberId], references: [id])
-  type       String // OFFERING, TITHE, PREM, TICKET
+  type        String // OFFERING, TITHE, PREM, TICKET
+  
+  // 🏛️ SARS COMPLIANCE
+  taxCategory TaxCategory @default(STANDARD_VAT)
 
   // 💰 THE 4-PILLAR LEDGER (For Segregation & Auditing)
   amount        Float // 1. Gross Amount (What the user's card was charged, e.g., R150)
   netcashFee    Float? // 2. Gateway Fee (What Netcash deducts, e.g., R2.50)
   platformFee   Float? // 3. Seabe Fee (Your revenue, e.g., R5.00)
   netSettlement Float? // 4. Church Payout (What physically lands in their bank, e.g., R142.50)
-
+  vatAmount       Decimal?    @default(0.00)
+  isVatCharged    Boolean     @default(false)
   reference   String   @unique
   status      String   @default("PENDING") // 👈 Default set to uppercase PENDING
   method      String? // CARD, EFT, CASH
   description String?
   date        DateTime @default(now())
+  
 
   // 💸 PAYOUT RELATION (To track if this money has been settled)
   payoutId    Int?
@@ -564,6 +574,9 @@ model TransactionLedger {
 
   status TxStatus @default(PENDING)
   module TxModule // What product generated this sale?
+  
+  // 🏛️ SARS COMPLIANCE AUDIT TRAIL
+  taxCategory TaxCategory @default(STANDARD_VAT)
 
   // 3. The Merchant Link (Who gets the money?)
   churchId Int // Links back to the Church/Restaurant/Society
@@ -681,6 +694,9 @@ model Product {
   type       String  @default("SERVICE")
   barcode    String?
   stockLevel Int     @default(0)
+
+  // 🏛️ DEFAULT TAX RULE FOR THIS SPECIFIC PRODUCT
+  taxCategory TaxCategory @default(STANDARD_VAT)
 
   appointments Appointment[]
 
@@ -803,4 +819,12 @@ model Program {
   updatedAt   DateTime @updatedAt
   
   activeMembers     Member[]
+}
+
+// 1. Define the Tax Categories based on SARS rules
+enum TaxCategory {
+  DONATION_18A      // Triggers IT3(d) logic (Churches)
+  STANDARD_VAT      // Triggers 15% VAT split (Grooming / Lwazi)
+  EXEMPT_PREMIUM    // Triggers standard receipt, no VAT/18A (Surepol)
+  TIP_GRATUITY      // Excluded from standard business revenue
 }

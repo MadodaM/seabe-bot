@@ -2,6 +2,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { sendWhatsApp } = require('../services/whatsapp');
+const { nudgeExpiringTrials } = require('./trialNudge');
 
 async function runArrearsChaser() {
     console.log("🚀 Starting Automated Arrears Chaser...");

@@ -89,14 +89,13 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
 				data: { 
 					phone: phone, 
 					firstName: 'Student', 
-					lastName: '.', 
 					church: { connect: { id: lwaziOrg.id } }, 
-					status: 'PENDING_SUBSCRIPTION' 
-				},
-				include: { church: true }
+					status: 'TRIAL', // Start as trial
+					trialStartedAt: new Date() // Start the clock
+				}
 			});
 	
-    }
+		}
 
     // ================================================
     // 🛒 NOMINATION & CHECKOUT FLOW
@@ -391,20 +390,35 @@ async function processLwaziMessage(phone, msg, session, mediaUrl, _ignoredGlobal
     }
 
     // ================================================
-    // 🛡️ THE PREMIUM PAYWALL GATEKEEPER
-    // ================================================
-    if (member.status !== 'ACTIVE') {
-        const paywallMsg = `🦉 *Welcome to Lwazi Caps Micro-Tutor!*\n\n` +
-                           `Unlock your full academic potential with Lwazi Premium! For only *R69/month*, you get:\n\n` +
-                           `🧠 *Unlimited AI Tutor:* 24/7 help with Math, Science, and more.\n` +
-                           `📚 *CAPS-Aligned Courses:* Step-by-step daily lessons.\n` +
-                           `📝 *Smart Quizzes:* Instant grading and feedback.\n` +
-                           `👨‍👩‍👧‍👦 *Family Plan:* Discounts when adding multiple students.\n\n` +
-                           `_Reply *Subscribe* to activate your account and start learning today!_`;
-        
-        await sendLwazi(phone, paywallMsg);
-        return;
-    }
+	// 🛡️ THE PREMIUM PAYWALL GATEKEEPER (Trial Aware)
+	// ================================================
+	const TRIAL_DURATION_DAYS = 7;
+	let isTrialActive = false;
+
+	if (member.status === 'TRIAL' && member.trialStartedAt) {
+		const now = new Date();
+		const expiryDate = new Date(member.trialStartedAt);
+		expiryDate.setDate(expiryDate.getDate() + TRIAL_DURATION_DAYS);
+
+		if (now < expiryDate) {
+			isTrialActive = true;
+		} else {
+			// Trial expired! Flip them to pending so they hit the paywall
+			await prisma.member.update({
+				where: { id: member.id },
+				data: { status: 'PENDING_SUBSCRIPTION' }
+			});
+			member.status = 'PENDING_SUBSCRIPTION';
+		}
+	}
+
+	// Allow access if they are ACTIVE or in an ACTIVE TRIAL
+	if (member.status !== 'ACTIVE' && !isTrialActive) {
+		const paywallMsg = `🦉 *Lwazi Free Trial Expired*\n\nYour 7-day preview has ended. To continue chatting with the AI Tutor and accessing Grade 12 lessons, upgrade to Premium for just *R69/month*.\n\n_Reply *Subscribe* to keep learning!_`;
+		
+		await sendLwazi(phone, paywallMsg);
+		return;
+	}
 
     // ================================================
     // 🚀 1-TIME ONBOARDING FLOW
