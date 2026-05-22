@@ -474,18 +474,24 @@ router.get('/cron/auto-bill', async (req, res) => {
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-        // 2. Find all ACTIVE members with a vaulted card who are due for billing
-        const dueMembers = await prisma.member.findMany({
-            where: {
-                status: 'ACTIVE',
-                lastPaymentDate: { lte: thirtyDaysAgo }, // Paid 30+ days ago
-                paymentMethods: { some: { isDefault: true } } // Has a saved card
-            },
-            include: {
-                paymentMethods: { where: { isDefault: true } },
-                church: true
-            }
-        });
+       // 2. Find all ACTIVE members with a vaulted card who are due for billing
+		const dueMembers = await prisma.member.findMany({
+			where: {
+				status: 'ACTIVE',
+				// 🛡️ THE FIX: Check if they haven't had a successful transaction in 30 days
+				transactions: {
+					none: {
+						status: 'SUCCESS', // Using your exact success string
+						createdAt: { gte: thirtyDaysAgo }
+					}
+				},
+				paymentMethods: { some: { isDefault: true } } // Has a saved card
+			},
+			include: {
+				paymentMethods: { where: { isDefault: true } },
+				church: true
+			}
+		});
 
         let successfulCharges = 0;
         let failedCharges = 0;
@@ -524,11 +530,11 @@ router.get('/cron/auto-bill', async (req, res) => {
                 // Fire your awesome ledger splitter to divide the R69
                 await recordSplit(tx.id).catch(console.error);
 
-                // Reset their clock for another 30 days
-                await prisma.member.update({
-                    where: { id: member.id },
-                    data: { lastPaymentDate: new Date(), consecutiveFailures: 0 }
-                });
+                // Reset their strike counter (the clock is now based purely on the transaction we just created)
+				await prisma.member.update({
+					where: { id: member.id },
+					data: { consecutiveFailures: 0 }
+				});
 
                 // Send WhatsApp Receipt
                 const msg = `✅ *Subscription Renewed!*\n\nYour Lwazi Premium subscription has been successfully renewed for R69.00 using your saved card ending in ${vault.last4}.\n\nKeep learning! 🦉`;
